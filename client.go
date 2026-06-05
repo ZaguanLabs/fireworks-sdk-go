@@ -890,6 +890,14 @@ func (c *Client) platformHeaders() http.Header {
 	return headers
 }
 
+func DefaultHTTPClient() *http.Client {
+	return defaultHTTPClient()
+}
+
+func DefaultHTTPClientWithTimeout(timeout time.Duration) *http.Client {
+	return defaultHTTPClientWithTimeout(timeout)
+}
+
 func defaultHTTPClient() *http.Client {
 	return defaultHTTPClientWithTimeout(defaultTimeout)
 }

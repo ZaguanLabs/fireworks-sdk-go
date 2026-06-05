@@ -40,6 +40,28 @@ func TestDefaultConstantsMatchPythonSDK(t *testing.T) {
 	}
 }
 
+func TestDefaultHTTPClientFactoriesUseSDKDefaults(t *testing.T) {
+	client := DefaultHTTPClient()
+	if client.Timeout != DefaultTimeout {
+		t.Fatalf("Timeout = %s", client.Timeout)
+	}
+	transport, ok := client.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("transport type = %T", client.Transport)
+	}
+	if transport.MaxConnsPerHost != DefaultMaxConnectionsPerHost {
+		t.Fatalf("MaxConnsPerHost = %d", transport.MaxConnsPerHost)
+	}
+	if transport.MaxIdleConnsPerHost != DefaultMaxIdleConnectionsPerHost {
+		t.Fatalf("MaxIdleConnsPerHost = %d", transport.MaxIdleConnsPerHost)
+	}
+
+	custom := DefaultHTTPClientWithTimeout(2 * time.Second)
+	if custom.Timeout != 2*time.Second {
+		t.Fatalf("custom Timeout = %s", custom.Timeout)
+	}
+}
+
 func TestFireworksAliasMatchesClient(t *testing.T) {
 	t.Setenv("FIREWORKS_API_KEY", "test-key")
 
