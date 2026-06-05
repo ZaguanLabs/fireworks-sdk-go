@@ -364,6 +364,38 @@ func TestStatusErrorMapping(t *testing.T) {
 	if !errors.As(err, &rateLimit) {
 		t.Fatalf("error type = %T", err)
 	}
+	body, ok := rateLimit.BodyJSON.(map[string]any)
+	if !ok || body["error"] != "limited" {
+		t.Fatalf("BodyJSON = %#v", rateLimit.BodyJSON)
+	}
+}
+
+func TestStatusErrorKeepsRawNonJSONBody(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "plain error", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	client, err := NewClient(WithBaseURL(server.URL), WithMaxRetries(0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.Get(context.Background(), "/plain")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	var apiErr *InternalServerError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("error type = %T", err)
+	}
+	if apiErr.BodyJSON != nil {
+		t.Fatalf("BodyJSON = %#v", apiErr.BodyJSON)
+	}
+	if !strings.Contains(string(apiErr.Body), "plain error") {
+		t.Fatalf("Body = %q", apiErr.Body)
+	}
 }
 
 func TestRetryAfterHeaderControlsRetryDelay(t *testing.T) {

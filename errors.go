@@ -1,6 +1,7 @@
 package fireworks
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 )
@@ -17,6 +18,7 @@ type APIError struct {
 	StatusCode int
 	Status     string
 	Body       []byte
+	BodyJSON   any
 	Header     http.Header
 }
 
@@ -45,6 +47,7 @@ func statusError(resp *http.Response, body []byte) error {
 		StatusCode: resp.StatusCode,
 		Status:     resp.Status,
 		Body:       body,
+		BodyJSON:   decodeErrorBody(body),
 		Header:     resp.Header.Clone(),
 	}
 	switch resp.StatusCode {
@@ -68,4 +71,15 @@ func statusError(resp *http.Response, body []byte) error {
 		}
 		return apiErr
 	}
+}
+
+func decodeErrorBody(body []byte) any {
+	if len(body) == 0 {
+		return nil
+	}
+	var out any
+	if err := json.Unmarshal(body, &out); err != nil {
+		return nil
+	}
+	return out
 }
