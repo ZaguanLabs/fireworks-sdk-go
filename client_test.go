@@ -295,6 +295,47 @@ func TestStatusErrorMapping(t *testing.T) {
 	}
 }
 
+func TestRetryAfterHeaderControlsRetryDelay(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		attempts++
+		if attempts == 1 {
+			w.Header().Set("retry-after-ms", "1")
+			http.Error(w, `{"error":"retry"}`, http.StatusTooManyRequests)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(JSON{"ok": true})
+	}))
+	defer server.Close()
+
+	client, err := NewClient(WithBaseURL(server.URL), WithMaxRetries(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	out, err := client.Get(context.Background(), "/retry")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out["ok"] != true {
+		t.Fatalf("response = %#v", out)
+	}
+	if attempts != 2 {
+		t.Fatalf("attempts = %d", attempts)
+	}
+	if elapsed := time.Since(start); elapsed >= 250*time.Millisecond {
+		t.Fatalf("retry-after-ms was not honored; elapsed = %s", elapsed)
+	}
+}
+
+func TestRetryAfterHeaderIgnoresUnreasonableDelay(t *testing.T) {
+	if delay, ok := parseRetryAfter(http.Header{"Retry-After": {"61"}}); ok || delay != 0 {
+		t.Fatalf("parseRetryAfter = %s, %t", delay, ok)
+	}
+}
+
 func TestStreamReadsServerSentEvents(t *testing.T) {
 	t.Setenv("FIREWORKS_API_KEY", "test-key")
 

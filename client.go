@@ -430,10 +430,10 @@ func (c *Client) Do(req *http.Request, out any) error {
 	}
 
 	var lastErr error
+	nextRetryDelay := retryDelay(0)
 	for attempt := 0; attempt <= retries; attempt++ {
 		if attempt > 0 {
-			delay := retryDelay(attempt - 1)
-			timer := time.NewTimer(delay)
+			timer := time.NewTimer(nextRetryDelay)
 			select {
 			case <-req.Context().Done():
 				timer.Stop()
@@ -456,6 +456,7 @@ func (c *Client) Do(req *http.Request, out any) error {
 		if err != nil {
 			lastErr = err
 			if attempt < retries && shouldRetryError(err) {
+				nextRetryDelay = retryDelay(attempt)
 				continue
 			}
 			return err
@@ -466,6 +467,7 @@ func (c *Client) Do(req *http.Request, out any) error {
 		if readErr != nil {
 			lastErr = readErr
 			if attempt < retries && shouldRetryError(readErr) {
+				nextRetryDelay = retryDelay(attempt)
 				continue
 			}
 			return readErr
@@ -486,6 +488,7 @@ func (c *Client) Do(req *http.Request, out any) error {
 
 		if attempt < retries && shouldRetryResponse(resp, body) {
 			lastErr = statusError(resp, body)
+			nextRetryDelay = retryDelayForResponse(resp, attempt)
 			continue
 		}
 		return statusError(resp, body)
@@ -779,6 +782,48 @@ func retryDelay(attempt int) time.Duration {
 	}
 	jitter := 1 - (0.25 * rand.Float64())
 	return time.Duration(float64(delay) * jitter)
+}
+
+func retryDelayForResponse(resp *http.Response, attempt int) time.Duration {
+	if resp != nil {
+		if delay, ok := parseRetryAfter(resp.Header); ok {
+			return delay
+		}
+	}
+	return retryDelay(attempt)
+}
+
+func parseRetryAfter(headers http.Header) (time.Duration, bool) {
+	if headers == nil {
+		return 0, false
+	}
+	if raw := headers.Get("retry-after-ms"); raw != "" {
+		if ms, err := strconv.ParseFloat(raw, 64); err == nil {
+			delay := time.Duration(ms * float64(time.Millisecond))
+			if isReasonableRetryDelay(delay) {
+				return delay, true
+			}
+		}
+	}
+	if raw := headers.Get("retry-after"); raw != "" {
+		if seconds, err := strconv.ParseFloat(raw, 64); err == nil {
+			delay := time.Duration(seconds * float64(time.Second))
+			if isReasonableRetryDelay(delay) {
+				return delay, true
+			}
+		}
+		if retryAt, err := http.ParseTime(raw); err == nil {
+			delay := time.Until(retryAt)
+			if isReasonableRetryDelay(delay) {
+				return delay, true
+			}
+		}
+	}
+	return 0, false
+}
+
+func isReasonableRetryDelay(delay time.Duration) bool {
+	return delay > 0 && delay <= time.Minute
 }
 
 func shouldRetryError(err error) bool {
