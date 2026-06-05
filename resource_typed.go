@@ -42,6 +42,9 @@ func (r *AccountsResource) ListTyped(ctx context.Context, query any, opts ...Req
 }
 
 func (r *AccountsResource) GetTyped(ctx context.Context, accountID string, opts ...RequestOption) (*fwtypes.Account, error) {
+	if err := requirePathArgument("account_id", accountID); err != nil {
+		return nil, err
+	}
 	return typedGet[fwtypes.Account](ctx, r.client, r.client.managementPath("/v1/accounts/"+pathEscape(accountID)), opts...)
 }
 

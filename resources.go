@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"strings"
 
 	fwtypes "github.com/ZaguanLabs/fireworks-sdk-go/types"
 )
@@ -224,6 +225,9 @@ func (r *AccountsResource) List(ctx context.Context, query map[string]any, opts 
 }
 
 func (r *AccountsResource) Get(ctx context.Context, accountID string, opts ...RequestOption) (Response, error) {
+	if err := requirePathArgument("account_id", accountID); err != nil {
+		return nil, err
+	}
 	return resource{r.client}.get(ctx, r.client.managementPath("/v1/accounts/"+pathEscape(accountID)), opts...)
 }
 
@@ -743,7 +747,24 @@ func deleteInAccount(ctx context.Context, client *Client, suffix string, opts ..
 }
 
 func accountSuffixPath(res resource, opts []RequestOption, suffix string) (string, error) {
+	if err := validatePathSuffix(suffix); err != nil {
+		return "", err
+	}
 	return res.accountPath(opts, func(accountID string) string {
 		return "/v1/accounts/" + accountID + suffix
 	})
+}
+
+func validatePathSuffix(suffix string) error {
+	if suffix == "" || !strings.HasPrefix(suffix, "/") || strings.Contains(suffix, "//") || strings.HasSuffix(suffix, "/") || strings.Contains(suffix, "/:") {
+		return &Error{Message: "missing required path argument"}
+	}
+	return nil
+}
+
+func requirePathArgument(name, value string) error {
+	if value == "" {
+		return &Error{Message: "missing required path argument: " + name}
+	}
+	return nil
 }

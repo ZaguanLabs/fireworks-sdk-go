@@ -170,6 +170,67 @@ func TestAccountResourcePathAndCommaQuery(t *testing.T) {
 	}
 }
 
+func TestResourceMethodsRejectMissingPathArguments(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		_ = json.NewEncoder(w).Encode(JSON{"ok": true})
+	}))
+	defer server.Close()
+
+	client, err := NewClient(WithBaseURL(server.URL), WithDefaultAccountID("acct"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := []struct {
+		name string
+		call func() error
+	}{
+		{"accounts get", func() error {
+			_, err := client.Accounts.Get(context.Background(), "")
+			return err
+		}},
+		{"accounts get typed", func() error {
+			_, err := client.Accounts.GetTyped(context.Background(), "")
+			return err
+		}},
+		{"models get", func() error {
+			_, err := client.Models.Get(context.Background(), "")
+			return err
+		}},
+		{"models get typed", func() error {
+			_, err := client.Models.GetTyped(context.Background(), "")
+			return err
+		}},
+		{"models prepare typed", func() error {
+			_, err := client.Models.PrepareTyped(context.Background(), "", JSON{})
+			return err
+		}},
+		{"deployment shape versions list", func() error {
+			_, err := client.DeploymentShapeVersions.List(context.Background(), "", nil)
+			return err
+		}},
+		{"deployment shape versions get typed", func() error {
+			_, err := client.DeploymentShapeVersions.GetTyped(context.Background(), "shape-1", "")
+			return err
+		}},
+	}
+	for _, call := range calls {
+		err := call.call()
+		if err == nil {
+			t.Fatalf("%s: expected error", call.name)
+		}
+		if !strings.Contains(err.Error(), "missing required path argument") {
+			t.Fatalf("%s: error = %v", call.name, err)
+		}
+	}
+	if requests != 0 {
+		t.Fatalf("sent %d unexpected requests", requests)
+	}
+}
+
 func TestQueryEncodingUsesCommaForArbitrarySlicesAndArrays(t *testing.T) {
 	t.Setenv("FIREWORKS_API_KEY", "test-key")
 
