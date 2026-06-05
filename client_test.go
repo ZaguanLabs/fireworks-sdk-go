@@ -877,6 +877,9 @@ func TestTypedListParamsUsePythonQueryAliases(t *testing.T) {
 	t.Setenv("FIREWORKS_API_KEY", "test-key")
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Path; got != "/v1/accounts/acct-from-params/models" {
+			t.Errorf("path = %q", got)
+		}
 		query := r.URL.Query()
 		if got := query.Get("pageToken"); got != "cursor-1" {
 			t.Errorf("pageToken = %q", got)
@@ -897,12 +900,12 @@ func TestTypedListParamsUsePythonQueryAliases(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := NewClient(WithBaseURL(server.URL), WithDefaultAccountID("acct"))
+	client, err := NewClient(WithBaseURL(server.URL))
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, err = client.Models.ListTyped(context.Background(), fwtypes.ModelListParams{
-		AccountID: "ignored-in-query",
+		AccountID: "acct-from-params",
 		PageToken: "cursor-1",
 		PageSize:  25,
 		OrderBy:   "name desc",

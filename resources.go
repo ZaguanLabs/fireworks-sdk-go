@@ -50,22 +50,28 @@ func (r resource) accountPath(opts []RequestOption, makePath func(accountID stri
 }
 
 func withQuery(query any, opts []RequestOption) []RequestOption {
-	values, ok := queryMap(query)
-	if !ok {
+	values, accountID, ok := queryMap(query)
+	if !ok && accountID == "" {
 		return opts
 	}
-	out := make([]RequestOption, 0, len(opts)+1)
-	out = append(out, WithQuery(values))
+	out := make([]RequestOption, 0, len(opts)+2)
+	if accountID != "" {
+		out = append(out, WithAccountID(accountID))
+	}
+	if ok {
+		out = append(out, WithQuery(values))
+	}
 	out = append(out, opts...)
 	return out
 }
 
-func queryMap(query any) (map[string]any, bool) {
+func queryMap(query any) (map[string]any, string, bool) {
 	switch v := query.(type) {
 	case nil:
-		return nil, false
+		return nil, "", false
 	case map[string]any:
-		return v, len(v) > 0
+		out, accountID := splitAccountID(v)
+		return out, accountID, len(out) > 0
 	case url.Values:
 		out := make(map[string]any, len(v))
 		for key, values := range v {
@@ -78,18 +84,20 @@ func queryMap(query any) (map[string]any, bool) {
 				out[key] = values
 			}
 		}
-		return out, len(out) > 0
+		out, accountID := splitAccountID(out)
+		return out, accountID, len(out) > 0
 	default:
 		payload, err := json.Marshal(query)
 		if err != nil || string(payload) == "null" || string(payload) == "{}" {
-			return nil, false
+			return nil, "", false
 		}
 		var out map[string]any
 		if err := json.Unmarshal(payload, &out); err != nil {
-			return nil, false
+			return nil, "", false
 		}
+		out, accountID := splitAccountID(out)
 		out = normalizeQueryMap(out)
-		return out, len(out) > 0
+		return out, accountID, len(out) > 0
 	}
 }
 
@@ -102,6 +110,21 @@ func normalizeQueryMap(query map[string]any) map[string]any {
 		out[queryAlias(key)] = value
 	}
 	return out
+}
+
+func splitAccountID(query map[string]any) (map[string]any, string) {
+	out := make(map[string]any, len(query))
+	var accountID string
+	for key, value := range query {
+		if key == "account_id" {
+			if raw, ok := value.(string); ok {
+				accountID = raw
+			}
+			continue
+		}
+		out[key] = value
+	}
+	return out, accountID
 }
 
 func queryAlias(key string) string {
