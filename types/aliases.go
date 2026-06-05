@@ -11,8 +11,18 @@ type ChatCompletionCreateParamsStreaming = ChatCompletionCreateParamsCompletionC
 type ChatCompletionChunkChoice = ChatChatCompletionChunkChoice
 type ChatCompletionChunkChoiceDelta = ChatChatCompletionChunkChoiceDelta
 
+type DPOJob = DPOJobDpoJob
 type DpoJob = DPOJobDpoJob
+type DPOJobCreateParams = DPOJobCreateParamsDpoJobCreateParams
+type DpoJobCreateParams = DPOJobCreateParamsDpoJobCreateParams
+type DPOJobGetParams = DPOJobGetParamsDpoJobGetParams
+type DpoJobGetParams = DPOJobGetParamsDpoJobGetParams
+type DPOJobListParams = DPOJobListParamsDpoJobListParams
+type DpoJobListParams = DPOJobListParamsDpoJobListParams
+type DPOJobResumeParams = DPOJobResumeParamsDpoJobResumeParams
+type DpoJobResumeParams = DPOJobResumeParamsDpoJobResumeParams
 type DPOJobGetMetricsFileEndpointResponse = DPOJobGetMetricsFileEndpointResponseDpoJobGetMetricsFileEndpointResponse
+type DpoJobGetMetricsFileEndpointResponse = DPOJobGetMetricsFileEndpointResponseDpoJobGetMetricsFileEndpointResponse
 
 type AccountsPage struct {
 	Accounts      []Account `json:"accounts"`

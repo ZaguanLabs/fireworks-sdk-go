@@ -18,6 +18,26 @@ func TestGeneratedCatalogIncludesCoreTypes(t *testing.T) {
 	_ = ModelsPage{}
 }
 
+func TestDPOAliasesUsePublicNames(t *testing.T) {
+	job := DPOJob{Name: strPtr("accounts/acct/dpoJobs/job-1")}
+	var _ DpoJob = job
+
+	create := DPOJobCreateParams{Dataset: "accounts/acct/datasets/ds-1"}
+	var _ DpoJobCreateParams = create
+
+	get := DPOJobGetParams{ReadMask: "name"}
+	var _ DpoJobGetParams = get
+
+	list := DPOJobListParams{Filter: "state=RUNNING"}
+	var _ DpoJobListParams = list
+
+	resume := DPOJobResumeParams{}
+	var _ DpoJobResumeParams = resume
+
+	endpoint := DPOJobGetMetricsFileEndpointResponse{SignedURL: strPtr("gs://metrics")}
+	var _ DpoJobGetMetricsFileEndpointResponse = endpoint
+}
+
 func TestGeneratedJSONAliases(t *testing.T) {
 	modelField, ok := reflect.TypeOf(Model{}).FieldByName("ContextLength")
 	if !ok {
@@ -52,4 +72,8 @@ func TestGeneratedOptionalParamsOmitEmpty(t *testing.T) {
 	if string(payload) != "{}" {
 		t.Fatalf("empty AccountListParams marshaled to %s", payload)
 	}
+}
+
+func strPtr(value string) *string {
+	return &value
 }
