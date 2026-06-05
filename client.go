@@ -110,6 +110,15 @@ func WithDefaultHeader(key, value string) ClientOption {
 	}
 }
 
+func WithDefaultOmitHeader(key string) ClientOption {
+	return func(c *clientConfig) {
+		if c.defaultHeaders == nil {
+			c.defaultHeaders = make(http.Header)
+		}
+		c.defaultHeaders[key] = nil
+	}
+}
+
 func WithDefaultHeaders(headers map[string]string) ClientOption {
 	return func(c *clientConfig) {
 		if c.defaultHeaders == nil {
@@ -179,6 +188,10 @@ func NewClient(opts ...ClientOption) (*Client, error) {
 	}
 	for key, values := range cfg.defaultHeaders {
 		headers.Del(key)
+		if values == nil {
+			headers[key] = nil
+			continue
+		}
 		for _, value := range values {
 			headers.Add(key, value)
 		}
@@ -363,12 +376,20 @@ func (c *Client) newRequestWithReader(ctx context.Context, method, path string, 
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	req.Header.Set("X-Stainless-Async", "false")
 	for key, values := range c.defaultHeaders {
+		if values == nil {
+			omitRequestHeader(req.Header, key)
+			continue
+		}
 		req.Header.Del(key)
 		for _, value := range values {
 			req.Header.Add(key, value)
 		}
 	}
 	for key, values := range reqOpts.Headers {
+		if values == nil {
+			omitRequestHeader(req.Header, key)
+			continue
+		}
 		req.Header.Del(key)
 		for _, value := range values {
 			req.Header.Add(key, value)
@@ -748,6 +769,13 @@ func writeMultipartFile(writer *multipart.Writer, key string, file File) error {
 		return err
 	}
 	return nil
+}
+
+func omitRequestHeader(headers http.Header, key string) {
+	headers.Del(key)
+	if strings.EqualFold(key, "User-Agent") {
+		headers.Set(key, "")
+	}
 }
 
 func addQueryValue(values url.Values, key string, value any) {

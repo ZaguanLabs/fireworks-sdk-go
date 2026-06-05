@@ -193,6 +193,43 @@ func TestWithOptionsOverridesClientSettingsForRequests(t *testing.T) {
 	}
 }
 
+func TestHeaderOmitOptionsRemoveDefaultHeaders(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+
+	var seenContentType string
+	var seenUserAgent string
+	var seenCustom string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenContentType = r.Header.Get("Content-Type")
+		seenUserAgent = r.Header.Get("User-Agent")
+		seenCustom = r.Header.Get("X-Custom")
+		_ = json.NewEncoder(w).Encode(JSON{"ok": true})
+	}))
+	defer server.Close()
+
+	client, err := NewClient(
+		WithBaseURL(server.URL),
+		WithDefaultHeader("X-Custom", "present"),
+		WithDefaultOmitHeader("User-Agent"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.Post(context.Background(), "/headers", JSON{"ok": true}, WithOmitHeader("Content-Type"), WithOmitHeader("X-Custom"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if seenContentType != "" {
+		t.Fatalf("Content-Type = %q", seenContentType)
+	}
+	if seenUserAgent != "" {
+		t.Fatalf("User-Agent = %q", seenUserAgent)
+	}
+	if seenCustom != "" {
+		t.Fatalf("X-Custom = %q", seenCustom)
+	}
+}
+
 func TestRawHonorsRequestTimeout(t *testing.T) {
 	t.Setenv("FIREWORKS_API_KEY", "test-key")
 

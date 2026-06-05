@@ -36,6 +36,15 @@ func WithHeader(key, value string) RequestOption {
 	}
 }
 
+func WithOmitHeader(key string) RequestOption {
+	return func(o *RequestOptions) {
+		if o.Headers == nil {
+			o.Headers = make(http.Header)
+		}
+		o.Headers[key] = nil
+	}
+}
+
 func WithHeaders(headers map[string]string) RequestOption {
 	return func(o *RequestOptions) {
 		if o.Headers == nil {
