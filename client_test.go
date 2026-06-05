@@ -344,6 +344,51 @@ func TestClientHTTPVerbHelpers(t *testing.T) {
 	}
 }
 
+func TestClientHTTPByteContentHelpers(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+
+	attempts := 0
+	var seenBody []byte
+	var seenContentType string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read body: %v", err)
+		}
+		seenBody = body
+		seenContentType = r.Header.Get("Content-Type")
+		if attempts == 1 {
+			w.Header().Set("retry-after-ms", "1")
+			http.Error(w, `{"error":"retry"}`, http.StatusTooManyRequests)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(JSON{"size": len(body), "method": r.Method})
+	}))
+	defer server.Close()
+
+	client, err := NewClient(WithBaseURL(server.URL), WithMaxRetries(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := client.PostBytes(context.Background(), "/bytes", []byte("raw bytes"), WithHeader("Content-Type", "text/plain"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if attempts != 2 {
+		t.Fatalf("attempts = %d", attempts)
+	}
+	if string(seenBody) != "raw bytes" {
+		t.Fatalf("body = %q", seenBody)
+	}
+	if seenContentType != "text/plain" {
+		t.Fatalf("Content-Type = %q", seenContentType)
+	}
+	if out["size"].(float64) != 9 {
+		t.Fatalf("response = %#v", out)
+	}
+}
+
 func TestStatusErrorMapping(t *testing.T) {
 	t.Setenv("FIREWORKS_API_KEY", "test-key")
 

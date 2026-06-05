@@ -544,6 +544,23 @@ func (c *Client) Request(ctx context.Context, method, path string, body any, out
 	return c.do(req, out, maxRetries)
 }
 
+func (c *Client) RequestBytes(ctx context.Context, method, path string, content []byte, out any, opts ...RequestOption) error {
+	reqOpts := applyRequestOptions(opts)
+	ctx, cancel := contextWithRequestTimeout(ctx, opts)
+	if cancel != nil {
+		defer cancel()
+	}
+	req, err := c.newRequestWithReader(ctx, method, path, bytes.NewReader(content), "application/octet-stream", opts...)
+	if err != nil {
+		return err
+	}
+	maxRetries := c.maxRetries
+	if reqOpts.MaxRetries != nil {
+		maxRetries = *reqOpts.MaxRetries
+	}
+	return c.do(req, out, maxRetries)
+}
+
 func (c *Client) Get(ctx context.Context, path string, opts ...RequestOption) (Response, error) {
 	var out Response
 	err := c.Request(ctx, http.MethodGet, path, nil, &out, opts...)
@@ -556,9 +573,21 @@ func (c *Client) Post(ctx context.Context, path string, body any, opts ...Reques
 	return out, err
 }
 
+func (c *Client) PostBytes(ctx context.Context, path string, content []byte, opts ...RequestOption) (Response, error) {
+	var out Response
+	err := c.RequestBytes(ctx, http.MethodPost, path, content, &out, opts...)
+	return out, err
+}
+
 func (c *Client) Patch(ctx context.Context, path string, body any, opts ...RequestOption) (Response, error) {
 	var out Response
 	err := c.Request(ctx, http.MethodPatch, path, body, &out, opts...)
+	return out, err
+}
+
+func (c *Client) PatchBytes(ctx context.Context, path string, content []byte, opts ...RequestOption) (Response, error) {
+	var out Response
+	err := c.RequestBytes(ctx, http.MethodPatch, path, content, &out, opts...)
 	return out, err
 }
 
@@ -568,9 +597,21 @@ func (c *Client) Put(ctx context.Context, path string, body any, opts ...Request
 	return out, err
 }
 
+func (c *Client) PutBytes(ctx context.Context, path string, content []byte, opts ...RequestOption) (Response, error) {
+	var out Response
+	err := c.RequestBytes(ctx, http.MethodPut, path, content, &out, opts...)
+	return out, err
+}
+
 func (c *Client) Delete(ctx context.Context, path string, body any, opts ...RequestOption) (Response, error) {
 	var out Response
 	err := c.Request(ctx, http.MethodDelete, path, body, &out, opts...)
+	return out, err
+}
+
+func (c *Client) DeleteBytes(ctx context.Context, path string, content []byte, opts ...RequestOption) (Response, error) {
+	var out Response
+	err := c.RequestBytes(ctx, http.MethodDelete, path, content, &out, opts...)
 	return out, err
 }
 
