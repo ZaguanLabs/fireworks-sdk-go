@@ -538,11 +538,319 @@ func (m *DeploymentManager) Update(ctx context.Context, deploymentID string, bod
 	return m.ParseDeploymentInfo(deploymentID, out), nil
 }
 
+type HotloadOptions struct {
+	IncrementalSnapshotMetadata map[string]any
+	ResetPromptCache            *bool
+	Timeout                     time.Duration
+	Path                        string
+}
+
+func (m *DeploymentManager) Hotload(ctx context.Context, deploymentID, baseModel, snapshotIdentity string, opts ...HotloadOptions) (map[string]any, error) {
+	var opt HotloadOptions
+	if len(opts) > 0 {
+		opt = opts[0]
+	}
+	timeout := opt.Timeout
+	if timeout == 0 {
+		timeout = HTTPWriteTimeout
+	}
+	resetPromptCache := true
+	if opt.ResetPromptCache != nil {
+		resetPromptCache = *opt.ResetPromptCache
+	}
+	headers, err := m.HotloadHeaders(ctx, deploymentID, baseModel, opt.Path)
+	if err != nil {
+		return nil, err
+	}
+	url := m.HotloadAPIURL + "/hot_load/v1/models/hot_load"
+	includeResetPromptCache := m.HotloadResetPromptCacheSupported == nil || *m.HotloadResetPromptCacheSupported
+
+	payload := func(includeReset bool) map[string]any {
+		body := map[string]any{"identity": snapshotIdentity}
+		if includeReset {
+			body["reset_prompt_cache"] = resetPromptCache
+		}
+		if len(opt.IncrementalSnapshotMetadata) > 0 {
+			body["incremental_snapshot_metadata"] = cloneAnyMap(opt.IncrementalSnapshotMetadata)
+		}
+		return body
+	}
+
+	resp, err := m.gatewayJSON(ctx, http.MethodPost, url, headers, payload(includeResetPromptCache), timeout)
+	if err != nil {
+		return nil, err
+	}
+	if resp.statusCode < 200 || resp.statusCode >= 300 {
+		if includeResetPromptCache && resetPromptCacheUnsupported(resp.statusCode, resp.body) {
+			supported := false
+			m.HotloadResetPromptCacheSupported = &supported
+			resp, err = m.gatewayJSON(ctx, http.MethodPost, url, headers, payload(false), timeout)
+			if err != nil {
+				return nil, err
+			}
+		}
+	} else if includeResetPromptCache {
+		supported := true
+		m.HotloadResetPromptCacheSupported = &supported
+	}
+	if resp.statusCode < 200 || resp.statusCode >= 300 {
+		hint := HTTPStatusHints[resp.statusCode]
+		return nil, fmt.Errorf("%s", FormatSDKError(
+			fmt.Sprintf("Hotload API error (HTTP %d)", resp.statusCode),
+			ParseAPIErrorBody(resp.body),
+			hint+"\n  Verify the deployment is hotload-enabled, the base model matches the deployment, and the snapshot identity came from save_weights_for_sampler.",
+			SDKErrorFormatOptions{DocsURL: DocsSDK},
+		))
+	}
+	return decodeJSONMapOrEmpty(resp.body)
+}
+
+func (m *DeploymentManager) HotloadCheckStatus(ctx context.Context, deploymentID, baseModel string, timeout ...time.Duration) (map[string]any, error) {
+	requestTimeout := HTTPReadTimeout
+	if len(timeout) > 0 && timeout[0] != 0 {
+		requestTimeout = timeout[0]
+	}
+	headers, err := m.HotloadHeaders(ctx, deploymentID, baseModel, "")
+	if err != nil {
+		return nil, err
+	}
+	resp, err := m.gatewayJSON(ctx, http.MethodGet, m.HotloadAPIURL+"/hot_load/v1/models/hot_load", headers, nil, requestTimeout)
+	if err != nil {
+		return nil, err
+	}
+	if resp.statusCode < 200 || resp.statusCode >= 300 {
+		return nil, fmt.Errorf("hotload status: HTTP %d: %s", resp.statusCode, ParseAPIErrorBody(resp.body))
+	}
+	return decodeJSONMapOrEmpty(resp.body)
+}
+
+type HotloadWaitOptions struct {
+	Timeout      time.Duration
+	PollInterval time.Duration
+	Now          func() time.Time
+	Sleep        func(time.Duration)
+	CheckStatus  func(context.Context, string, string) (map[string]any, error)
+}
+
+func (m *DeploymentManager) WaitForHotload(ctx context.Context, deploymentID, baseModel, expectedIdentity string, opts ...HotloadWaitOptions) (bool, error) {
+	opt := hotloadWaitOptions(opts...)
+	if opt.CheckStatus == nil {
+		opt.CheckStatus = func(ctx context.Context, deploymentID, baseModel string) (map[string]any, error) {
+			return m.HotloadCheckStatus(ctx, deploymentID, baseModel)
+		}
+	}
+	start := opt.Now()
+	m.LastHotloadErrorMessage = ""
+	var lastCurrentIdentity string
+	lastStage := "unknown"
+	var lastReadiness *bool
+
+	for opt.Now().Sub(start) < opt.Timeout {
+		status, err := opt.CheckStatus(ctx, deploymentID, baseModel)
+		if err != nil {
+			opt.Sleep(opt.PollInterval)
+			continue
+		}
+		replicas, ok := status["replicas"].([]any)
+		if !ok {
+			keys := make([]string, 0, len(status))
+			for key := range status {
+				keys = append(keys, key)
+			}
+			return false, fmt.Errorf("%s", FormatSDKError(
+				"Unrecognized hotload status response format",
+				fmt.Sprintf("Expected 'replicas' list, got keys: %v", keys),
+				"The SDK hotload waiter expects the serving status endpoint to return a replicas list. Check the cookbook skill for the supported SDK/serving path, then retry with matching versions.",
+				SDKErrorFormatOptions{DocsURL: DocsSDK, ShowSupport: true},
+			))
+		}
+
+		var replica map[string]any
+		var loadedAdapters []any
+		currentIdentity := ""
+		stage := "pending"
+		readiness := false
+		if len(replicas) > 0 {
+			replica, _ = replicas[0].(map[string]any)
+			if replica == nil {
+				replica = map[string]any{}
+			}
+			currentIdentity = stringFromAny(replica["current_snapshot_identity"])
+			loadingState, _ := replica["loading_state"].(map[string]any)
+			stage = stringOrDefault(loadingState["stage"], "unknown")
+			readiness = truthy(replica["readiness"])
+			loadedAdapters, _ = replica["loaded_adapters"].([]any)
+		}
+		lastCurrentIdentity = currentIdentity
+		lastStage = stage
+		lastReadiness = &readiness
+
+		if readiness && (currentIdentity == expectedIdentity || loadedAdapterReady(loadedAdapters, expectedIdentity)) {
+			return true, nil
+		}
+		if stage == "error" {
+			loadingState, _ := replica["loading_state"].(map[string]any)
+			errorTarget := stringFromAny(loadingState["target_snapshot_identity"])
+			if errorTarget == expectedIdentity {
+				cause := "The deployment status reported an error for the requested snapshot. Expected client snapshot: " + expectedIdentity + "; current deployment snapshot: " + formatSnapshotIdentity(currentIdentity) + "; target snapshot: " + errorTarget + "; stage=error."
+				m.LastHotloadErrorMessage = FormatSDKError(
+					"Hotload failed for snapshot '"+expectedIdentity+"'",
+					cause,
+					HotloadRecoverySteps,
+					SDKErrorFormatOptions{DocsURL: DocsSDK, ShowSupport: true},
+				)
+				return false, nil
+			}
+		}
+		opt.Sleep(opt.PollInterval)
+	}
+	m.LastHotloadErrorMessage = m.formatHotloadTimeoutError(expectedIdentity, opt.Timeout, lastCurrentIdentity, lastStage, lastReadiness)
+	return false, nil
+}
+
+func (m *DeploymentManager) HotloadAndWait(ctx context.Context, deploymentID, baseModel, snapshotIdentity string, opts ...HotloadAndWaitOptions) (bool, error) {
+	var opt HotloadAndWaitOptions
+	if len(opts) > 0 {
+		opt = opts[0]
+	}
+	_, err := m.Hotload(ctx, deploymentID, baseModel, snapshotIdentity, HotloadOptions{
+		IncrementalSnapshotMetadata: opt.IncrementalSnapshotMetadata,
+		ResetPromptCache:            opt.ResetPromptCache,
+		Timeout:                     opt.RequestTimeout,
+		Path:                        opt.Path,
+	})
+	if err != nil {
+		return false, err
+	}
+	return m.WaitForHotload(ctx, deploymentID, baseModel, snapshotIdentity, opt.Wait)
+}
+
+type HotloadAndWaitOptions struct {
+	IncrementalSnapshotMetadata map[string]any
+	ResetPromptCache            *bool
+	RequestTimeout              time.Duration
+	Path                        string
+	Wait                        HotloadWaitOptions
+}
+
+type ReattachTrainerOptions struct {
+	Timeout             time.Duration
+	PollInterval        time.Duration
+	Now                 func() time.Time
+	Sleep               func(time.Duration)
+	ReadReplicaIdentity func(context.Context, string, string) (string, error)
+	Update              func(context.Context, string, map[string]any, any) (DeploymentInfo, error)
+}
+
+func (m *DeploymentManager) ReattachTrainer(ctx context.Context, deployment DeploymentInfo, baseModel, trainerJobName string, opts ...ReattachTrainerOptions) (DeploymentInfo, error) {
+	if DeploymentHotLoadTrainerJob(deployment) == trainerJobName {
+		return deployment, nil
+	}
+	return m.reattachTrainer(ctx, deployment.DeploymentID, baseModel, trainerJobName, opts...)
+}
+
+func (m *DeploymentManager) ReattachTrainerByID(ctx context.Context, deploymentID, baseModel, trainerJobName string, opts ...ReattachTrainerOptions) (DeploymentInfo, error) {
+	deployment, ok, err := m.GetInfo(ctx, deploymentID)
+	if err != nil {
+		return DeploymentInfo{}, err
+	}
+	if !ok {
+		return DeploymentInfo{}, fmt.Errorf("deployment %q does not exist", deploymentID)
+	}
+	return m.ReattachTrainer(ctx, deployment, baseModel, trainerJobName, opts...)
+}
+
+func (m *DeploymentManager) reattachTrainer(ctx context.Context, deploymentID, baseModel, trainerJobName string, opts ...ReattachTrainerOptions) (DeploymentInfo, error) {
+	opt := reattachTrainerOptions(opts...)
+	if opt.ReadReplicaIdentity == nil {
+		opt.ReadReplicaIdentity = m.ReadReplicaIdentity
+	}
+	if opt.Update == nil {
+		opt.Update = m.Update
+	}
+	prevIdentity, _ := opt.ReadReplicaIdentity(ctx, deploymentID, baseModel)
+	updated, err := opt.Update(ctx, deploymentID, map[string]any{"hotLoadTrainerJob": trainerJobName}, "hot_load_trainer_job")
+	if err != nil {
+		return DeploymentInfo{}, err
+	}
+	deadline := opt.Now().Add(maxDuration(opt.Timeout, time.Second))
+	sawPodGone := prevIdentity == ""
+	for opt.Now().Before(deadline) {
+		current, _ := opt.ReadReplicaIdentity(ctx, deploymentID, baseModel)
+		if prevIdentity == "" {
+			if current != "" {
+				return updated, nil
+			}
+		} else if current == "" {
+			sawPodGone = true
+		} else if sawPodGone && current != prevIdentity {
+			return updated, nil
+		} else if current != prevIdentity {
+			return updated, nil
+		}
+		opt.Sleep(opt.PollInterval)
+	}
+	return DeploymentInfo{}, fmt.Errorf("re-attach for deployment %q did not produce a fresh pod within %.0fs (prev_identity=%q)", deploymentID, opt.Timeout.Seconds(), prevIdentity)
+}
+
+func (m *DeploymentManager) ReadReplicaIdentity(ctx context.Context, deploymentID, baseModel string) (string, error) {
+	status, err := m.HotloadCheckStatus(ctx, deploymentID, baseModel)
+	if err != nil {
+		return "", err
+	}
+	replicas, _ := status["replicas"].([]any)
+	if len(replicas) == 0 {
+		return "", nil
+	}
+	replica, _ := replicas[0].(map[string]any)
+	if replica == nil {
+		return "", nil
+	}
+	if identity := stringFromAny(replica["current_snapshot_identity"]); identity != "" {
+		return identity, nil
+	}
+	return stringFromAny(replica["identity"]), nil
+}
+
+type WarmupOptions struct {
+	MaxRetries    int
+	RetryInterval time.Duration
+	Sleep         func(time.Duration)
+}
+
+func (m *DeploymentManager) Warmup(ctx context.Context, model string, opts ...WarmupOptions) bool {
+	opt := WarmupOptions{
+		MaxRetries:    30,
+		RetryInterval: 10 * time.Second,
+		Sleep:         time.Sleep,
+	}
+	if len(opts) > 0 {
+		provided := opts[0]
+		if provided.MaxRetries != 0 {
+			opt.MaxRetries = provided.MaxRetries
+		}
+		if provided.RetryInterval != 0 {
+			opt.RetryInterval = provided.RetryInterval
+		}
+		if provided.Sleep != nil {
+			opt.Sleep = provided.Sleep
+		}
+	}
+	for attempt := 0; attempt < opt.MaxRetries; attempt++ {
+		if m.ProbeInference(ctx, model) {
+			return true
+		}
+		opt.Sleep(opt.RetryInterval)
+	}
+	return false
+}
+
 func (m *DeploymentManager) ProbeInference(ctx context.Context, model string) bool {
 	payload := map[string]any{
-		"model":      model,
-		"prompt":     []int{1},
-		"max_tokens": 1,
+		"model":       model,
+		"prompt":      []int{1, 2},
+		"max_tokens":  4,
+		"temperature": 0.0,
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {
@@ -617,4 +925,171 @@ func updateMaskString(updateMask any) string {
 	default:
 		return ""
 	}
+}
+
+type gatewayJSONResponse struct {
+	statusCode int
+	body       []byte
+}
+
+func (m *DeploymentManager) gatewayJSON(ctx context.Context, method, rawURL string, headers http.Header, body any, timeout time.Duration) (gatewayJSONResponse, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+	var reader io.Reader
+	if body != nil {
+		payload, err := json.Marshal(body)
+		if err != nil {
+			return gatewayJSONResponse{}, err
+		}
+		reader = bytes.NewReader(payload)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, rawURL, reader)
+	if err != nil {
+		return gatewayJSONResponse{}, err
+	}
+	req.Header = headers.Clone()
+	if body != nil && req.Header.Get("Content-Type") == "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := m.httpClient.Do(req)
+	if err != nil {
+		return gatewayJSONResponse{}, err
+	}
+	defer resp.Body.Close()
+	payload, _ := io.ReadAll(resp.Body)
+	return gatewayJSONResponse{statusCode: resp.StatusCode, body: payload}, nil
+}
+
+func resetPromptCacheUnsupported(statusCode int, body []byte) bool {
+	if statusCode != http.StatusBadRequest {
+		return false
+	}
+	message := strings.ToLower(ParseAPIErrorBody(body) + " " + strings.TrimSpace(string(body)))
+	return strings.Contains(message, "reset_prompt_cache") && strings.Contains(message, "extra inputs are not permitted")
+}
+
+func decodeJSONMapOrEmpty(body []byte) (map[string]any, error) {
+	if len(body) == 0 {
+		return map[string]any{}, nil
+	}
+	var out map[string]any
+	if err := json.Unmarshal(body, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func hotloadWaitOptions(opts ...HotloadWaitOptions) HotloadWaitOptions {
+	opt := HotloadWaitOptions{
+		Timeout:      HotloadWaitTimeout,
+		PollInterval: HotloadWaitPoll,
+		Now:          time.Now,
+		Sleep:        time.Sleep,
+	}
+	if len(opts) > 0 {
+		provided := opts[0]
+		if provided.Timeout != 0 {
+			opt.Timeout = provided.Timeout
+		}
+		if provided.PollInterval != 0 {
+			opt.PollInterval = provided.PollInterval
+		}
+		if provided.Now != nil {
+			opt.Now = provided.Now
+		}
+		if provided.Sleep != nil {
+			opt.Sleep = provided.Sleep
+		}
+		if provided.CheckStatus != nil {
+			opt.CheckStatus = provided.CheckStatus
+		}
+	}
+	return opt
+}
+
+func loadedAdapterReady(adapters []any, expectedIdentity string) bool {
+	for _, adapter := range adapters {
+		row, _ := adapter.(map[string]any)
+		if row == nil {
+			continue
+		}
+		if stringFromAny(row["identity"]) == expectedIdentity && stringFromAny(row["status"]) == "loaded" {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *DeploymentManager) formatHotloadTimeoutError(expectedIdentity string, timeout time.Duration, currentIdentity, stage string, readiness *bool) string {
+	snapshotState := "Expected client snapshot: " + expectedIdentity + "; current deployment snapshot: " + formatSnapshotIdentity(currentIdentity) + "."
+	var cause string
+	if currentIdentity != "" && currentIdentity != expectedIdentity {
+		cause = "The deployment status did not report the requested snapshot as loaded before the timeout. " + snapshotState
+	} else {
+		cause = "The deployment status did not become ready for the requested snapshot before the timeout. " + snapshotState
+	}
+	if stage != "unknown" || readiness != nil {
+		ready := "unknown"
+		if readiness != nil {
+			ready = fmt.Sprintf("%t", *readiness)
+		}
+		cause += " Last hotload state: stage=" + stage + ", ready=" + ready + "."
+	}
+	return FormatSDKError(
+		fmt.Sprintf("Hotload did not complete within %.0fs", timeout.Seconds()),
+		cause,
+		fmt.Sprintf("%s\n  If the deployment is simply slow or unhealthy, increase the hotload timeout (current: %.0fs) and check deployment health in the Fireworks console: %s", HotloadRecoverySteps, timeout.Seconds(), ConsoleURL),
+		SDKErrorFormatOptions{DocsURL: DocsSDK},
+	)
+}
+
+func formatSnapshotIdentity(identity string) string {
+	if identity == "" {
+		return "none"
+	}
+	return identity
+}
+
+func reattachTrainerOptions(opts ...ReattachTrainerOptions) ReattachTrainerOptions {
+	opt := ReattachTrainerOptions{
+		Timeout:      ReattachSettleTimeout,
+		PollInterval: HotloadWaitPoll,
+		Now:          time.Now,
+		Sleep:        time.Sleep,
+	}
+	if len(opts) > 0 {
+		provided := opts[0]
+		if provided.Timeout != 0 {
+			opt.Timeout = provided.Timeout
+		}
+		if provided.PollInterval != 0 {
+			opt.PollInterval = provided.PollInterval
+		}
+		if provided.Now != nil {
+			opt.Now = provided.Now
+		}
+		if provided.Sleep != nil {
+			opt.Sleep = provided.Sleep
+		}
+		if provided.ReadReplicaIdentity != nil {
+			opt.ReadReplicaIdentity = provided.ReadReplicaIdentity
+		}
+		if provided.Update != nil {
+			opt.Update = provided.Update
+		}
+	}
+	return opt
+}
+
+func maxDuration(a, b time.Duration) time.Duration {
+	if a > b {
+		return a
+	}
+	return b
 }
