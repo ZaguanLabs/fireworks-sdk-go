@@ -873,6 +873,46 @@ func TestModelsListTypedUsesPythonPaginationShape(t *testing.T) {
 	}
 }
 
+func TestTypedListParamsUsePythonQueryAliases(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		query := r.URL.Query()
+		if got := query.Get("pageToken"); got != "cursor-1" {
+			t.Errorf("pageToken = %q", got)
+		}
+		if got := query.Get("pageSize"); got != "25" {
+			t.Errorf("pageSize = %q", got)
+		}
+		if got := query.Get("orderBy"); got != "name desc" {
+			t.Errorf("orderBy = %q", got)
+		}
+		if got := query.Get("readMask"); got != "name,displayName" {
+			t.Errorf("readMask = %q", got)
+		}
+		if got := query.Get("account_id"); got != "" {
+			t.Errorf("account_id should not be query param, got %q", got)
+		}
+		_ = json.NewEncoder(w).Encode(JSON{"models": []JSON{}})
+	}))
+	defer server.Close()
+
+	client, err := NewClient(WithBaseURL(server.URL), WithDefaultAccountID("acct"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.Models.ListTyped(context.Background(), fwtypes.ModelListParams{
+		AccountID: "ignored-in-query",
+		PageToken: "cursor-1",
+		PageSize:  25,
+		OrderBy:   "name desc",
+		ReadMask:  []string{"name", "displayName"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestTypedManagementActionParity(t *testing.T) {
 	t.Setenv("FIREWORKS_API_KEY", "test-key")
 

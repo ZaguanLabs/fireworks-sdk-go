@@ -859,6 +859,12 @@ func addQueryValue(values url.Values, key string, value any) {
 			parts = append(parts, strconv.FormatBool(item))
 		}
 		values.Set(key, strings.Join(parts, ","))
+	case []any:
+		parts := make([]string, 0, len(v))
+		for _, item := range v {
+			parts = append(parts, fmt.Sprint(item))
+		}
+		values.Set(key, strings.Join(parts, ","))
 	default:
 		values.Set(key, fmt.Sprint(v))
 	}

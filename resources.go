@@ -2,6 +2,7 @@ package fireworks
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/url"
 
@@ -48,14 +49,80 @@ func (r resource) accountPath(opts []RequestOption, makePath func(accountID stri
 	return r.client.managementPath(makePath(pathEscape(accountID))), nil
 }
 
-func withQuery(query map[string]any, opts []RequestOption) []RequestOption {
-	if len(query) == 0 {
+func withQuery(query any, opts []RequestOption) []RequestOption {
+	values, ok := queryMap(query)
+	if !ok {
 		return opts
 	}
 	out := make([]RequestOption, 0, len(opts)+1)
-	out = append(out, WithQuery(query))
+	out = append(out, WithQuery(values))
 	out = append(out, opts...)
 	return out
+}
+
+func queryMap(query any) (map[string]any, bool) {
+	switch v := query.(type) {
+	case nil:
+		return nil, false
+	case map[string]any:
+		return v, len(v) > 0
+	case url.Values:
+		out := make(map[string]any, len(v))
+		for key, values := range v {
+			switch len(values) {
+			case 0:
+				continue
+			case 1:
+				out[key] = values[0]
+			default:
+				out[key] = values
+			}
+		}
+		return out, len(out) > 0
+	default:
+		payload, err := json.Marshal(query)
+		if err != nil || string(payload) == "null" || string(payload) == "{}" {
+			return nil, false
+		}
+		var out map[string]any
+		if err := json.Unmarshal(payload, &out); err != nil {
+			return nil, false
+		}
+		out = normalizeQueryMap(out)
+		return out, len(out) > 0
+	}
+}
+
+func normalizeQueryMap(query map[string]any) map[string]any {
+	out := make(map[string]any, len(query))
+	for key, value := range query {
+		if value == nil || key == "account_id" {
+			continue
+		}
+		out[queryAlias(key)] = value
+	}
+	return out
+}
+
+func queryAlias(key string) string {
+	switch key {
+	case "order_by":
+		return "orderBy"
+	case "page_size":
+		return "pageSize"
+	case "page_token":
+		return "pageToken"
+	case "read_mask":
+		return "readMask"
+	case "config_only":
+		return "configOnly"
+	case "skip_hf_config_validation":
+		return "skipHfConfigValidation"
+	case "trust_remote_code":
+		return "trustRemoteCode"
+	default:
+		return key
+	}
 }
 
 func pathEscape(value string) string {
