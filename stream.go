@@ -13,6 +13,8 @@ type Stream struct {
 	response *http.Response
 	scanner  *bufio.Scanner
 	current  Response
+	raw      []byte
+	json     any
 	err      error
 }
 
@@ -70,12 +72,19 @@ func (s *Stream) Next() bool {
 		if data == "[DONE]" {
 			return false
 		}
-		var out Response
-		if err := json.Unmarshal([]byte(data), &out); err != nil {
+		raw := []byte(data)
+		var decoded any
+		if err := json.Unmarshal(raw, &decoded); err != nil {
 			s.err = err
 			return false
 		}
-		s.current = out
+		s.raw = append(s.raw[:0], raw...)
+		s.json = decoded
+		if object, ok := decoded.(map[string]any); ok {
+			s.current = Response(object)
+		} else {
+			s.current = nil
+		}
 		return true
 	}
 	if err := s.scanner.Err(); err != nil {
@@ -86,6 +95,14 @@ func (s *Stream) Next() bool {
 
 func (s *Stream) Current() Response {
 	return s.current
+}
+
+func (s *Stream) CurrentJSON() any {
+	return s.json
+}
+
+func (s *Stream) RawCurrent() []byte {
+	return append([]byte(nil), s.raw...)
 }
 
 func (s *Stream) Err() error {
@@ -115,13 +132,8 @@ func (s *TypedStream[T]) Next() bool {
 	if !s.stream.Next() {
 		return false
 	}
-	payload, err := json.Marshal(s.stream.Current())
-	if err != nil {
-		s.stream.err = err
-		return false
-	}
 	var out T
-	if err := json.Unmarshal(payload, &out); err != nil {
+	if err := json.Unmarshal(s.stream.RawCurrent(), &out); err != nil {
 		s.stream.err = err
 		return false
 	}

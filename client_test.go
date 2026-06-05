@@ -572,6 +572,43 @@ func TestStreamReadsServerSentEvents(t *testing.T) {
 	}
 }
 
+func TestStreamExposesRawAndNonObjectJSONEvents(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: [\"a\",\"b\"]\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer server.Close()
+
+	client, err := NewClient(WithBaseURL(server.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stream, err := client.Completions.CreateStream(context.Background(), JSON{"stream": true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Close()
+
+	if !stream.Next() {
+		t.Fatalf("expected first chunk, err=%v", stream.Err())
+	}
+	if stream.Current() != nil {
+		t.Fatalf("Current = %#v, want nil for non-object JSON", stream.Current())
+	}
+	values, ok := stream.CurrentJSON().([]any)
+	if !ok || len(values) != 2 || values[0] != "a" || values[1] != "b" {
+		t.Fatalf("CurrentJSON = %#v", stream.CurrentJSON())
+	}
+	raw := stream.RawCurrent()
+	raw[0] = '{'
+	if string(stream.RawCurrent()) != "[\"a\",\"b\"]" {
+		t.Fatalf("RawCurrent was not copied: %q", stream.RawCurrent())
+	}
+}
+
 func TestChatCompletionCreateTyped(t *testing.T) {
 	t.Setenv("FIREWORKS_API_KEY", "test-key")
 
