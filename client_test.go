@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	fwtypes "github.com/ZaguanLabs/fireworks-sdk-go/types"
 )
@@ -107,6 +108,112 @@ func TestAccountResourcePathAndCommaQuery(t *testing.T) {
 	}
 	if out["name"] != "model-1" {
 		t.Fatalf("response = %#v", out)
+	}
+}
+
+func TestWithOptionsClonesClientAndPreservesDefaultInferenceBaseURLMode(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+	t.Setenv("FIREWORKS_BASE_URL", "")
+
+	client, err := NewClient()
+	if err != nil {
+		t.Fatal(err)
+	}
+	clone, err := client.WithOptions(WithDefaultHeader("X-Clone", "yes"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if clone == client {
+		t.Fatal("expected a distinct client")
+	}
+	if clone.baseURLOverridden {
+		t.Fatal("clone unexpectedly marked the default base URL as overridden")
+	}
+	if got := clone.inferencePath("/v1/completions"); got != defaultBaseURL+"/inference/v1/completions" {
+		t.Fatalf("inference path = %q", got)
+	}
+	if got := clone.defaultHeaders.Get("X-Clone"); got != "yes" {
+		t.Fatalf("clone header = %q", got)
+	}
+	if got := client.defaultHeaders.Get("X-Clone"); got != "" {
+		t.Fatalf("original client header mutated to %q", got)
+	}
+}
+
+func TestWithOptionsOverridesClientSettingsForRequests(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "env-key")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Path; got != "/v1/accounts/acct-2/models/model-1" {
+			t.Errorf("path = %q", got)
+		}
+		if got := r.URL.Query().Get("source"); got != "clone" {
+			t.Errorf("source query = %q", got)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer key-2" {
+			t.Errorf("Authorization = %q", got)
+		}
+		if got := r.Header.Get("X-Scope"); got != "clone" {
+			t.Errorf("X-Scope = %q", got)
+		}
+		_ = json.NewEncoder(w).Encode(JSON{"name": "model-1"})
+	}))
+	defer server.Close()
+
+	client, err := NewClient(
+		WithAPIKey("key-1"),
+		WithBaseURL(server.URL),
+		WithDefaultAccountID("acct-1"),
+		WithDefaultHeader("X-Scope", "original"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clone, err := client.WithOptions(
+		WithAPIKey("key-2"),
+		WithDefaultAccountID("acct-2"),
+		WithDefaultHeader("X-Scope", "clone"),
+		WithDefaultQuery(map[string]any{"source": "clone"}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := clone.Models.Get(context.Background(), "model-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out["name"] != "model-1" {
+		t.Fatalf("response = %#v", out)
+	}
+	if client.APIKey() != "key-1" || client.AccountID() != "acct-1" || client.defaultHeaders.Get("X-Scope") != "original" {
+		t.Fatalf("original client mutated: apiKey=%q accountID=%q header=%q", client.APIKey(), client.AccountID(), client.defaultHeaders.Get("X-Scope"))
+	}
+}
+
+func TestRawHonorsRequestTimeout(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(50 * time.Millisecond)
+		_ = json.NewEncoder(w).Encode(JSON{"ok": true})
+	}))
+	defer server.Close()
+
+	client, err := NewClient(WithBaseURL(server.URL), WithMaxRetries(0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := client.Raw(context.Background(), http.MethodGet, "/slow", nil, WithTimeout(time.Millisecond))
+	if resp != nil {
+		_ = resp.Body.Close()
+	}
+	if err == nil {
+		t.Fatal("expected timeout error")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) && !strings.Contains(err.Error(), "context deadline exceeded") {
+		t.Fatalf("error = %v", err)
 	}
 }
 

@@ -66,6 +66,7 @@ type clientConfig struct {
 	apiKey         string
 	accountID      string
 	baseURL        string
+	baseURLSet     bool
 	httpClient     *http.Client
 	defaultHeaders http.Header
 	defaultQuery   url.Values
@@ -87,6 +88,7 @@ func WithDefaultAccountID(accountID string) ClientOption {
 func WithBaseURL(baseURL string) ClientOption {
 	return func(c *clientConfig) {
 		c.baseURL = baseURL
+		c.baseURLSet = true
 	}
 }
 
@@ -152,7 +154,7 @@ func NewClient(opts ...ClientOption) (*Client, error) {
 		cfg.accountID = os.Getenv("FIREWORKS_ACCOUNT_ID")
 	}
 
-	baseURLOverridden := cfg.baseURL != ""
+	baseURLOverridden := cfg.baseURLSet && cfg.baseURL != ""
 	if cfg.baseURL == "" {
 		cfg.baseURL = os.Getenv("FIREWORKS_BASE_URL")
 		baseURLOverridden = cfg.baseURL != ""
@@ -200,6 +202,60 @@ func NewClient(opts ...ClientOption) (*Client, error) {
 
 func MustNewClient(opts ...ClientOption) *Client {
 	client, err := NewClient(opts...)
+	if err != nil {
+		panic(err)
+	}
+	return client
+}
+
+func (c *Client) WithOptions(opts ...ClientOption) (*Client, error) {
+	cfg := clientConfig{
+		apiKey:         c.apiKey,
+		accountID:      c.accountID,
+		baseURL:        c.baseURL.String(),
+		baseURLSet:     c.baseURLOverridden,
+		httpClient:     c.httpClient,
+		defaultHeaders: c.defaultHeaders.Clone(),
+		defaultQuery:   cloneValues(c.defaultQuery),
+		maxRetries:     c.maxRetries,
+	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&cfg)
+		}
+	}
+	if cfg.apiKey == "" {
+		return nil, &Error{Message: "the api_key client option must be set either by passing WithAPIKey to NewClient or by setting the FIREWORKS_API_KEY environment variable"}
+	}
+	if cfg.baseURL == "" {
+		cfg.baseURL = defaultBaseURL
+		cfg.baseURLSet = false
+	}
+	if cfg.httpClient == nil {
+		cfg.httpClient = defaultHTTPClient()
+	}
+
+	parsedBaseURL, err := url.Parse(cfg.baseURL)
+	if err != nil {
+		return nil, fmt.Errorf("fireworks: invalid base URL: %w", err)
+	}
+
+	clone := &Client{
+		apiKey:            cfg.apiKey,
+		accountID:         cfg.accountID,
+		baseURL:           parsedBaseURL,
+		baseURLOverridden: cfg.baseURLSet && cfg.baseURL != "",
+		httpClient:        cfg.httpClient,
+		defaultHeaders:    cfg.defaultHeaders.Clone(),
+		defaultQuery:      cloneValues(cfg.defaultQuery),
+		maxRetries:        cfg.maxRetries,
+	}
+	clone.initResources()
+	return clone, nil
+}
+
+func (c *Client) MustWithOptions(opts ...ClientOption) *Client {
+	client, err := c.WithOptions(opts...)
 	if err != nil {
 		panic(err)
 	}
@@ -389,10 +445,8 @@ func (c *Client) Do(req *http.Request, out any) error {
 }
 
 func (c *Client) Request(ctx context.Context, method, path string, body any, out any, opts ...RequestOption) error {
-	reqOpts := applyRequestOptions(opts)
-	if reqOpts.Timeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, reqOpts.Timeout)
+	ctx, cancel := contextWithRequestTimeout(ctx, opts)
+	if cancel != nil {
 		defer cancel()
 	}
 	req, err := c.NewRequest(ctx, method, path, body, opts...)
@@ -403,11 +457,29 @@ func (c *Client) Request(ctx context.Context, method, path string, body any, out
 }
 
 func (c *Client) Raw(ctx context.Context, method, path string, body any, opts ...RequestOption) (*http.Response, error) {
+	ctx, cancel := contextWithRequestTimeout(ctx, opts)
 	req, err := c.NewRequest(ctx, method, path, body, opts...)
 	if err != nil {
+		if cancel != nil {
+			cancel()
+		}
 		return nil, err
 	}
-	return c.httpClient.Do(req)
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		if cancel != nil {
+			cancel()
+		}
+		return nil, err
+	}
+	if cancel != nil {
+		if resp.Body != nil {
+			resp.Body = &cancelReadCloser{ReadCloser: resp.Body, cancel: cancel}
+		} else {
+			cancel()
+		}
+	}
+	return resp, nil
 }
 
 func (c *Client) resolveAccountID(opts RequestOptions) (string, error) {
@@ -489,6 +561,25 @@ func cloneValues(values url.Values) url.Values {
 		cloned[key] = append([]string(nil), vals...)
 	}
 	return cloned
+}
+
+func contextWithRequestTimeout(ctx context.Context, opts []RequestOption) (context.Context, context.CancelFunc) {
+	reqOpts := applyRequestOptions(opts)
+	if reqOpts.Timeout <= 0 {
+		return ctx, nil
+	}
+	return context.WithTimeout(ctx, reqOpts.Timeout)
+}
+
+type cancelReadCloser struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (r *cancelReadCloser) Close() error {
+	err := r.ReadCloser.Close()
+	r.cancel()
+	return err
 }
 
 func addQueryValue(values url.Values, key string, value any) {

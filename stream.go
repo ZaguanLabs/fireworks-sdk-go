@@ -22,13 +22,27 @@ type TypedStream[T any] struct {
 }
 
 func newStream(ctx context.Context, client *Client, path string, body any, opts ...RequestOption) (*Stream, error) {
+	ctx, cancel := contextWithRequestTimeout(ctx, opts)
 	req, err := client.NewRequest(ctx, http.MethodPost, path, body, opts...)
 	if err != nil {
+		if cancel != nil {
+			cancel()
+		}
 		return nil, err
 	}
 	resp, err := client.httpClient.Do(req)
 	if err != nil {
+		if cancel != nil {
+			cancel()
+		}
 		return nil, err
+	}
+	if cancel != nil {
+		if resp.Body != nil {
+			resp.Body = &cancelReadCloser{ReadCloser: resp.Body, cancel: cancel}
+		} else {
+			cancel()
+		}
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		payload, readErr := io.ReadAll(resp.Body)
