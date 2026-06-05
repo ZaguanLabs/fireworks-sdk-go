@@ -14,6 +14,7 @@ type RequestOptions struct {
 	AccountID string
 	Headers   http.Header
 	Query     url.Values
+	ExtraBody map[string]any
 	Timeout   time.Duration
 }
 
@@ -61,6 +62,26 @@ func WithQuery(query map[string]any) RequestOption {
 		}
 		for key, value := range query {
 			addQueryValue(o.Query, key, value)
+		}
+	}
+}
+
+func WithExtraBodyField(key string, value any) RequestOption {
+	return func(o *RequestOptions) {
+		if o.ExtraBody == nil {
+			o.ExtraBody = make(map[string]any)
+		}
+		o.ExtraBody[key] = value
+	}
+}
+
+func WithExtraBody(body map[string]any) RequestOption {
+	return func(o *RequestOptions) {
+		if o.ExtraBody == nil {
+			o.ExtraBody = make(map[string]any)
+		}
+		for key, value := range body {
+			o.ExtraBody[key] = value
 		}
 	}
 }

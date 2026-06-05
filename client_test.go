@@ -340,6 +340,51 @@ func TestChatCompletionCreateTyped(t *testing.T) {
 	}
 }
 
+func TestWithExtraBodyMergesIntoJSONRequest(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode request body: %v", err)
+		}
+		if got := body["model"]; got != "override-model" {
+			t.Errorf("model = %q", got)
+		}
+		if got := body["prompt"]; got != "prompt" {
+			t.Errorf("prompt = %q", got)
+		}
+		if got := body["custom"]; got != "value" {
+			t.Errorf("custom = %q", got)
+		}
+		_ = json.NewEncoder(w).Encode(JSON{
+			"id":      "cmpl-1",
+			"created": 123,
+			"model":   "override-model",
+			"choices": []JSON{
+				{"index": 0, "text": "ok"},
+			},
+		})
+	}))
+	defer server.Close()
+
+	client, err := NewClient(WithBaseURL(server.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := client.Completions.CreateTyped(
+		context.Background(),
+		fwtypes.CompletionCreateParams{Model: "base-model", Prompt: "prompt"},
+		WithExtraBody(map[string]any{"model": "override-model", "custom": "value"}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Model != "override-model" {
+		t.Fatalf("model = %q", out.Model)
+	}
+}
+
 func TestCompletionCreateTypedStream(t *testing.T) {
 	t.Setenv("FIREWORKS_API_KEY", "test-key")
 

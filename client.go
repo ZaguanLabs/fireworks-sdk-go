@@ -306,7 +306,15 @@ func (c *Client) initResources() {
 }
 
 func (c *Client) NewRequest(ctx context.Context, method, path string, body any, opts ...RequestOption) (*http.Request, error) {
+	reqOpts := applyRequestOptions(opts)
 	var reqBody io.Reader
+	if len(reqOpts.ExtraBody) > 0 {
+		var err error
+		body, err = mergeExtraBody(body, reqOpts.ExtraBody)
+		if err != nil {
+			return nil, err
+		}
+	}
 	if body != nil {
 		payload, err := json.Marshal(body)
 		if err != nil {
@@ -371,8 +379,15 @@ func (c *Client) newRequestWithReader(ctx context.Context, method, path string, 
 }
 
 func (c *Client) MultipartRequest(ctx context.Context, method, path string, fields map[string]any, files map[string]File, out any, opts ...RequestOption) error {
+	reqOpts := applyRequestOptions(opts)
 	var reqBody bytes.Buffer
 	writer := multipart.NewWriter(&reqBody)
+	for key, value := range reqOpts.ExtraBody {
+		if fields == nil {
+			fields = make(map[string]any)
+		}
+		fields[key] = value
+	}
 	for key, value := range fields {
 		if err := writeMultipartField(writer, key, value); err != nil {
 			return err
@@ -596,6 +611,23 @@ func cloneValues(values url.Values) url.Values {
 		cloned[key] = append([]string(nil), vals...)
 	}
 	return cloned
+}
+
+func mergeExtraBody(body any, extra map[string]any) (map[string]any, error) {
+	merged := make(map[string]any)
+	if body != nil {
+		payload, err := json.Marshal(body)
+		if err != nil {
+			return nil, fmt.Errorf("fireworks: marshal request body: %w", err)
+		}
+		if err := json.Unmarshal(payload, &merged); err != nil {
+			return nil, fmt.Errorf("fireworks: merge extra body: %w", err)
+		}
+	}
+	for key, value := range extra {
+		merged[key] = value
+	}
+	return merged, nil
 }
 
 func contextWithRequestTimeout(ctx context.Context, opts []RequestOption) (context.Context, context.CancelFunc) {
