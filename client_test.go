@@ -656,6 +656,79 @@ func TestClientRawAndTextResponseHelpers(t *testing.T) {
 	}
 }
 
+func TestClientAPIResponseHelperExposesMetadataAndParsing(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts == 1 {
+			w.Header().Set("retry-after-ms", "1")
+			http.Error(w, `{"error":"retry"}`, http.StatusTooManyRequests)
+			return
+		}
+		if got := r.URL.Query().Get("source"); got != "response" {
+			t.Errorf("source query = %q", got)
+		}
+		w.Header().Set("X-Request-ID", "req-123")
+		w.Header().Set("X-Custom", "value")
+		_ = json.NewEncoder(w).Encode(JSON{"ok": true})
+	}))
+	defer server.Close()
+
+	client, err := NewClient(WithBaseURL(server.URL), WithMaxRetries(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := client.GetResponse(context.Background(), "/metadata", WithQueryParam("source", "response"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	if resp.Request == nil || resp.Request.Method != http.MethodGet {
+		t.Fatalf("request = %#v", resp.Request)
+	}
+	if resp.RequestID != "req-123" {
+		t.Fatalf("request id = %q", resp.RequestID)
+	}
+	if resp.Header.Get("X-Custom") != "value" {
+		t.Fatalf("header = %q", resp.Header.Get("X-Custom"))
+	}
+	if resp.RetriesTaken != 1 {
+		t.Fatalf("retries taken = %d", resp.RetriesTaken)
+	}
+	if resp.Text() == "" {
+		t.Fatal("expected response text")
+	}
+	parsed, err := resp.JSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.(map[string]any)["ok"] != true {
+		t.Fatalf("json = %#v", parsed)
+	}
+	var out struct {
+		OK bool `json:"ok"`
+	}
+	if err := resp.ParseJSON(&out); err != nil {
+		t.Fatal(err)
+	}
+	if !out.OK {
+		t.Fatalf("parsed struct = %#v", out)
+	}
+
+	copied := resp.Bytes()
+	if len(resp.Body) == 0 {
+		t.Fatal("missing body")
+	}
+	copied[0] = 'X'
+	if resp.Body[0] == 'X' {
+		t.Fatal("Bytes returned the internal body slice")
+	}
+}
+
 func TestClientRawByteContentResponseHelper(t *testing.T) {
 	t.Setenv("FIREWORKS_API_KEY", "test-key")
 
@@ -689,6 +762,40 @@ func TestClientRawByteContentResponseHelper(t *testing.T) {
 	}
 	if seenContentType != "application/octet-stream" {
 		t.Fatalf("Content-Type = %q", seenContentType)
+	}
+}
+
+func TestClientAPIResponseByteContentHelper(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+
+	var seenBody string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read body: %v", err)
+		}
+		seenBody = string(body)
+		w.Header().Set("X-Request-ID", "req-bytes")
+		_, _ = w.Write([]byte("accepted"))
+	}))
+	defer server.Close()
+
+	client, err := NewClient(WithBaseURL(server.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := client.PostBytesResponse(context.Background(), "/bytes", []byte("payload"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if seenBody != "payload" {
+		t.Fatalf("body = %q", seenBody)
+	}
+	if resp.RequestID != "req-bytes" {
+		t.Fatalf("request id = %q", resp.RequestID)
+	}
+	if resp.Text() != "accepted" {
+		t.Fatalf("text = %q", resp.Text())
 	}
 }
 

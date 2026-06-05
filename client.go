@@ -530,6 +530,18 @@ func (c *Client) DoBytes(req *http.Request) ([]byte, error) {
 }
 
 func (c *Client) doBytes(req *http.Request, maxRetries int) ([]byte, error) {
+	resp, err := c.doResponse(req, maxRetries)
+	if err != nil {
+		return nil, err
+	}
+	return resp.Body, nil
+}
+
+func (c *Client) DoResponse(req *http.Request) (*APIResponse, error) {
+	return c.doResponse(req, c.maxRetries)
+}
+
+func (c *Client) doResponse(req *http.Request, maxRetries int) (*APIResponse, error) {
 	var bodyCopy []byte
 	if req.Body != nil {
 		payload, err := io.ReadAll(req.Body)
@@ -593,7 +605,15 @@ func (c *Client) doBytes(req *http.Request, maxRetries int) ([]byte, error) {
 		}
 
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-			return body, nil
+			return &APIResponse{
+				Request:      attemptReq,
+				StatusCode:   resp.StatusCode,
+				Status:       resp.Status,
+				Header:       resp.Header.Clone(),
+				Body:         append([]byte(nil), body...),
+				RequestID:    resp.Header.Get("X-Request-ID"),
+				RetriesTaken: attempt,
+			}, nil
 		}
 
 		if attempt < retries && shouldRetryResponse(resp, body) {
@@ -625,6 +645,14 @@ func (c *Client) Request(ctx context.Context, method, path string, body any, out
 }
 
 func (c *Client) RequestRaw(ctx context.Context, method, path string, body any, opts ...RequestOption) ([]byte, error) {
+	resp, err := c.RequestResponse(ctx, method, path, body, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return resp.Body, nil
+}
+
+func (c *Client) RequestResponse(ctx context.Context, method, path string, body any, opts ...RequestOption) (*APIResponse, error) {
 	reqOpts := applyRequestOptions(opts)
 	ctx, cancel := contextWithRequestTimeout(ctx, opts)
 	if cancel != nil {
@@ -638,7 +666,7 @@ func (c *Client) RequestRaw(ctx context.Context, method, path string, body any, 
 	if reqOpts.MaxRetries != nil {
 		maxRetries = *reqOpts.MaxRetries
 	}
-	return c.doBytes(req, maxRetries)
+	return c.doResponse(req, maxRetries)
 }
 
 func (c *Client) RequestText(ctx context.Context, method, path string, body any, opts ...RequestOption) (string, error) {
@@ -667,6 +695,14 @@ func (c *Client) RequestBytes(ctx context.Context, method, path string, content 
 }
 
 func (c *Client) RequestBytesRaw(ctx context.Context, method, path string, content []byte, opts ...RequestOption) ([]byte, error) {
+	resp, err := c.RequestBytesResponse(ctx, method, path, content, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return resp.Body, nil
+}
+
+func (c *Client) RequestBytesResponse(ctx context.Context, method, path string, content []byte, opts ...RequestOption) (*APIResponse, error) {
 	reqOpts := applyRequestOptions(opts)
 	ctx, cancel := contextWithRequestTimeout(ctx, opts)
 	if cancel != nil {
@@ -680,7 +716,7 @@ func (c *Client) RequestBytesRaw(ctx context.Context, method, path string, conte
 	if reqOpts.MaxRetries != nil {
 		maxRetries = *reqOpts.MaxRetries
 	}
-	return c.doBytes(req, maxRetries)
+	return c.doResponse(req, maxRetries)
 }
 
 func (c *Client) RequestBytesText(ctx context.Context, method, path string, content []byte, opts ...RequestOption) (string, error) {
@@ -701,6 +737,10 @@ func (c *Client) GetRaw(ctx context.Context, path string, opts ...RequestOption)
 	return c.RequestRaw(ctx, http.MethodGet, path, nil, opts...)
 }
 
+func (c *Client) GetResponse(ctx context.Context, path string, opts ...RequestOption) (*APIResponse, error) {
+	return c.RequestResponse(ctx, http.MethodGet, path, nil, opts...)
+}
+
 func (c *Client) GetText(ctx context.Context, path string, opts ...RequestOption) (string, error) {
 	return c.RequestText(ctx, http.MethodGet, path, nil, opts...)
 }
@@ -713,6 +753,10 @@ func (c *Client) Post(ctx context.Context, path string, body any, opts ...Reques
 
 func (c *Client) PostRaw(ctx context.Context, path string, body any, opts ...RequestOption) ([]byte, error) {
 	return c.RequestRaw(ctx, http.MethodPost, path, body, opts...)
+}
+
+func (c *Client) PostResponse(ctx context.Context, path string, body any, opts ...RequestOption) (*APIResponse, error) {
+	return c.RequestResponse(ctx, http.MethodPost, path, body, opts...)
 }
 
 func (c *Client) PostText(ctx context.Context, path string, body any, opts ...RequestOption) (string, error) {
@@ -729,6 +773,10 @@ func (c *Client) PostBytesRaw(ctx context.Context, path string, content []byte, 
 	return c.RequestBytesRaw(ctx, http.MethodPost, path, content, opts...)
 }
 
+func (c *Client) PostBytesResponse(ctx context.Context, path string, content []byte, opts ...RequestOption) (*APIResponse, error) {
+	return c.RequestBytesResponse(ctx, http.MethodPost, path, content, opts...)
+}
+
 func (c *Client) PostBytesText(ctx context.Context, path string, content []byte, opts ...RequestOption) (string, error) {
 	return c.RequestBytesText(ctx, http.MethodPost, path, content, opts...)
 }
@@ -741,6 +789,10 @@ func (c *Client) Patch(ctx context.Context, path string, body any, opts ...Reque
 
 func (c *Client) PatchRaw(ctx context.Context, path string, body any, opts ...RequestOption) ([]byte, error) {
 	return c.RequestRaw(ctx, http.MethodPatch, path, body, opts...)
+}
+
+func (c *Client) PatchResponse(ctx context.Context, path string, body any, opts ...RequestOption) (*APIResponse, error) {
+	return c.RequestResponse(ctx, http.MethodPatch, path, body, opts...)
 }
 
 func (c *Client) PatchText(ctx context.Context, path string, body any, opts ...RequestOption) (string, error) {
@@ -757,6 +809,10 @@ func (c *Client) PatchBytesRaw(ctx context.Context, path string, content []byte,
 	return c.RequestBytesRaw(ctx, http.MethodPatch, path, content, opts...)
 }
 
+func (c *Client) PatchBytesResponse(ctx context.Context, path string, content []byte, opts ...RequestOption) (*APIResponse, error) {
+	return c.RequestBytesResponse(ctx, http.MethodPatch, path, content, opts...)
+}
+
 func (c *Client) PatchBytesText(ctx context.Context, path string, content []byte, opts ...RequestOption) (string, error) {
 	return c.RequestBytesText(ctx, http.MethodPatch, path, content, opts...)
 }
@@ -769,6 +825,10 @@ func (c *Client) Put(ctx context.Context, path string, body any, opts ...Request
 
 func (c *Client) PutRaw(ctx context.Context, path string, body any, opts ...RequestOption) ([]byte, error) {
 	return c.RequestRaw(ctx, http.MethodPut, path, body, opts...)
+}
+
+func (c *Client) PutResponse(ctx context.Context, path string, body any, opts ...RequestOption) (*APIResponse, error) {
+	return c.RequestResponse(ctx, http.MethodPut, path, body, opts...)
 }
 
 func (c *Client) PutText(ctx context.Context, path string, body any, opts ...RequestOption) (string, error) {
@@ -785,6 +845,10 @@ func (c *Client) PutBytesRaw(ctx context.Context, path string, content []byte, o
 	return c.RequestBytesRaw(ctx, http.MethodPut, path, content, opts...)
 }
 
+func (c *Client) PutBytesResponse(ctx context.Context, path string, content []byte, opts ...RequestOption) (*APIResponse, error) {
+	return c.RequestBytesResponse(ctx, http.MethodPut, path, content, opts...)
+}
+
 func (c *Client) PutBytesText(ctx context.Context, path string, content []byte, opts ...RequestOption) (string, error) {
 	return c.RequestBytesText(ctx, http.MethodPut, path, content, opts...)
 }
@@ -799,6 +863,10 @@ func (c *Client) DeleteRaw(ctx context.Context, path string, body any, opts ...R
 	return c.RequestRaw(ctx, http.MethodDelete, path, body, opts...)
 }
 
+func (c *Client) DeleteResponse(ctx context.Context, path string, body any, opts ...RequestOption) (*APIResponse, error) {
+	return c.RequestResponse(ctx, http.MethodDelete, path, body, opts...)
+}
+
 func (c *Client) DeleteText(ctx context.Context, path string, body any, opts ...RequestOption) (string, error) {
 	return c.RequestText(ctx, http.MethodDelete, path, body, opts...)
 }
@@ -811,6 +879,10 @@ func (c *Client) DeleteBytes(ctx context.Context, path string, content []byte, o
 
 func (c *Client) DeleteBytesRaw(ctx context.Context, path string, content []byte, opts ...RequestOption) ([]byte, error) {
 	return c.RequestBytesRaw(ctx, http.MethodDelete, path, content, opts...)
+}
+
+func (c *Client) DeleteBytesResponse(ctx context.Context, path string, content []byte, opts ...RequestOption) (*APIResponse, error) {
+	return c.RequestBytesResponse(ctx, http.MethodDelete, path, content, opts...)
 }
 
 func (c *Client) DeleteBytesText(ctx context.Context, path string, content []byte, opts ...RequestOption) (string, error) {

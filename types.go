@@ -1,6 +1,7 @@
 package fireworks
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/url"
 	"time"
@@ -9,6 +10,48 @@ import (
 type JSON map[string]any
 
 type Response = JSON
+
+type APIResponse struct {
+	Request      *http.Request
+	StatusCode   int
+	Status       string
+	Header       http.Header
+	Body         []byte
+	RequestID    string
+	RetriesTaken int
+}
+
+func (r *APIResponse) Text() string {
+	if r == nil {
+		return ""
+	}
+	return string(r.Body)
+}
+
+func (r *APIResponse) Bytes() []byte {
+	if r == nil {
+		return nil
+	}
+	return append([]byte(nil), r.Body...)
+}
+
+func (r *APIResponse) JSON() (any, error) {
+	if r == nil || len(r.Body) == 0 {
+		return nil, nil
+	}
+	var out any
+	if err := json.Unmarshal(r.Body, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (r *APIResponse) ParseJSON(out any) error {
+	if r == nil || len(r.Body) == 0 || out == nil {
+		return nil
+	}
+	return json.Unmarshal(r.Body, out)
+}
 
 type RequestOptions struct {
 	AccountID  string
