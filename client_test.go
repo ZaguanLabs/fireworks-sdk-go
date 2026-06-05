@@ -264,6 +264,53 @@ func TestCompletionCreateTypedStream(t *testing.T) {
 	}
 }
 
+func TestMessagesCreateTyped(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Path; got != "/v1/messages" {
+			t.Errorf("path = %q", got)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode request body: %v", err)
+		}
+		if got := body["model"]; got != "accounts/fireworks/models/test" {
+			t.Errorf("model = %q", got)
+		}
+		_ = json.NewEncoder(w).Encode(JSON{
+			"id":    "msg-1",
+			"model": "accounts/fireworks/models/test",
+			"role":  "assistant",
+			"type":  "message",
+			"content": []JSON{
+				{"type": "text", "text": "hello"},
+			},
+			"stop_reason": "end_turn",
+		})
+	}))
+	defer server.Close()
+
+	client, err := NewClient(WithBaseURL(server.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := client.Messages.CreateTyped(context.Background(), fwtypes.MessageCreateParams{
+		Model: "accounts/fireworks/models/test",
+		Messages: []fwtypes.MessageCreateParamsMessage{
+			{Role: "user", Content: "hello"},
+		},
+		MaxTokens: 64,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var _ *fwtypes.MessageCreateResponse = out
+	if out.ID != "msg-1" || out.Role != "assistant" {
+		t.Fatalf("response = %#v", out)
+	}
+}
+
 func TestModelsListTypedUsesPythonPaginationShape(t *testing.T) {
 	t.Setenv("FIREWORKS_API_KEY", "test-key")
 	t.Setenv("FIREWORKS_ACCOUNT_ID", "acct")

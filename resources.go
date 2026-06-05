@@ -119,6 +119,12 @@ func (r *MessagesResource) Create(ctx context.Context, body any, opts ...Request
 	return resource{r.client}.post(ctx, r.client.inferencePath("/v1/messages"), body, opts...)
 }
 
+func (r *MessagesResource) CreateTyped(ctx context.Context, params fwtypes.MessageCreateParams, opts ...RequestOption) (*fwtypes.MessageCreateResponse, error) {
+	var out fwtypes.MessageCreateResponse
+	err := r.client.Request(ctx, http.MethodPost, r.client.inferencePath("/v1/messages"), params, &out, opts...)
+	return &out, err
+}
+
 type AccountsResource struct {
 	client *Client
 }
