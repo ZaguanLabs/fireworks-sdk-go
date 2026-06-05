@@ -1,7 +1,7 @@
 # fireworks-sdk-go
 Unofficial Fireworks SDK in Go ported from their Python SDK
 
-This port currently targets the official Python SDK version `1.2.0-alpha.75`.
+This port currently targets the official Python SDK version `1.2.0-alpha.76`.
 
 ```go
 import (

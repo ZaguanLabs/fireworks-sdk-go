@@ -17,8 +17,8 @@ import (
 )
 
 func TestVersionMatchesPythonSDK(t *testing.T) {
-	if Version != "1.2.0-alpha.75" {
-		t.Fatalf("Version = %q, want %q", Version, "1.2.0-alpha.75")
+	if Version != "1.2.0-alpha.76" {
+		t.Fatalf("Version = %q, want %q", Version, "1.2.0-alpha.76")
 	}
 }
 

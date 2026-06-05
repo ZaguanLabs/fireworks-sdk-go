@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-ROOT = REPO_ROOT / "docs/fireworks-py/python-sdk-1.2.0-alpha.75/src/fireworks/types"
+ROOT = REPO_ROOT / "docs/fireworks-py/python-sdk-1.2.0-alpha.76/src/fireworks/types"
 OUT = REPO_ROOT / "types/generated.go"
 
 
