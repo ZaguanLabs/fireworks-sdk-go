@@ -677,6 +677,177 @@ func TestDeploymentSamplerHotloadReadinessRetry(t *testing.T) {
 	}
 }
 
+func TestFiretitanSamplingClientSampleReturnsTinkerShapedResponse(t *testing.T) {
+	promptIDs := []int{10, 20, 30}
+	completionIDs := []int{40, 50}
+	tokenizer := &fakeDeploymentTokenizer{}
+	var captured CompletionRequestOptions
+	var capturedPrompt []int
+	sampler := NewDeploymentSampler("https://api.example.com", "m", "key",
+		WithDeploymentSamplerTokenizer(tokenizer),
+		WithDeploymentSamplerRequester(func(_ context.Context, prompt []int, opts CompletionRequestOptions) (map[string]any, ServerMetrics, error) {
+			capturedPrompt = append([]int(nil), prompt...)
+			captured = opts
+			return map[string]any{"choices": []any{map[string]any{
+				"text":          "out",
+				"finish_reason": "stop",
+				"raw_output":    map[string]any{"completion_token_ids": completionIDs},
+				"logprobs": map[string]any{"content": []any{
+					map[string]any{"logprob": -0.3},
+					map[string]any{"logprob": -0.4},
+				}},
+			}}}, ServerMetrics{}, nil
+		}),
+	)
+	client := NewFiretitanSamplingClient(sampler)
+	maxTokens := 2
+	temperature := 0.7
+	topP := 0.9
+	topK := 10
+	seed := 123
+
+	response, err := client.Sample(context.Background(), promptIDs, 1, FiretitanSamplingParams{
+		MaxTokens:   &maxTokens,
+		Stop:        []int{99},
+		Temperature: &temperature,
+		TopP:        &topP,
+		TopK:        &topK,
+		Seed:        &seed,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Sequences) != 1 {
+		t.Fatalf("response = %#v", response)
+	}
+	seq := response.Sequences[0]
+	if seq.StopReason != "stop" || len(seq.Tokens) != 2 || seq.Tokens[0] != 40 || seq.Tokens[1] != 50 {
+		t.Fatalf("seq = %#v", seq)
+	}
+	if seq.Logprobs[0] != -0.3 || seq.Logprobs[1] != -0.4 {
+		t.Fatalf("seq = %#v", seq)
+	}
+	if response.PromptLogprobs != nil {
+		t.Fatalf("prompt logprobs = %#v", response.PromptLogprobs)
+	}
+	if !intSlicePrefixEqual(capturedPrompt, promptIDs) || captured.MaxTokens != 2 || captured.Temperature != 0.7 || !captured.Logprobs {
+		t.Fatalf("prompt=%#v captured=%#v", capturedPrompt, captured)
+	}
+	if captured.Stop[0] != "<99>" || captured.Extra["top_p"] != 0.9 || captured.Extra["top_k"] != 10 || captured.Extra["seed"] != 123 {
+		t.Fatalf("captured = %#v", captured)
+	}
+}
+
+func TestFiretitanSamplingClientSampleSplitsEchoPromptLogprobs(t *testing.T) {
+	promptIDs := []int{10, 20, 30}
+	completionIDs := []int{40, 50}
+	var captured CompletionRequestOptions
+	sampler := NewDeploymentSampler("https://api.example.com", "m", "key",
+		WithDeploymentSamplerRequester(func(_ context.Context, _ []int, opts CompletionRequestOptions) (map[string]any, ServerMetrics, error) {
+			captured = opts
+			return map[string]any{"choices": []any{map[string]any{
+				"text":          "out",
+				"finish_reason": "length",
+				"raw_output":    map[string]any{"completion_token_ids": append(append([]int(nil), promptIDs...), completionIDs...)},
+				"logprobs": map[string]any{"content": []any{
+					map[string]any{"logprob": 0.0},
+					map[string]any{"logprob": -0.1},
+					map[string]any{"logprob": -0.2},
+					map[string]any{"logprob": -0.3},
+					map[string]any{"logprob": -0.4},
+				}},
+			}}}, ServerMetrics{}, nil
+		}),
+	)
+	client := NewFiretitanSamplingClient(sampler)
+	maxTokens := 2
+
+	response, err := client.Sample(context.Background(), promptIDs, 1, FiretitanSamplingParams{MaxTokens: &maxTokens}, FiretitanSampleOptions{IncludePromptLogprobs: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !captured.Echo {
+		t.Fatalf("captured = %#v", captured)
+	}
+	if len(response.PromptLogprobs) != 3 || response.PromptLogprobs[0] != nil || *response.PromptLogprobs[1] != -0.1 || *response.PromptLogprobs[2] != -0.2 {
+		t.Fatalf("prompt logprobs = %#v", response.PromptLogprobs)
+	}
+	seq := response.Sequences[0]
+	if seq.StopReason != "length" || len(seq.Tokens) != 2 || seq.Tokens[0] != 40 || seq.Tokens[1] != 50 {
+		t.Fatalf("seq = %#v", seq)
+	}
+	if len(seq.Logprobs) != 2 || seq.Logprobs[0] != -0.3 || seq.Logprobs[1] != -0.4 {
+		t.Fatalf("seq = %#v", seq)
+	}
+}
+
+func TestFiretitanSamplingClientComputeLogprobs(t *testing.T) {
+	promptIDs := []int{10, 20, 30}
+	var captured CompletionRequestOptions
+	sampler := NewDeploymentSampler("https://api.example.com", "m", "key",
+		WithDeploymentSamplerRequester(func(_ context.Context, _ []int, opts CompletionRequestOptions) (map[string]any, ServerMetrics, error) {
+			captured = opts
+			return map[string]any{"choices": []any{map[string]any{
+				"text":          "x",
+				"finish_reason": "length",
+				"raw_output":    map[string]any{"completion_token_ids": []int{10, 20, 30, 40}},
+				"logprobs": map[string]any{"content": []any{
+					map[string]any{"logprob": 0.0},
+					map[string]any{"logprob": -0.1},
+					map[string]any{"logprob": -0.2},
+					map[string]any{"logprob": -0.3},
+				}},
+			}}}, ServerMetrics{}, nil
+		}),
+	)
+	client := NewFiretitanSamplingClient(sampler)
+
+	logprobs, err := client.ComputeLogprobs(context.Background(), promptIDs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if captured.MaxTokens != 1 || !captured.Echo || !captured.Logprobs || captured.Extra["top_p"] != 1.0 {
+		t.Fatalf("captured = %#v", captured)
+	}
+	if len(logprobs) != 3 || logprobs[0] != nil || *logprobs[1] != -0.1 || *logprobs[2] != -0.2 {
+		t.Fatalf("logprobs = %#v", logprobs)
+	}
+}
+
+func TestFiretitanSamplingClientTopKPromptLogprobsUnsupported(t *testing.T) {
+	client := NewFiretitanSamplingClient(NewDeploymentSampler("https://api.example.com", "m", "key"))
+	maxTokens := 1
+	_, err := client.Sample(context.Background(), []int{1, 2}, 1, FiretitanSamplingParams{MaxTokens: &maxTokens}, FiretitanSampleOptions{TopKPromptLogprobs: 1})
+	if err == nil || !strings.Contains(err.Error(), "topk_prompt_logprobs") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestFiretitanSamplingClientAccessors(t *testing.T) {
+	tokenizer := &fakeDeploymentTokenizer{}
+	sampler := NewDeploymentSampler("https://api.example.com", "accounts/test/models/m", "key", WithDeploymentSamplerTokenizer(tokenizer))
+	client := NewFiretitanSamplingClient(sampler)
+	gotTokenizer, err := client.GetTokenizer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotTokenizer != tokenizer {
+		t.Fatalf("tokenizer = %#v", gotTokenizer)
+	}
+	if client.GetBaseModel() != "accounts/test/models/m" {
+		t.Fatalf("base model = %q", client.GetBaseModel())
+	}
+	if client.GetTelemetry() != nil {
+		t.Fatalf("telemetry = %#v", client.GetTelemetry())
+	}
+	client.Close()
+
+	noTokenizer := NewFiretitanSamplingClient(NewDeploymentSampler("https://api.example.com", "m", "key"))
+	if _, err := noTokenizer.GetTokenizer(); err == nil {
+		t.Fatal("expected tokenizer error")
+	}
+}
+
 func assertIntPtr(t *testing.T, got *int, want int) {
 	t.Helper()
 	if got == nil || *got != want {

@@ -36,6 +36,31 @@ type SampledCompletion struct {
 	RoutingMatrices   []string
 }
 
+type FiretitanSampledSequence struct {
+	StopReason string
+	Tokens     []int
+	Logprobs   []float64
+}
+
+type FiretitanSampleResponse struct {
+	Sequences      []FiretitanSampledSequence
+	PromptLogprobs []*float64
+}
+
+type FiretitanSamplingParams struct {
+	MaxTokens   *int
+	Stop        any
+	Temperature *float64
+	TopP        *float64
+	TopK        *int
+	Seed        *int
+}
+
+type FiretitanSampleOptions struct {
+	IncludePromptLogprobs bool
+	TopKPromptLogprobs    int
+}
+
 type DeploymentTokenizer interface {
 	ApplyChatTemplate(messages []map[string]string) ([]int, error)
 	Decode(tokenIDs []int) (string, error)
@@ -207,6 +232,134 @@ func (s *DeploymentSampler) DrainMetrics() []ServerMetrics {
 	s.recentMetrics = nil
 	return out
 }
+
+func (s *DeploymentSampler) FiretitanSamplingClient() *FiretitanSamplingClient {
+	return NewFiretitanSamplingClient(s)
+}
+
+type FiretitanSamplingClient struct {
+	DeploymentSampler *DeploymentSampler
+}
+
+func NewFiretitanSamplingClient(sampler *DeploymentSampler) *FiretitanSamplingClient {
+	return &FiretitanSamplingClient{DeploymentSampler: sampler}
+}
+
+func NewFiretitanSamplingClientForDeployment(inferenceURL, model, apiKey string, opts ...DeploymentSamplerOption) *FiretitanSamplingClient {
+	return NewFiretitanSamplingClient(NewDeploymentSampler(inferenceURL, model, apiKey, opts...))
+}
+
+func (c *FiretitanSamplingClient) Sample(ctx context.Context, prompt []int, numSamples int, params FiretitanSamplingParams, opts ...FiretitanSampleOptions) (FiretitanSampleResponse, error) {
+	if c == nil || c.DeploymentSampler == nil {
+		return FiretitanSampleResponse{}, fmt.Errorf("FiretitanSamplingClient requires a DeploymentSampler")
+	}
+	var opt FiretitanSampleOptions
+	if len(opts) > 0 {
+		opt = opts[0]
+	}
+	if opt.TopKPromptLogprobs != 0 {
+		return FiretitanSampleResponse{}, fmt.Errorf("FiretitanSamplingClient does not support topk_prompt_logprobs yet")
+	}
+
+	maxTokens := 1024
+	if params.MaxTokens != nil {
+		maxTokens = *params.MaxTokens
+	}
+	temperature := 1.0
+	if params.Temperature != nil {
+		temperature = *params.Temperature
+	}
+	extra := map[string]any{}
+	if params.TopP != nil {
+		extra["top_p"] = *params.TopP
+	}
+	if params.TopK != nil && *params.TopK >= 0 {
+		extra["top_k"] = *params.TopK
+	}
+	if params.Seed != nil {
+		extra["seed"] = *params.Seed
+	}
+	completions, err := c.DeploymentSampler.SampleWithPromptTokens(ctx, prompt, SampleOptions{
+		N:           numSamples,
+		MaxTokens:   maxTokens,
+		Temperature: temperature,
+		Stop:        params.Stop,
+		Logprobs:    true,
+		Echo:        opt.IncludePromptLogprobs,
+		Extra:       extra,
+	})
+	if err != nil {
+		return FiretitanSampleResponse{}, err
+	}
+
+	response := FiretitanSampleResponse{Sequences: make([]FiretitanSampledSequence, 0, len(completions))}
+	for _, completion := range completions {
+		completionTokens := append([]int(nil), completion.FullTokens[completion.PromptLen:]...)
+		completionLogprobs := append([]float64(nil), completion.InferenceLogprobs...)
+		if completion.LogprobsEchoed && completion.InferenceLogprobs != nil {
+			if completion.PromptLen == 0 {
+				response.PromptLogprobs = []*float64{}
+			} else {
+				response.PromptLogprobs = make([]*float64, completion.PromptLen)
+				for i := 1; i < completion.PromptLen && i <= len(completion.InferenceLogprobs); i++ {
+					value := completion.InferenceLogprobs[i-1]
+					response.PromptLogprobs[i] = &value
+				}
+			}
+			start := completion.PromptLen - 1
+			if start < 0 {
+				start = 0
+			}
+			if start <= len(completion.InferenceLogprobs) {
+				completionLogprobs = append([]float64(nil), completion.InferenceLogprobs[start:]...)
+			}
+		}
+		response.Sequences = append(response.Sequences, FiretitanSampledSequence{
+			StopReason: firetitanStopReason(completion.FinishReason),
+			Tokens:     completionTokens,
+			Logprobs:   completionLogprobs,
+		})
+	}
+	if !opt.IncludePromptLogprobs {
+		response.PromptLogprobs = nil
+	}
+	return response, nil
+}
+
+func (c *FiretitanSamplingClient) ComputeLogprobs(ctx context.Context, prompt []int) ([]*float64, error) {
+	maxTokens := 1
+	temperature := 1.0
+	topP := 1.0
+	response, err := c.Sample(ctx, prompt, 1, FiretitanSamplingParams{
+		MaxTokens:   &maxTokens,
+		Temperature: &temperature,
+		TopP:        &topP,
+	}, FiretitanSampleOptions{IncludePromptLogprobs: true})
+	if err != nil {
+		return nil, err
+	}
+	return response.PromptLogprobs, nil
+}
+
+func (c *FiretitanSamplingClient) GetTokenizer() (DeploymentTokenizer, error) {
+	if c == nil || c.DeploymentSampler == nil || c.DeploymentSampler.Tokenizer == nil {
+		return nil, fmt.Errorf("DeploymentSampler was created without a tokenizer")
+	}
+	return c.DeploymentSampler.Tokenizer, nil
+}
+
+func (c *FiretitanSamplingClient) GetBaseModel() string {
+	if c == nil || c.DeploymentSampler == nil {
+		return ""
+	}
+	return c.DeploymentSampler.Model
+}
+
+func (c *FiretitanSamplingClient) GetTelemetry() any {
+	return nil
+}
+
+func (c *FiretitanSamplingClient) Close() {}
 
 func (s *DeploymentSampler) doOneCompletion(ctx context.Context, promptIDs []int, opt SampleOptions, stop []string) ([]SampledCompletion, error) {
 	backoff := SamplerRetryBaseBackoff
@@ -746,6 +899,13 @@ func stringMapFromAny(values map[string]any) map[string]string {
 		}
 	}
 	return out
+}
+
+func firetitanStopReason(finishReason string) string {
+	if finishReason == "length" {
+		return "length"
+	}
+	return "stop"
 }
 
 type FixedConcurrencyController struct {
