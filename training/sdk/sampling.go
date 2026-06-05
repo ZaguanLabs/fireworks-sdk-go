@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -67,6 +68,8 @@ type DeploymentSampler struct {
 	ConcurrencyController SamplingConcurrencyController
 	CompletionRequester   CompletionRequester
 	HTTPClient            *http.Client
+	Now                   func() time.Time
+	Sleep                 func(time.Duration)
 
 	mu            sync.Mutex
 	recentMetrics []ServerMetrics
@@ -98,12 +101,25 @@ func WithDeploymentSamplerHTTPClient(client *http.Client) DeploymentSamplerOptio
 	}
 }
 
+func WithDeploymentSamplerClock(now func() time.Time, sleep func(time.Duration)) DeploymentSamplerOption {
+	return func(s *DeploymentSampler) {
+		if now != nil {
+			s.Now = now
+		}
+		if sleep != nil {
+			s.Sleep = sleep
+		}
+	}
+}
+
 func NewDeploymentSampler(inferenceURL, model, apiKey string, opts ...DeploymentSamplerOption) *DeploymentSampler {
 	sampler := &DeploymentSampler{
 		InferenceURL: strings.TrimRight(inferenceURL, "/"),
 		Model:        model,
 		APIKey:       apiKey,
 		HTTPClient:   &http.Client{Timeout: 10 * time.Minute},
+		Now:          time.Now,
+		Sleep:        time.Sleep,
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -126,6 +142,31 @@ type SampleOptions struct {
 	IncludeRoutingMatrix bool
 	Stop                 any
 	Extra                map[string]any
+}
+
+const (
+	SamplerHotloadRetryInterval = 5 * time.Second
+	SamplerHotloadMaxRetries    = 10
+	SamplerRetryMaxAttempts     = 7
+	SamplerRetryBaseBackoff     = 2 * time.Second
+	SamplerRetryMaxBackoff      = 30 * time.Second
+)
+
+var samplerRetryHTTPTransientCodes = map[int]bool{
+	http.StatusRequestTimeout:     true,
+	http.StatusTooManyRequests:    true,
+	http.StatusBadGateway:         true,
+	http.StatusServiceUnavailable: true,
+	http.StatusGatewayTimeout:     true,
+}
+
+type CompletionHTTPStatusError struct {
+	StatusCode int
+	Body       []byte
+}
+
+func (e *CompletionHTTPStatusError) Error() string {
+	return fmt.Sprintf("completions: HTTP %d: %s", e.StatusCode, ParseAPIErrorBody(e.Body))
 }
 
 func (s *DeploymentSampler) SampleWithTokens(ctx context.Context, messages []map[string]string, opts ...SampleOptions) ([]SampledCompletion, error) {
@@ -168,13 +209,27 @@ func (s *DeploymentSampler) DrainMetrics() []ServerMetrics {
 }
 
 func (s *DeploymentSampler) doOneCompletion(ctx context.Context, promptIDs []int, opt SampleOptions, stop []string) ([]SampledCompletion, error) {
-	if s.ConcurrencyController != nil {
-		if err := s.ConcurrencyController.Acquire(ctx); err != nil {
-			return nil, err
+	backoff := SamplerRetryBaseBackoff
+	for attempt := 1; attempt <= SamplerRetryMaxAttempts; attempt++ {
+		if s.ConcurrencyController != nil {
+			if err := s.ConcurrencyController.Acquire(ctx); err != nil {
+				return nil, err
+			}
 		}
-	}
-	var metrics *ServerMetrics
-	defer func() {
+		var metrics *ServerMetrics
+		result, serverMetrics, err := s.CompletionRequester(ctx, promptIDs, CompletionRequestOptions{
+			MaxTokens:            opt.MaxTokens,
+			Temperature:          opt.Temperature,
+			RawOutput:            true,
+			Logprobs:             opt.Logprobs,
+			Echo:                 opt.Echo,
+			IncludeRoutingMatrix: opt.IncludeRoutingMatrix,
+			Stop:                 stop,
+			Extra:                cloneAnyMap(opt.Extra),
+		})
+		if err == nil {
+			metrics = &serverMetrics
+		}
 		if s.ConcurrencyController != nil {
 			s.ConcurrencyController.Release(metrics)
 		}
@@ -183,23 +238,19 @@ func (s *DeploymentSampler) doOneCompletion(ctx context.Context, promptIDs []int
 			s.recentMetrics = append(s.recentMetrics, *metrics)
 			s.mu.Unlock()
 		}
-	}()
-
-	result, serverMetrics, err := s.CompletionRequester(ctx, promptIDs, CompletionRequestOptions{
-		MaxTokens:            opt.MaxTokens,
-		Temperature:          opt.Temperature,
-		RawOutput:            true,
-		Logprobs:             opt.Logprobs,
-		Echo:                 opt.Echo,
-		IncludeRoutingMatrix: opt.IncludeRoutingMatrix,
-		Stop:                 stop,
-		Extra:                cloneAnyMap(opt.Extra),
-	})
-	if err != nil {
-		return nil, err
+		if err == nil {
+			return s.ParseCompletionsResult(result, promptIDs, opt.MaxSeqLen, opt.Logprobs, opt.IncludeRoutingMatrix, opt.Echo)
+		}
+		if !samplerRetryableCompletionError(err) || attempt == SamplerRetryMaxAttempts {
+			return nil, err
+		}
+		s.Sleep(backoff)
+		backoff *= 2
+		if backoff > SamplerRetryMaxBackoff {
+			backoff = SamplerRetryMaxBackoff
+		}
 	}
-	metrics = &serverMetrics
-	return s.ParseCompletionsResult(result, promptIDs, opt.MaxSeqLen, opt.Logprobs, opt.IncludeRoutingMatrix, opt.Echo)
+	return nil, fmt.Errorf("unreachable: sampler retry loop exited")
 }
 
 func (s *DeploymentSampler) ParseCompletionsResult(result map[string]any, promptIDs []int, maxSeqLen int, userRequestedLogprobs, routingRequested, echoMode bool) ([]SampledCompletion, error) {
@@ -327,14 +378,21 @@ func ExtractRoutingMatrices(choice map[string]any) ([]string, bool) {
 }
 
 func (s *DeploymentSampler) defaultCompletionRequest(ctx context.Context, prompt []int, opts CompletionRequestOptions) (map[string]any, ServerMetrics, error) {
+	return s.StreamCompletions(ctx, prompt, opts)
+}
+
+func (s *DeploymentSampler) StreamCompletions(ctx context.Context, prompt []int, opts CompletionRequestOptions) (map[string]any, ServerMetrics, error) {
 	payload := map[string]any{
-		"model":       s.Model,
-		"prompt":      prompt,
-		"n":           1,
-		"max_tokens":  opts.MaxTokens,
-		"temperature": opts.Temperature,
-		"stream":      false,
-		"raw_output":  opts.RawOutput,
+		"model":                    s.Model,
+		"prompt":                   prompt,
+		"n":                        1,
+		"max_tokens":               opts.MaxTokens,
+		"temperature":              opts.Temperature,
+		"stream":                   true,
+		"perf_metrics_in_response": true,
+	}
+	if opts.RawOutput {
+		payload["raw_output"] = true
 	}
 	if opts.Logprobs {
 		payload["logprobs"] = true
@@ -351,28 +409,119 @@ func (s *DeploymentSampler) defaultCompletionRequest(ctx context.Context, prompt
 	for key, value := range opts.Extra {
 		payload[key] = value
 	}
+	if _, hasImages := opts.Extra["images"]; hasImages {
+		if _, exists := payload["return_token_ids"]; !exists {
+			payload["return_token_ids"] = true
+		}
+	}
 	data, err := json.Marshal(payload)
 	if err != nil {
 		return nil, ServerMetrics{}, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.InferenceURL+"/inference/v1/completions", bytes.NewReader(data))
+	var lastStatus int
+	for hotloadAttempt := 0; hotloadAttempt <= SamplerHotloadMaxRetries; hotloadAttempt++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.InferenceURL+"/inference/v1/completions", bytes.NewReader(data))
+		if err != nil {
+			return nil, ServerMetrics{}, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Api-Key", s.APIKey)
+		req.Header.Set("Authorization", "Bearer "+s.APIKey)
+		resp, err := s.HTTPClient.Do(req)
+		if err != nil {
+			return nil, ServerMetrics{}, err
+		}
+		body, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		lastStatus = resp.StatusCode
+		if (resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusTooEarly) && hotloadAttempt < SamplerHotloadMaxRetries {
+			s.Sleep(SamplerHotloadRetryInterval)
+			continue
+		}
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return nil, ServerMetricsFromHTTPHeaders(resp.Header), &CompletionHTTPStatusError{StatusCode: resp.StatusCode, Body: body}
+		}
+		return s.assembleStreamResponse(body, resp.Header)
+	}
+	return nil, ServerMetrics{}, &CompletionHTTPStatusError{StatusCode: lastStatus}
+}
+
+func (s *DeploymentSampler) assembleStreamResponse(body []byte, headers http.Header) (map[string]any, ServerMetrics, error) {
+	events, err := NewSSEDecoder().Decode(bytes.NewReader(body))
 	if err != nil {
 		return nil, ServerMetrics{}, err
 	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Api-Key", s.APIKey)
-	req.Header.Set("Authorization", "Bearer "+s.APIKey)
-	resp, err := s.HTTPClient.Do(req)
-	if err != nil {
-		return nil, ServerMetrics{}, err
+	accumulatedText := ""
+	var accumulatedLogprobs []any
+	finishReason := ""
+	var usageInfo any
+	var rawOutput map[string]any
+	var perfMetrics map[string]string
+	hasSeenDone := false
+	hasSeenFinishReason := false
+
+	for _, event := range events {
+		if strings.HasPrefix(event.Data, "[DONE]") {
+			hasSeenDone = true
+			break
+		}
+		var chunk map[string]any
+		if err := json.Unmarshal([]byte(event.Data), &chunk); err != nil {
+			continue
+		}
+		choices, _ := chunk["choices"].([]any)
+		for _, item := range choices {
+			choice, _ := item.(map[string]any)
+			if choice == nil {
+				continue
+			}
+			if textDelta := stringFromAny(choice["text"]); textDelta != "" {
+				accumulatedText += textDelta
+			}
+			if lp, _ := choice["logprobs"].(map[string]any); lp != nil {
+				if content, _ := lp["content"].([]any); len(content) > 0 {
+					accumulatedLogprobs = append(accumulatedLogprobs, content...)
+				}
+			}
+			if fr := stringFromAny(choice["finish_reason"]); fr != "" {
+				finishReason = fr
+				hasSeenFinishReason = true
+			}
+			if ro, _ := choice["raw_output"].(map[string]any); ro != nil {
+				rawOutput = ro
+			}
+		}
+		if usage, ok := chunk["usage"]; ok {
+			usageInfo = usage
+		}
+		if perf, _ := chunk["perf_metrics"].(map[string]any); perf != nil {
+			perfMetrics = stringMapFromAny(perf)
+		}
 	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, ServerMetricsFromHTTPHeaders(resp.Header), fmt.Errorf("completions: HTTP %d: %s", resp.StatusCode, ParseAPIErrorBody(body))
+	if rawOutput == nil && !hasSeenDone && !hasSeenFinishReason {
+		return nil, ServerMetrics{}, &SSETruncationError{Message: "Transient server-side error: the inference deployment closed the SSE stream mid-generation without sending [DONE], finish_reason, or raw_output. The SDK is retrying. If this persists across all retry attempts, contact the Fireworks team."}
 	}
-	result, err := decodeJSONMapOrEmpty(body)
-	return result, ServerMetricsFromHTTPHeaders(resp.Header), err
+	if finishReason == "" {
+		finishReason = "stop"
+	}
+	choice := map[string]any{
+		"text":          accumulatedText,
+		"finish_reason": finishReason,
+	}
+	if len(accumulatedLogprobs) > 0 {
+		choice["logprobs"] = map[string]any{"content": accumulatedLogprobs}
+	}
+	if rawOutput != nil {
+		choice["raw_output"] = rawOutput
+	}
+	result := map[string]any{"choices": []any{choice}}
+	if usageInfo != nil {
+		result["usage"] = usageInfo
+	}
+	if perfMetrics != nil {
+		return result, ServerMetricsFromHeaders(perfMetrics), nil
+	}
+	return result, ServerMetricsFromHTTPHeaders(headers), nil
 }
 
 func ServerMetricsFromHeaders(headers map[string]string, clientTTFT ...float64) ServerMetrics {
@@ -570,6 +719,33 @@ func mapKeys(values map[string]any) []string {
 		keys = append(keys, key)
 	}
 	return keys
+}
+
+func samplerRetryableCompletionError(err error) bool {
+	var trunc *SSETruncationError
+	if errors.As(err, &trunc) {
+		return true
+	}
+	var statusErr *CompletionHTTPStatusError
+	if errors.As(err, &statusErr) {
+		return samplerRetryHTTPTransientCodes[statusErr.StatusCode]
+	}
+	return false
+}
+
+func stringMapFromAny(values map[string]any) map[string]string {
+	out := make(map[string]string, len(values))
+	for key, value := range values {
+		switch v := value.(type) {
+		case string:
+			out[key] = v
+		case fmt.Stringer:
+			out[key] = v.String()
+		default:
+			out[key] = fmt.Sprint(v)
+		}
+	}
+	return out
 }
 
 type FixedConcurrencyController struct {

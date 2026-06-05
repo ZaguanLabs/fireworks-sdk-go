@@ -3,6 +3,7 @@ package sdk
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -523,10 +524,12 @@ func TestDeploymentSamplerDefaultRequesterPayload(t *testing.T) {
 			t.Errorf("decode body: %v", err)
 		}
 		w.Header().Set("prefill-queue-duration", "0.3")
-		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{
+		chunk, _ := json.Marshal(map[string]any{"choices": []any{map[string]any{
 			"text":       "x",
 			"raw_output": map[string]any{"completion_token_ids": []int{99}},
 		}}})
+		_, _ = w.Write([]byte("data: " + string(chunk) + "\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
 	}))
 	defer server.Close()
 
@@ -544,7 +547,7 @@ func TestDeploymentSamplerDefaultRequesterPayload(t *testing.T) {
 	if len(results) != 1 {
 		t.Fatalf("results = %#v", results)
 	}
-	if payload["model"] != "accounts/test/deployments/dep" || payload["raw_output"] != true || payload["logprobs"] != true || payload["include_routing_matrix"] != true {
+	if payload["model"] != "accounts/test/deployments/dep" || payload["stream"] != true || payload["perf_metrics_in_response"] != true || payload["raw_output"] != true || payload["logprobs"] != true || payload["include_routing_matrix"] != true {
 		t.Fatalf("payload = %#v", payload)
 	}
 	if payload["temperature"].(float64) != 0.7 || payload["max_tokens"].(float64) != 2 {
@@ -555,6 +558,123 @@ func TestDeploymentSamplerDefaultRequesterPayload(t *testing.T) {
 		t.Fatalf("metrics = %#v", metrics)
 	}
 	assertFloatPtr(t, metrics[0].PrefillQueueDuration, 0.3)
+}
+
+func TestDeploymentSamplerStreamingPerfMetricsPreferred(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("prefill-queue-duration", "9.9")
+		chunk, _ := json.Marshal(map[string]any{
+			"choices": []any{map[string]any{
+				"text":          "hello",
+				"finish_reason": "stop",
+				"raw_output":    map[string]any{"completion_token_ids": []int{400, 500}},
+				"logprobs": map[string]any{"content": []any{
+					map[string]any{"logprob": -0.3},
+					map[string]any{"logprob": -0.4},
+				}},
+			}},
+			"perf_metrics": map[string]any{"prefill-queue-duration": "0.1"},
+		})
+		_, _ = w.Write([]byte("data: " + string(chunk) + "\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer server.Close()
+
+	sampler := NewDeploymentSampler(server.URL, "m", "key")
+	results, err := sampler.SampleWithPromptTokens(context.Background(), []int{1, 2, 3}, SampleOptions{Logprobs: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0].Text != "hello" || results[0].CompletionLen != 2 {
+		t.Fatalf("results = %#v", results)
+	}
+	if results[0].InferenceLogprobs[0] != -0.3 {
+		t.Fatalf("logprobs = %#v", results[0].InferenceLogprobs)
+	}
+	metrics := sampler.DrainMetrics()
+	assertFloatPtr(t, metrics[0].PrefillQueueDuration, 0.1)
+}
+
+func TestDeploymentSamplerStreamingTruncationRetry(t *testing.T) {
+	attempts := 0
+	var sleeps []time.Duration
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts == 1 {
+			_, _ = w.Write([]byte("data: {\"choices\":[{\"text\":\"partial\"}]}\n\n"))
+			return
+		}
+		chunk, _ := json.Marshal(map[string]any{"choices": []any{map[string]any{
+			"text":          "ok",
+			"finish_reason": "stop",
+			"raw_output":    map[string]any{"completion_token_ids": []int{7}},
+		}}})
+		_, _ = w.Write([]byte("data: " + string(chunk) + "\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer server.Close()
+
+	sampler := NewDeploymentSampler(server.URL, "m", "key", WithDeploymentSamplerClock(nil, func(d time.Duration) {
+		sleeps = append(sleeps, d)
+	}))
+	results, err := sampler.SampleWithPromptTokens(context.Background(), []int{1, 2, 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if attempts != 2 || len(sleeps) != 1 || sleeps[0] != SamplerRetryBaseBackoff {
+		t.Fatalf("attempts=%d sleeps=%#v", attempts, sleeps)
+	}
+	if len(results) != 1 || results[0].FinishReason != "stop" {
+		t.Fatalf("results = %#v", results)
+	}
+}
+
+func TestDeploymentSamplerNonRetryableErrorPropagates(t *testing.T) {
+	attempts := 0
+	sampler := NewDeploymentSampler("https://api.example.com", "m", "key",
+		WithDeploymentSamplerRequester(func(context.Context, []int, CompletionRequestOptions) (map[string]any, ServerMetrics, error) {
+			attempts++
+			return nil, ServerMetrics{}, errors.New("Exhausted hotload retries in streaming mode")
+		}),
+	)
+	_, err := sampler.SampleWithPromptTokens(context.Background(), []int{1, 2, 3})
+	if err == nil || !strings.Contains(err.Error(), "hotload") {
+		t.Fatalf("err = %v", err)
+	}
+	if attempts != 1 {
+		t.Fatalf("attempts = %d", attempts)
+	}
+}
+
+func TestDeploymentSamplerHotloadReadinessRetry(t *testing.T) {
+	attempts := 0
+	var sleeps []time.Duration
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts == 1 {
+			http.NotFound(w, r)
+			return
+		}
+		chunk, _ := json.Marshal(map[string]any{"choices": []any{map[string]any{
+			"text":          "ok",
+			"finish_reason": "stop",
+			"raw_output":    map[string]any{"completion_token_ids": []int{7}},
+		}}})
+		_, _ = w.Write([]byte("data: " + string(chunk) + "\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer server.Close()
+
+	sampler := NewDeploymentSampler(server.URL, "m", "key", WithDeploymentSamplerClock(nil, func(d time.Duration) {
+		sleeps = append(sleeps, d)
+	}))
+	_, err := sampler.SampleWithPromptTokens(context.Background(), []int{1, 2, 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if attempts != 2 || len(sleeps) != 1 || sleeps[0] != SamplerHotloadRetryInterval {
+		t.Fatalf("attempts=%d sleeps=%#v", attempts, sleeps)
+	}
 }
 
 func assertIntPtr(t *testing.T, got *int, want int) {
