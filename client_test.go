@@ -214,6 +214,84 @@ func TestWithOptionsOverridesClientSettingsForRequests(t *testing.T) {
 	}
 }
 
+func TestWithOptionsCanReplaceDefaultHeadersAndQuery(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("X-Original"); got != "" {
+			t.Errorf("X-Original = %q", got)
+		}
+		if got := r.Header.Get("X-Replaced"); got != "yes" {
+			t.Errorf("X-Replaced = %q", got)
+		}
+		if got := r.URL.Query().Get("original"); got != "" {
+			t.Errorf("original query = %q", got)
+		}
+		if got := r.URL.Query().Get("replaced"); got != "yes" {
+			t.Errorf("replaced query = %q", got)
+		}
+		_ = json.NewEncoder(w).Encode(JSON{"ok": true})
+	}))
+	defer server.Close()
+
+	client, err := NewClient(
+		WithBaseURL(server.URL),
+		WithDefaultHeader("X-Original", "yes"),
+		WithDefaultQuery(map[string]any{"original": "yes"}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clone, err := client.WithOptions(
+		WithSetDefaultHeaders(map[string]string{"X-Replaced": "yes"}),
+		WithSetDefaultQuery(map[string]any{"replaced": "yes"}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := clone.Get(context.Background(), "/replace")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out["ok"] != true {
+		t.Fatalf("response = %#v", out)
+	}
+	if client.defaultHeaders.Get("X-Original") != "yes" || client.defaultQuery.Get("original") != "yes" {
+		t.Fatalf("original client defaults were mutated")
+	}
+}
+
+func TestSetDefaultHeadersReplacesEnvironmentCustomHeaders(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+	t.Setenv("FIREWORKS_CUSTOM_HEADERS", "X-From-Env: yes")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("X-From-Env"); got != "" {
+			t.Errorf("X-From-Env = %q", got)
+		}
+		if got := r.Header.Get("X-Replaced"); got != "yes" {
+			t.Errorf("X-Replaced = %q", got)
+		}
+		_ = json.NewEncoder(w).Encode(JSON{"ok": true})
+	}))
+	defer server.Close()
+
+	client, err := NewClient(
+		WithBaseURL(server.URL),
+		WithSetDefaultHeaders(map[string]string{"X-Replaced": "yes"}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := client.Get(context.Background(), "/replace")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out["ok"] != true {
+		t.Fatalf("response = %#v", out)
+	}
+}
+
 func TestHeaderOmitOptionsRemoveDefaultHeaders(t *testing.T) {
 	t.Setenv("FIREWORKS_API_KEY", "test-key")
 

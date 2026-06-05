@@ -73,14 +73,15 @@ type Client struct {
 type ClientOption func(*clientConfig)
 
 type clientConfig struct {
-	apiKey         string
-	accountID      string
-	baseURL        string
-	baseURLSet     bool
-	httpClient     *http.Client
-	defaultHeaders http.Header
-	defaultQuery   url.Values
-	maxRetries     int
+	apiKey            string
+	accountID         string
+	baseURL           string
+	baseURLSet        bool
+	httpClient        *http.Client
+	defaultHeaders    http.Header
+	defaultHeadersSet bool
+	defaultQuery      url.Values
+	maxRetries        int
 }
 
 func WithAPIKey(apiKey string) ClientOption {
@@ -137,11 +138,30 @@ func WithDefaultHeaders(headers map[string]string) ClientOption {
 	}
 }
 
+func WithSetDefaultHeaders(headers map[string]string) ClientOption {
+	return func(c *clientConfig) {
+		c.defaultHeaders = make(http.Header)
+		c.defaultHeadersSet = true
+		for key, value := range headers {
+			c.defaultHeaders.Set(key, value)
+		}
+	}
+}
+
 func WithDefaultQuery(query map[string]any) ClientOption {
 	return func(c *clientConfig) {
 		if c.defaultQuery == nil {
 			c.defaultQuery = make(url.Values)
 		}
+		for key, value := range query {
+			addQueryValue(c.defaultQuery, key, value)
+		}
+	}
+}
+
+func WithSetDefaultQuery(query map[string]any) ClientOption {
+	return func(c *clientConfig) {
+		c.defaultQuery = make(url.Values)
 		for key, value := range query {
 			addQueryValue(c.defaultQuery, key, value)
 		}
@@ -188,9 +208,11 @@ func NewClient(opts ...ClientOption) (*Client, error) {
 	}
 
 	headers := make(http.Header)
-	for key, values := range parseCustomHeadersEnv(os.Getenv("FIREWORKS_CUSTOM_HEADERS")) {
-		for _, value := range values {
-			headers.Add(key, value)
+	if !cfg.defaultHeadersSet {
+		for key, values := range parseCustomHeadersEnv(os.Getenv("FIREWORKS_CUSTOM_HEADERS")) {
+			for _, value := range values {
+				headers.Add(key, value)
+			}
 		}
 	}
 	for key, values := range cfg.defaultHeaders {
