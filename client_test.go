@@ -170,6 +170,43 @@ func TestAccountResourcePathAndCommaQuery(t *testing.T) {
 	}
 }
 
+func TestQueryEncodingUsesCommaForArbitrarySlicesAndArrays(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		query := r.URL.Query()
+		if got := query.Get("float32s"); got != "1.25,2.5" {
+			t.Errorf("float32s = %q", got)
+		}
+		if got := query.Get("uints"); got != "7,8" {
+			t.Errorf("uints = %q", got)
+		}
+		if got := query.Get("array"); got != "a,b" {
+			t.Errorf("array = %q", got)
+		}
+		_ = json.NewEncoder(w).Encode(JSON{"ok": true})
+	}))
+	defer server.Close()
+
+	client, err := NewClient(WithBaseURL(server.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := client.Get(
+		context.Background(),
+		"/query",
+		WithQueryParam("float32s", []float32{1.25, 2.5}),
+		WithQueryParam("uints", []uint{7, 8}),
+		WithQueryParam("array", [2]string{"a", "b"}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out["ok"] != true {
+		t.Fatalf("response = %#v", out)
+	}
+}
+
 func TestWithOptionsClonesClientAndPreservesDefaultInferenceBaseURLMode(t *testing.T) {
 	t.Setenv("FIREWORKS_API_KEY", "test-key")
 	t.Setenv("FIREWORKS_BASE_URL", "")

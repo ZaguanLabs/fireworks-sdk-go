@@ -16,6 +16,7 @@ import (
 	"net/textproto"
 	"net/url"
 	"os"
+	"reflect"
 	"runtime"
 	"strconv"
 	"strings"
@@ -1155,6 +1156,15 @@ func addQueryValue(values url.Values, key string, value any) {
 		}
 		values.Set(key, strings.Join(parts, ","))
 	default:
+		reflected := reflect.ValueOf(value)
+		if reflected.IsValid() && (reflected.Kind() == reflect.Slice || reflected.Kind() == reflect.Array) {
+			parts := make([]string, 0, reflected.Len())
+			for i := 0; i < reflected.Len(); i++ {
+				parts = append(parts, fmt.Sprint(reflected.Index(i).Interface()))
+			}
+			values.Set(key, strings.Join(parts, ","))
+			return
+		}
 		values.Set(key, fmt.Sprint(v))
 	}
 }
