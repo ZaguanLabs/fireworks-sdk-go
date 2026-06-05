@@ -3,6 +3,8 @@ package fireworks
 import (
 	"bytes"
 	"io"
+	"os"
+	"path/filepath"
 
 	fwtypes "github.com/ZaguanLabs/fireworks-sdk-go/types"
 )
@@ -19,6 +21,18 @@ func NewFile(filename string, content io.Reader) File {
 
 func NewFileFromBytes(filename string, content []byte) File {
 	return File{Filename: filename, Content: bytes.NewReader(content)}
+}
+
+func NewFileFromPath(path string) (File, error) {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return File{}, err
+	}
+	return NewFileFromBytes(filepath.Base(path), content), nil
+}
+
+func FileFromPath(path string) (File, error) {
+	return NewFileFromPath(path)
 }
 
 func uploadFileFromBody(body any) (File, bool) {

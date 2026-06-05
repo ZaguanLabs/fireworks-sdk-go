@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -35,6 +37,19 @@ func TestDefaultConstantsMatchPythonSDK(t *testing.T) {
 	}
 	if DefaultMaxIdleConnectionsPerHost != 20 {
 		t.Fatalf("DefaultMaxIdleConnectionsPerHost = %d", DefaultMaxIdleConnectionsPerHost)
+	}
+}
+
+func TestFireworksAliasMatchesClient(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+
+	client, err := NewClient()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fireworks *Fireworks = client
+	if fireworks.APIKey() != "test-key" {
+		t.Fatalf("api key = %q", fireworks.APIKey())
 	}
 }
 
@@ -585,6 +600,37 @@ func TestClientRawByteContentResponseHelper(t *testing.T) {
 	}
 	if seenContentType != "application/octet-stream" {
 		t.Fatalf("Content-Type = %q", seenContentType)
+	}
+}
+
+func TestNewFileFromPathUsesBasenameAndBytes(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "train.jsonl")
+	if err := os.WriteFile(path, []byte("{\"prompt\":\"hi\"}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	file, err := NewFileFromPath(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if file.Filename != "train.jsonl" {
+		t.Fatalf("filename = %q", file.Filename)
+	}
+	content, err := io.ReadAll(file.Content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "{\"prompt\":\"hi\"}\n" {
+		t.Fatalf("content = %q", content)
+	}
+
+	alias, err := FileFromPath(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if alias.Filename != file.Filename {
+		t.Fatalf("alias filename = %q", alias.Filename)
 	}
 }
 

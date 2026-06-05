@@ -70,6 +70,8 @@ type Client struct {
 	Secrets                      *SecretsResource
 }
 
+type Fireworks = Client
+
 type ClientOption func(*clientConfig)
 
 type clientConfig struct {
