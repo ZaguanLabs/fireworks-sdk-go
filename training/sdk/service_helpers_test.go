@@ -131,3 +131,30 @@ func TestLazyManagedRestUnsupportedError(t *testing.T) {
 		t.Fatalf("error = %v", err)
 	}
 }
+
+func TestManagedSamplerSyncState(t *testing.T) {
+	var nilState *ManagedSamplerSyncState
+	if nilState.RequiresInitialSync() {
+		t.Fatal("nil state should not require sync")
+	}
+	nilState.MarkSamplerHotloaded()
+
+	state := &ManagedSamplerSyncState{RequiresInitialSamplerSync: true}
+	if !state.RequiresInitialSync() {
+		t.Fatal("expected initial sync to be required")
+	}
+	state.MarkSamplerHotloaded()
+	if state.RequiresInitialSync() {
+		t.Fatal("expected hotload to clear initial sync requirement")
+	}
+}
+
+func TestCreateSamplingClientUnsupportedError(t *testing.T) {
+	err := CreateSamplingClientUnsupportedError()
+	if err == nil || err.Error() != CreateSamplingClientRequiresManagedSamplerStateMessage {
+		t.Fatalf("error = %v", err)
+	}
+	if !strings.Contains(err.Error(), "SDK-managed sampler state") {
+		t.Fatalf("error = %v", err)
+	}
+}

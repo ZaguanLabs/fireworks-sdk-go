@@ -8,6 +8,8 @@ import (
 
 const LazyManagedTrainingRunID = "firetitan-managed"
 
+const CreateSamplingClientRequiresManagedSamplerStateMessage = "create_sampling_client requires SDK-managed sampler state or deployment_sampler=.... Base-model/serverless sampling is not supported in this path."
+
 type TrainingRunMetadata struct {
 	TrainingRunID string
 	BaseModel     string
@@ -26,6 +28,10 @@ type Cursor struct {
 	Offset     int
 	Limit      int
 	TotalCount int
+}
+
+type ManagedSamplerSyncState struct {
+	RequiresInitialSamplerSync bool
 }
 
 func ResolveUserMetadata(defaultUserMetadata, userMetadata map[string]string) map[string]string {
@@ -107,6 +113,20 @@ func LazyManagedRestUnsupportedError(method string) error {
 		"FireTitan lazy managed REST client does not support %s. Create a trainer-backed service client or use Fireworks checkpoint APIs for this operation.",
 		method,
 	)
+}
+
+func (s *ManagedSamplerSyncState) RequiresInitialSync() bool {
+	return s != nil && s.RequiresInitialSamplerSync
+}
+
+func (s *ManagedSamplerSyncState) MarkSamplerHotloaded() {
+	if s != nil {
+		s.RequiresInitialSamplerSync = false
+	}
+}
+
+func CreateSamplingClientUnsupportedError() error {
+	return fmt.Errorf("%s", CreateSamplingClientRequiresManagedSamplerStateMessage)
 }
 
 func cloneBoolPointer(value *bool) *bool {
