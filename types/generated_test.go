@@ -38,6 +38,38 @@ func TestDPOAliasesUsePublicNames(t *testing.T) {
 	var _ DpoJobGetMetricsFileEndpointResponse = endpoint
 }
 
+func TestPageInfoHelpers(t *testing.T) {
+	token := "cursor-2"
+	page := ModelsPage{NextPageToken: &token}
+	if !page.HasNextPage() {
+		t.Fatal("expected next page")
+	}
+	info := page.NextPageInfo()
+	if info == nil {
+		t.Fatal("expected page info")
+	}
+	if got := info.Params["pageToken"]; got != "cursor-2" {
+		t.Fatalf("pageToken = %q", got)
+	}
+
+	emptyToken := ""
+	empty := ModelsPage{NextPageToken: &emptyToken}
+	if empty.HasNextPage() {
+		t.Fatal("empty token should not have next page")
+	}
+	if info := empty.NextPageInfo(); info != nil {
+		t.Fatalf("empty token page info = %#v", info)
+	}
+
+	none := ModelsPage{}
+	if none.HasNextPage() {
+		t.Fatal("nil token should not have next page")
+	}
+	if info := none.NextPageInfo(); info != nil {
+		t.Fatalf("nil token page info = %#v", info)
+	}
+}
+
 func TestGeneratedJSONAliases(t *testing.T) {
 	modelField, ok := reflect.TypeOf(Model{}).FieldByName("ContextLength")
 	if !ok {
