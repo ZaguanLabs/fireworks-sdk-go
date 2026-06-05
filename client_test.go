@@ -1001,6 +1001,19 @@ func TestDeploymentsScaleTypedUsesActionPath(t *testing.T) {
 		if got := r.URL.Path; got != "/v1/accounts/acct/deployments/dep-1:scale" {
 			t.Errorf("path = %q", got)
 		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode body: %v", err)
+		}
+		if got := body["replicaCount"]; got != float64(3) {
+			t.Errorf("replicaCount = %#v", got)
+		}
+		if _, ok := body["replica_count"]; ok {
+			t.Errorf("unexpected replica_count body key: %#v", body)
+		}
+		if _, ok := body["account_id"]; ok {
+			t.Errorf("unexpected account_id body key: %#v", body)
+		}
 		_ = json.NewEncoder(w).Encode(JSON{
 			"baseModel":           "accounts/fireworks/models/test",
 			"name":                "accounts/acct/deployments/dep-1",
@@ -1009,11 +1022,14 @@ func TestDeploymentsScaleTypedUsesActionPath(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := NewClient(WithBaseURL(server.URL), WithDefaultAccountID("acct"))
+	client, err := NewClient(WithBaseURL(server.URL))
 	if err != nil {
 		t.Fatal(err)
 	}
-	deployment, err := client.Deployments.ScaleTyped(context.Background(), "dep-1", JSON{"replicaCount": 3})
+	deployment, err := client.Deployments.ScaleTyped(context.Background(), "dep-1", fwtypes.DeploymentScaleParams{
+		AccountID:    "acct",
+		ReplicaCount: 3,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -2,7 +2,9 @@ package fireworks
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
+	"strings"
 
 	fwtypes "github.com/ZaguanLabs/fireworks-sdk-go/types"
 )
@@ -15,13 +17,13 @@ func typedGet[T any](ctx context.Context, client *Client, path string, opts ...R
 
 func typedPost[T any](ctx context.Context, client *Client, path string, body any, opts ...RequestOption) (*T, error) {
 	var out T
-	err := client.Request(ctx, http.MethodPost, path, body, &out, opts...)
+	err := client.Request(ctx, http.MethodPost, path, normalizeManagementBody(body), &out, opts...)
 	return &out, err
 }
 
 func typedPatch[T any](ctx context.Context, client *Client, path string, body any, opts ...RequestOption) (*T, error) {
 	var out T
-	err := client.Request(ctx, http.MethodPatch, path, body, &out, opts...)
+	err := client.Request(ctx, http.MethodPatch, path, normalizeManagementBody(body), &out, opts...)
 	return &out, err
 }
 
@@ -129,11 +131,12 @@ func (r *ModelsResource) GetUploadEndpointTyped(ctx context.Context, modelID str
 
 func (r *ModelsResource) PrepareTyped(ctx context.Context, modelID string, body any, opts ...RequestOption) (Response, error) {
 	var out Response
+	opts = withAccountFromBody(body, opts)
 	path, err := typedAccountPath(r.client, "/models/"+pathEscape(modelID)+":prepare", opts)
 	if err != nil {
 		return nil, err
 	}
-	err = r.client.Request(ctx, http.MethodPost, path, body, &out, opts...)
+	err = r.client.Request(ctx, http.MethodPost, path, normalizeManagementBody(body), &out, opts...)
 	return out, err
 }
 
@@ -188,11 +191,12 @@ func (r *DatasetsResource) UploadFileTyped(ctx context.Context, datasetID string
 
 func (r *DatasetsResource) ValidateUploadTyped(ctx context.Context, datasetID string, body any, opts ...RequestOption) (Response, error) {
 	var out Response
+	opts = withAccountFromBody(body, opts)
 	path, err := typedAccountPath(r.client, "/datasets/"+pathEscape(datasetID)+":validateUpload", opts)
 	if err != nil {
 		return nil, err
 	}
-	err = r.client.Request(ctx, http.MethodPost, path, body, &out, opts...)
+	err = r.client.Request(ctx, http.MethodPost, path, normalizeManagementBody(body), &out, opts...)
 	return out, err
 }
 
@@ -457,6 +461,7 @@ func typedGetInAccount[T any](ctx context.Context, client *Client, suffix string
 }
 
 func typedPostInAccount[T any](ctx context.Context, client *Client, suffix string, body any, opts ...RequestOption) (*T, error) {
+	opts = withAccountFromBody(body, opts)
 	path, err := typedAccountPath(client, suffix, opts)
 	if err != nil {
 		return nil, err
@@ -465,6 +470,7 @@ func typedPostInAccount[T any](ctx context.Context, client *Client, suffix strin
 }
 
 func typedPatchInAccount[T any](ctx context.Context, client *Client, suffix string, body any, opts ...RequestOption) (*T, error) {
+	opts = withAccountFromBody(body, opts)
 	path, err := typedAccountPath(client, suffix, opts)
 	if err != nil {
 		return nil, err
@@ -478,4 +484,91 @@ func typedDeleteInAccount[T any](ctx context.Context, client *Client, suffix str
 		return nil, err
 	}
 	return typedDelete[T](ctx, client, path, opts...)
+}
+
+func withAccountFromBody(body any, opts []RequestOption) []RequestOption {
+	accountID := accountIDFromBody(body)
+	if accountID == "" {
+		return opts
+	}
+	out := make([]RequestOption, 0, len(opts)+1)
+	out = append(out, WithAccountID(accountID))
+	out = append(out, opts...)
+	return out
+}
+
+func accountIDFromBody(body any) string {
+	switch v := body.(type) {
+	case nil:
+		return ""
+	case map[string]any:
+		if accountID, ok := v["account_id"].(string); ok {
+			return accountID
+		}
+		return ""
+	default:
+		payload, err := json.Marshal(body)
+		if err != nil {
+			return ""
+		}
+		var values map[string]any
+		if err := json.Unmarshal(payload, &values); err != nil {
+			return ""
+		}
+		accountID, _ := values["account_id"].(string)
+		return accountID
+	}
+}
+
+func normalizeManagementBody(body any) any {
+	switch body.(type) {
+	case nil, map[string]any, JSON:
+		return body
+	default:
+		payload, err := json.Marshal(body)
+		if err != nil || string(payload) == "null" {
+			return body
+		}
+		var values any
+		if err := json.Unmarshal(payload, &values); err != nil {
+			return body
+		}
+		return normalizeManagementValue(values)
+	}
+}
+
+func normalizeManagementValue(value any) any {
+	switch v := value.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(v))
+		for key, item := range v {
+			if key == "account_id" {
+				continue
+			}
+			out[managementBodyAlias(key)] = normalizeManagementValue(item)
+		}
+		return out
+	case []any:
+		out := make([]any, 0, len(v))
+		for _, item := range v {
+			out = append(out, normalizeManagementValue(item))
+		}
+		return out
+	default:
+		return value
+	}
+}
+
+func managementBodyAlias(key string) string {
+	if !strings.Contains(key, "_") {
+		return key
+	}
+	parts := strings.Split(key, "_")
+	for i := 1; i < len(parts); i++ {
+		if parts[i] == "" {
+			continue
+		}
+		parts[i] = strings.ToUpper(parts[i][:1]) + parts[i][1:]
+	}
+	return strings.Join(parts, "")
 }
