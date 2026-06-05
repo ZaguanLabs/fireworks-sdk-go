@@ -12,6 +12,7 @@ type ChatCompletionChunkChoice = ChatChatCompletionChunkChoice
 type ChatCompletionChunkChoiceDelta = ChatChatCompletionChunkChoiceDelta
 
 type DpoJob = DPOJobDpoJob
+type DPOJobGetMetricsFileEndpointResponse = DPOJobGetMetricsFileEndpointResponseDpoJobGetMetricsFileEndpointResponse
 
 type AccountsPage struct {
 	Accounts      []Account `json:"accounts"`

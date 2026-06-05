@@ -511,6 +511,81 @@ func TestModelsListTypedUsesPythonPaginationShape(t *testing.T) {
 	}
 }
 
+func TestTypedManagementActionParity(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/accounts/acct/models/model-1:prepare":
+			if got := r.Method; got != http.MethodPost {
+				t.Errorf("prepare method = %q", got)
+			}
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("decode prepare body: %v", err)
+			}
+			if got := body["precision"]; got != "FP8" {
+				t.Errorf("precision = %q", got)
+			}
+			_ = json.NewEncoder(w).Encode(JSON{"name": "model-1", "prepared": true})
+		case "/v1/accounts/acct/datasets/ds-1:validateUpload":
+			if got := r.Method; got != http.MethodPost {
+				t.Errorf("validate method = %q", got)
+			}
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("decode validate body: %v", err)
+			}
+			if got := body["body"]; got != "dataset spec" {
+				t.Errorf("body = %q", got)
+			}
+			_ = json.NewEncoder(w).Encode(JSON{"valid": true})
+		case "/v1/accounts/acct/dpoJobs/dpo-1:getMetricsFileEndpoint":
+			if got := r.Method; got != http.MethodGet {
+				t.Errorf("metrics method = %q", got)
+			}
+			if got := r.URL.Query().Get("read_mask"); got != "signedUrl" {
+				t.Errorf("read_mask = %q", got)
+			}
+			_ = json.NewEncoder(w).Encode(JSON{"signedUrl": "gs://metrics.jsonl"})
+		default:
+			t.Errorf("unexpected path = %q", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client, err := NewClient(WithBaseURL(server.URL), WithDefaultAccountID("acct"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	prepared, err := client.Models.PrepareTyped(context.Background(), "model-1", fwtypes.ModelPrepareParams{Precision: "FP8"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prepared["prepared"] != true {
+		t.Fatalf("prepared = %#v", prepared)
+	}
+
+	validated, err := client.Datasets.ValidateUploadTyped(context.Background(), "ds-1", fwtypes.DatasetValidateUploadParams{Body: "dataset spec"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if validated["valid"] != true {
+		t.Fatalf("validated = %#v", validated)
+	}
+
+	metrics, err := client.DPOJobs.GetMetricsFileEndpointTyped(context.Background(), "dpo-1", map[string]any{"read_mask": "signedUrl"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var _ *fwtypes.DPOJobGetMetricsFileEndpointResponse = metrics
+	if metrics.SignedURL == nil || *metrics.SignedURL != "gs://metrics.jsonl" {
+		t.Fatalf("metrics = %#v", metrics)
+	}
+}
+
 func TestDeploymentsScaleTypedUsesActionPath(t *testing.T) {
 	t.Setenv("FIREWORKS_API_KEY", "test-key")
 

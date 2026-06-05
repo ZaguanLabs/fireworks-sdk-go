@@ -127,6 +127,16 @@ func (r *ModelsResource) GetUploadEndpointTyped(ctx context.Context, modelID str
 	return typedPostInAccount[fwtypes.ModelGetUploadEndpointResponse](ctx, r.client, "/models/"+pathEscape(modelID)+":getUploadEndpoint", body, opts...)
 }
 
+func (r *ModelsResource) PrepareTyped(ctx context.Context, modelID string, body any, opts ...RequestOption) (Response, error) {
+	var out Response
+	path, err := typedAccountPath(r.client, "/models/"+pathEscape(modelID)+":prepare", opts)
+	if err != nil {
+		return nil, err
+	}
+	err = r.client.Request(ctx, http.MethodPost, path, body, &out, opts...)
+	return out, err
+}
+
 func (r *ModelsResource) ValidateUploadTyped(ctx context.Context, modelID string, query map[string]any, opts ...RequestOption) (*fwtypes.ModelValidateUploadResponse, error) {
 	return typedGetInAccount[fwtypes.ModelValidateUploadResponse](ctx, r.client, "/models/"+pathEscape(modelID)+":validateUpload", withQuery(query, opts)...)
 }
@@ -174,6 +184,16 @@ func (r *DatasetsResource) UploadFileTyped(ctx context.Context, datasetID string
 	var out fwtypes.DatasetUploadResponse
 	err = r.client.MultipartRequest(ctx, http.MethodPost, path, nil, map[string]File{"file": file}, &out, opts...)
 	return &out, err
+}
+
+func (r *DatasetsResource) ValidateUploadTyped(ctx context.Context, datasetID string, body any, opts ...RequestOption) (Response, error) {
+	var out Response
+	path, err := typedAccountPath(r.client, "/datasets/"+pathEscape(datasetID)+":validateUpload", opts)
+	if err != nil {
+		return nil, err
+	}
+	err = r.client.Request(ctx, http.MethodPost, path, body, &out, opts...)
+	return out, err
 }
 
 func (r *DeploymentsResource) CreateTyped(ctx context.Context, body any, opts ...RequestOption) (*fwtypes.Deployment, error) {
@@ -358,6 +378,10 @@ func (r *DPOJobsResource) GetTyped(ctx context.Context, jobID string, opts ...Re
 
 func (r *DPOJobsResource) DeleteTyped(ctx context.Context, jobID string, opts ...RequestOption) (*fwtypes.DpoJob, error) {
 	return typedDeleteInAccount[fwtypes.DpoJob](ctx, r.client, "/dpoJobs/"+pathEscape(jobID), opts...)
+}
+
+func (r *DPOJobsResource) GetMetricsFileEndpointTyped(ctx context.Context, jobID string, query map[string]any, opts ...RequestOption) (*fwtypes.DPOJobGetMetricsFileEndpointResponse, error) {
+	return typedGetInAccount[fwtypes.DPOJobGetMetricsFileEndpointResponse](ctx, r.client, "/dpoJobs/"+pathEscape(jobID)+":getMetricsFileEndpoint", withQuery(query, opts)...)
 }
 
 func (r *DPOJobsResource) ResumeTyped(ctx context.Context, jobID string, body any, opts ...RequestOption) (*fwtypes.DpoJob, error) {
