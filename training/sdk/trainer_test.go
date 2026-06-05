@@ -259,3 +259,192 @@ func TestValidateTrainingShapeRef(t *testing.T) {
 		t.Fatalf("error = %v", err)
 	}
 }
+
+func TestExtractJobStatusMessage(t *testing.T) {
+	tests := []struct {
+		job  map[string]any
+		want string
+	}{
+		{job: map[string]any{"statusMessage": "top"}, want: "top"},
+		{job: map[string]any{"message": "msg"}, want: "msg"},
+		{job: map[string]any{"status": map[string]any{"message": "nested"}}, want: "nested"},
+		{job: map[string]any{"status": "plain"}, want: "plain"},
+		{job: map[string]any{"status": map[string]any{}}, want: ""},
+	}
+	for _, test := range tests {
+		if got := ExtractJobStatusMessage(test.job); got != test.want {
+			t.Fatalf("ExtractJobStatusMessage(%#v) = %q, want %q", test.job, got, test.want)
+		}
+	}
+}
+
+func TestTrainerGatewayURL(t *testing.T) {
+	mgr := NewTrainerJobManager("test-key", "https://api.example.com")
+	mgr.SetAccountID("test-account")
+	got, err := mgr.TrainerGatewayURL(context.Background(), "job-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "https://api.example.com/training/v1/rlorTrainerJobs/test-account/job-1"
+	if got != want {
+		t.Fatalf("gateway URL = %q, want %q", got, want)
+	}
+}
+
+func TestTrainerManagerGetDeleteResume(t *testing.T) {
+	var seen []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = append(seen, r.Method+" "+r.URL.Path)
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/accounts/a/rlorTrainerJobs/j":
+			_ = json.NewEncoder(w).Encode(map[string]any{"state": "JOB_STATE_RUNNING"})
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/accounts/a/rlorTrainerJobs/j":
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/accounts/a/rlorTrainerJobs/j:resume":
+			_ = json.NewEncoder(w).Encode(map[string]any{"name": "accounts/a/rlorTrainerJobs/j"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	mgr := NewTrainerJobManager("test-key", server.URL)
+	mgr.SetAccountID("a")
+	job, err := mgr.GetJob(context.Background(), "j")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job["state"] != "JOB_STATE_RUNNING" {
+		t.Fatalf("job = %#v", job)
+	}
+	if err := mgr.DeleteJob(context.Background(), "j"); err != nil {
+		t.Fatal(err)
+	}
+	resumed, err := mgr.Resume(context.Background(), "j")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resumed["name"] != "accounts/a/rlorTrainerJobs/j" {
+		t.Fatalf("resumed = %#v", resumed)
+	}
+	if len(seen) != 3 {
+		t.Fatalf("seen = %#v", seen)
+	}
+}
+
+func TestTrainerPollUntilReadyRunningUsesGatewayEndpoint(t *testing.T) {
+	mgr := NewTrainerJobManager("test-key", "https://api.example.com")
+	mgr.SetAccountID("test-account")
+	endpoint, err := mgr.PollUntilReady(
+		context.Background(),
+		"job-1",
+		"accounts/test/rlorTrainerJobs/job-1",
+		TrainerPollOptions{
+			Timeout:      time.Second,
+			PollInterval: time.Millisecond,
+			GetJob: func(context.Context, string) (map[string]any, error) {
+				return map[string]any{
+					"state":             "JOB_STATE_RUNNING",
+					"directRouteHandle": "https://trainer.internal:8080",
+				}, nil
+			},
+			HealthCheck: func(context.Context, string) bool { return true },
+			Sleep:       func(time.Duration) {},
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if endpoint.JobID != "job-1" {
+		t.Fatalf("endpoint = %#v", endpoint)
+	}
+	want := "https://api.example.com/training/v1/rlorTrainerJobs/test-account/job-1"
+	if endpoint.BaseURL != want {
+		t.Fatalf("base URL = %q, want %q", endpoint.BaseURL, want)
+	}
+}
+
+func TestTrainerPollUntilReadyFailedRaisesRuntimeError(t *testing.T) {
+	mgr := NewTrainerJobManager("test-key", "https://api.example.com")
+	mgr.SetAccountID("a")
+	_, err := mgr.PollUntilReady(
+		context.Background(),
+		"job-1",
+		"name",
+		TrainerPollOptions{
+			Timeout: time.Second,
+			GetJob: func(context.Context, string) (map[string]any, error) {
+				return map[string]any{
+					"state":  "JOB_STATE_FAILED",
+					"status": map[string]any{"message": "GPU OOM"},
+				}, nil
+			},
+			Sleep: func(time.Duration) {},
+		},
+	)
+	if err == nil || !strings.Contains(err.Error(), "GPU OOM") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestTrainerPollUntilReadyTimeoutRaises(t *testing.T) {
+	mgr := NewTrainerJobManager("test-key", "https://api.example.com")
+	mgr.SetAccountID("a")
+	now := time.Unix(0, 0)
+	_, err := mgr.PollUntilReady(
+		context.Background(),
+		"job-1",
+		"name",
+		TrainerPollOptions{
+			Timeout:      5 * time.Second,
+			PollInterval: time.Second,
+			Now: func() time.Time {
+				current := now
+				now = now.Add(2 * time.Second)
+				return current
+			},
+			GetJob: func(context.Context, string) (map[string]any, error) {
+				return map[string]any{"state": "JOB_STATE_CREATING"}, nil
+			},
+			HealthCheck: func(context.Context, string) bool { return false },
+			Sleep:       func(time.Duration) {},
+		},
+	)
+	if err == nil || !strings.Contains(err.Error(), "did not become ready") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestTrainerCreateAndWaitDelegates(t *testing.T) {
+	var created bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/accounts/a/rlorTrainerJobs" {
+			created = true
+			_ = json.NewEncoder(w).Encode(map[string]any{"name": "accounts/a/rlorTrainerJobs/job-1"})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	mgr := NewTrainerJobManager("test-key", server.URL)
+	mgr.SetAccountID("a")
+	endpoint, err := mgr.CreateAndWait(
+		context.Background(),
+		TrainerJobConfig{BaseModel: "accounts/a/models/m"},
+		TrainerPollOptions{
+			Timeout: time.Second,
+			GetJob: func(context.Context, string) (map[string]any, error) {
+				return map[string]any{"state": "JOB_STATE_RUNNING"}, nil
+			},
+			HealthCheck: func(context.Context, string) bool { return true },
+			Sleep:       func(time.Duration) {},
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !created || endpoint.JobID != "job-1" {
+		t.Fatalf("created = %t endpoint = %#v", created, endpoint)
+	}
+}

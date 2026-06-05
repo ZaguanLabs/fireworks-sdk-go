@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"net/url"
 	"regexp"
 	"strings"
@@ -129,6 +130,198 @@ func (m *TrainerJobManager) Create(ctx context.Context, config TrainerJobConfig)
 	return CreatedTrainerJob{JobName: name, JobID: lastPathSegment(name)}, nil
 }
 
+func (m *TrainerJobManager) CreateAndWait(ctx context.Context, config TrainerJobConfig, opts ...TrainerPollOptions) (TrainerServiceEndpoint, error) {
+	created, err := m.Create(ctx, config)
+	if err != nil {
+		return TrainerServiceEndpoint{}, err
+	}
+	return m.WaitForReady(ctx, created.JobID, created.JobName, opts...)
+}
+
+func (m *TrainerJobManager) WaitForReady(ctx context.Context, jobID, jobName string, opts ...TrainerPollOptions) (TrainerServiceEndpoint, error) {
+	if jobName == "" {
+		accountID, err := m.AccountID(ctx)
+		if err != nil {
+			return TrainerServiceEndpoint{}, err
+		}
+		jobName = "accounts/" + accountID + "/rlorTrainerJobs/" + jobID
+	}
+	return m.PollUntilReady(ctx, jobID, jobName, opts...)
+}
+
+func (m *TrainerJobManager) WaitForExisting(ctx context.Context, jobID string, opts ...TrainerPollOptions) (TrainerServiceEndpoint, error) {
+	return m.WaitForReady(ctx, jobID, "", opts...)
+}
+
+func (m *TrainerJobManager) ResumeAndWait(ctx context.Context, jobID string, opts ...TrainerPollOptions) (TrainerServiceEndpoint, error) {
+	if _, err := m.Resume(ctx, jobID); err != nil {
+		return TrainerServiceEndpoint{}, err
+	}
+	return m.WaitForExisting(ctx, jobID, opts...)
+}
+
+func (m *TrainerJobManager) GetJob(ctx context.Context, jobID string) (map[string]any, error) {
+	accountID, err := m.AccountID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := m.Get(ctx, "/v1/accounts/"+accountID+"/rlorTrainerJobs/"+jobID, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("get trainer job %s: HTTP %d: %s", jobID, resp.StatusCode, ParseAPIErrorBody(body))
+	}
+	var out map[string]any
+	if len(body) > 0 {
+		if err := json.Unmarshal(body, &out); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+func (m *TrainerJobManager) DeleteJob(ctx context.Context, jobID string) error {
+	accountID, err := m.AccountID(ctx)
+	if err != nil {
+		return err
+	}
+	resp, err := m.Delete(ctx, "/v1/accounts/"+accountID+"/rlorTrainerJobs/"+jobID, nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("delete trainer job %s: HTTP %d: %s", jobID, resp.StatusCode, ParseAPIErrorBody(body))
+	}
+	return nil
+}
+
+func (m *TrainerJobManager) Resume(ctx context.Context, jobID string) (map[string]any, error) {
+	accountID, err := m.AccountID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := m.Post(ctx, "/v1/accounts/"+accountID+"/rlorTrainerJobs/"+jobID+":resume", nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("resume trainer job %s: HTTP %d: %s", jobID, resp.StatusCode, ParseAPIErrorBody(body))
+	}
+	var out map[string]any
+	if len(body) > 0 {
+		if err := json.Unmarshal(body, &out); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+func (m *TrainerJobManager) TrainerGatewayURL(ctx context.Context, jobID string) (string, error) {
+	accountID, err := m.AccountID(ctx)
+	if err != nil {
+		return "", err
+	}
+	return m.BaseURL() + "/training/v1/rlorTrainerJobs/" + accountID + "/" + jobID, nil
+}
+
+type TrainerPollOptions struct {
+	PollInterval time.Duration
+	Timeout      time.Duration
+	Now          func() time.Time
+	Sleep        func(time.Duration)
+	HealthCheck  func(context.Context, string) bool
+	GetJob       func(context.Context, string) (map[string]any, error)
+}
+
+func (m *TrainerJobManager) PollUntilReady(ctx context.Context, jobID, jobName string, opts ...TrainerPollOptions) (TrainerServiceEndpoint, error) {
+	opt := TrainerPollOptions{
+		PollInterval: PollInterval,
+		Timeout:      TrainerReadyTimeout,
+		Now:          time.Now,
+		Sleep:        time.Sleep,
+		HealthCheck:  m.CheckHealthz,
+		GetJob:       m.GetJob,
+	}
+	if len(opts) > 0 {
+		provided := opts[0]
+		if provided.PollInterval != 0 {
+			opt.PollInterval = provided.PollInterval
+		}
+		if provided.Timeout != 0 {
+			opt.Timeout = provided.Timeout
+		}
+		if provided.Now != nil {
+			opt.Now = provided.Now
+		}
+		if provided.Sleep != nil {
+			opt.Sleep = provided.Sleep
+		}
+		if provided.HealthCheck != nil {
+			opt.HealthCheck = provided.HealthCheck
+		}
+		if provided.GetJob != nil {
+			opt.GetJob = provided.GetJob
+		}
+	}
+
+	start := opt.Now()
+	baseURL, err := m.TrainerGatewayURL(ctx, jobID)
+	if err != nil {
+		return TrainerServiceEndpoint{}, err
+	}
+	for opt.Now().Sub(start) < opt.Timeout {
+		job, err := opt.GetJob(ctx, jobID)
+		if err != nil {
+			return TrainerServiceEndpoint{}, err
+		}
+		state := stringFromAny(job["state"])
+		statusMessage := ExtractJobStatusMessage(job)
+		if state == "JOB_STATE_FAILED" {
+			if statusMessage == "" {
+				statusMessage = "unknown"
+			}
+			return TrainerServiceEndpoint{}, fmt.Errorf("%s", FormatSDKError(
+				"Trainer job "+jobID+" failed",
+				statusMessage,
+				"The trainer status detail above is from the control plane. Check trainer logs and events in the Fireworks console before retrying.\n  Console: "+ConsoleURL,
+				SDKErrorFormatOptions{DocsURL: DocsSDK, ShowSupport: true},
+			))
+		}
+		if state == "JOB_STATE_RUNNING" && opt.HealthCheck(ctx, baseURL) {
+			m.BootTime = opt.Now().Sub(start)
+			return TrainerServiceEndpoint{JobName: jobName, JobID: jobID, BaseURL: baseURL}, nil
+		}
+		opt.Sleep(opt.PollInterval)
+	}
+	return TrainerServiceEndpoint{}, fmt.Errorf("%s", FormatSDKError(
+		fmt.Sprintf("Trainer job %s did not become ready within %.0fs", jobID, opt.Timeout.Seconds()),
+		"The job did not reach JOB_STATE_RUNNING with a healthy /api/v1/healthz response before the timeout.",
+		fmt.Sprintf("Increase the trainer ready timeout (current: %.0fs) and check job status in the Fireworks console: %s", opt.Timeout.Seconds(), ConsoleURL),
+		SDKErrorFormatOptions{DocsURL: DocsSDK},
+	))
+}
+
+func (m *TrainerJobManager) CheckHealthz(ctx context.Context, baseURL string) bool {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/api/v1/healthz", nil)
+	if err != nil {
+		return false
+	}
+	req.Header = m.Headers(map[string]string{"Authorization": "Bearer " + m.APIKey()})
+	resp, err := m.httpClient.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode == http.StatusOK
+}
+
 func (m *TrainerJobManager) CreateRaw(ctx context.Context, config TrainerJobConfig) (map[string]any, error) {
 	if err := config.Validate(); err != nil {
 		return nil, err
@@ -191,6 +384,24 @@ func ValidateTrainingShapeRef(ref string) error {
 		fmt.Sprintf("%q is not a valid training shape resource name.", ref),
 		"Expected: accounts/<account>/trainingShapes/<shape>[/versions/<version>]\n  Use resolve_training_profile(<short_id>) to get the full resource name:\n    profile = mgr.resolve_training_profile('my-shape')\n    config = TrainerJobConfig(..., training_shape_ref=profile.training_shape_version)",
 	))
+}
+
+func ExtractJobStatusMessage(job map[string]any) string {
+	for _, key := range []string{"statusMessage", "message"} {
+		if value := stringFromAny(job[key]); value != "" {
+			return value
+		}
+	}
+	status := job["status"]
+	if statusMap, ok := status.(map[string]any); ok {
+		for _, key := range []string{"message", "statusMessage", "detail", "details"} {
+			if value := stringFromAny(statusMap[key]); value != "" {
+				return value
+			}
+		}
+		return ""
+	}
+	return stringFromAny(status)
 }
 
 func BuildTrainerCreatePayload(config TrainerJobConfig) map[string]any {
