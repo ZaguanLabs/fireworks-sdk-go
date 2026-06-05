@@ -521,7 +521,11 @@ func (c *Client) do(req *http.Request, out any, maxRetries int) error {
 		return nil
 	}
 	if err := json.Unmarshal(body, out); err != nil {
-		return fmt.Errorf("fireworks: decode response: %w", err)
+		return &APIResponseValidationError{
+			Message: "fireworks: response validation error",
+			Body:    append([]byte(nil), body...),
+			Err:     err,
+		}
 	}
 	return nil
 }

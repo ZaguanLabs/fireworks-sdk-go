@@ -41,7 +41,11 @@ func (r *APIResponse) JSON() (any, error) {
 	}
 	var out any
 	if err := json.Unmarshal(r.Body, &out); err != nil {
-		return nil, err
+		return nil, &APIResponseValidationError{
+			Message: "fireworks: response validation error",
+			Body:    r.Bytes(),
+			Err:     err,
+		}
 	}
 	return out, nil
 }
@@ -50,7 +54,14 @@ func (r *APIResponse) ParseJSON(out any) error {
 	if r == nil || len(r.Body) == 0 || out == nil {
 		return nil
 	}
-	return json.Unmarshal(r.Body, out)
+	if err := json.Unmarshal(r.Body, out); err != nil {
+		return &APIResponseValidationError{
+			Message: "fireworks: response validation error",
+			Body:    r.Bytes(),
+			Err:     err,
+		}
+	}
+	return nil
 }
 
 type RequestOptions struct {

@@ -766,6 +766,58 @@ func TestClientAPIResponseHelperExposesMetadataAndParsing(t *testing.T) {
 	}
 }
 
+func TestAPIResponseValidationErrorForInvalidSuccessBody(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte("{invalid"))
+	}))
+	defer server.Close()
+
+	client, err := NewClient(WithBaseURL(server.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.Get(context.Background(), "/invalid")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	var validationErr *APIResponseValidationError
+	if !errors.As(err, &validationErr) {
+		t.Fatalf("error type = %T", err)
+	}
+	if string(validationErr.Body) != "{invalid" {
+		t.Fatalf("body = %q", validationErr.Body)
+	}
+}
+
+func TestAPIResponseParsingUsesValidationError(t *testing.T) {
+	resp := &APIResponse{Body: []byte("{invalid")}
+
+	if _, err := resp.JSON(); err == nil {
+		t.Fatal("expected JSON error")
+	} else {
+		var validationErr *APIResponseValidationError
+		if !errors.As(err, &validationErr) {
+			t.Fatalf("JSON error type = %T", err)
+		}
+	}
+
+	var out map[string]any
+	err := resp.ParseJSON(&out)
+	if err == nil {
+		t.Fatal("expected ParseJSON error")
+	}
+	var validationErr *APIResponseValidationError
+	if !errors.As(err, &validationErr) {
+		t.Fatalf("ParseJSON error type = %T", err)
+	}
+	if string(validationErr.Body) != "{invalid" {
+		t.Fatalf("body = %q", validationErr.Body)
+	}
+}
+
 func TestClientRawByteContentResponseHelper(t *testing.T) {
 	t.Setenv("FIREWORKS_API_KEY", "test-key")
 

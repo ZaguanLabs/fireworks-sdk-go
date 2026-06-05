@@ -56,6 +56,23 @@ type APITimeoutError struct {
 	*APIConnectionError
 }
 
+type APIResponseValidationError struct {
+	Message string
+	Body    []byte
+	Err     error
+}
+
+func (e *APIResponseValidationError) Error() string {
+	if e.Message != "" {
+		return e.Message
+	}
+	return "fireworks: response validation error"
+}
+
+func (e *APIResponseValidationError) Unwrap() error {
+	return e.Err
+}
+
 type BadRequestError struct{ *APIError }
 type AuthenticationError struct{ *APIError }
 type PermissionDeniedError struct{ *APIError }
