@@ -1,0 +1,620 @@
+package sdk
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"strings"
+	"time"
+)
+
+const (
+	DeploymentReadyDefaultTimeout = 600 * time.Second
+	DeploymentReadyPoll           = 15 * time.Second
+	DeploymentDeletionTimeout     = 60 * time.Second
+	DeploymentDeletionPoll        = 2 * time.Second
+	HotloadWaitTimeout            = 400 * time.Second
+	HotloadWaitPoll               = 5 * time.Second
+	DefaultDeploymentDescription  = "Fireworks training deployment"
+	HotloadSourceURLHeader        = "x-fireworks-hot-load-source-url"
+	HotloadRecoverySteps          = "Use the Fireworks training cookbook skill's hotload recovery self-check. Common recoveries are: reattach or recreate a stale deployment; for full-parameter training, retry from a matching base checkpoint or resume from DCP; for LoRA, fix deployment attachment rather than changing checkpoint_type."
+)
+
+type DeploymentInfo struct {
+	DeploymentID           string
+	Name                   string
+	State                  string
+	HotLoadBucketURL       string
+	HotLoadTrainerJob      string
+	DeploymentShapeVersion string
+	InferenceModel         string
+}
+
+func DeploymentHotLoadTrainerJob(deployment DeploymentInfo) string {
+	return deployment.HotLoadTrainerJob
+}
+
+type DeploymentConfig struct {
+	DeploymentID               string
+	BaseModel                  string
+	Description                string
+	DeploymentShape            string
+	Region                     string
+	MinReplicaCount            int
+	MaxReplicaCount            *int
+	AcceleratorType            string
+	HotLoadBucketType          *string
+	HotLoadTrainerJob          string
+	EnableHotLoad              *bool
+	SkipShapeValidation        bool
+	DisableSpeculativeDecoding bool
+	ExtraArgs                  []string
+	ExtraValues                map[string]string
+	Annotations                map[string]string
+}
+
+type DeploymentManager struct {
+	*TrainingRestClient
+	InferenceURL                     string
+	HotloadAPIURL                    string
+	HotloadResetPromptCacheSupported *bool
+	LastHotloadErrorMessage          string
+	BootTime                         time.Duration
+}
+
+type DeploymentManagerOption func(*deploymentManagerConfig)
+
+type deploymentManagerConfig struct {
+	restOptions   []TrainingRestClientOption
+	inferenceURL  string
+	hotloadAPIURL string
+}
+
+func WithDeploymentInferenceURL(rawURL string) DeploymentManagerOption {
+	return func(c *deploymentManagerConfig) {
+		c.inferenceURL = rawURL
+	}
+}
+
+func WithDeploymentHotloadAPIURL(rawURL string) DeploymentManagerOption {
+	return func(c *deploymentManagerConfig) {
+		c.hotloadAPIURL = rawURL
+	}
+}
+
+func WithDeploymentAdditionalHeaders(headers map[string]string) DeploymentManagerOption {
+	return func(c *deploymentManagerConfig) {
+		c.restOptions = append(c.restOptions, WithTrainingAdditionalHeaders(headers))
+	}
+}
+
+func WithDeploymentVerifySSL(verify bool) DeploymentManagerOption {
+	return func(c *deploymentManagerConfig) {
+		c.restOptions = append(c.restOptions, WithTrainingVerifySSL(verify))
+	}
+}
+
+func WithDeploymentHTTPClient(httpClient *http.Client) DeploymentManagerOption {
+	return func(c *deploymentManagerConfig) {
+		c.restOptions = append(c.restOptions, WithTrainingHTTPClient(httpClient))
+	}
+}
+
+func WithDeploymentRetryOptions(opts RequestRetryOptions) DeploymentManagerOption {
+	return func(c *deploymentManagerConfig) {
+		c.restOptions = append(c.restOptions, WithTrainingRetryOptions(opts))
+	}
+}
+
+func NewDeploymentManager(apiKey, baseURL string, opts ...DeploymentManagerOption) *DeploymentManager {
+	if baseURL == "" {
+		baseURL = DefaultFireworksAPIURL
+	}
+	var cfg deploymentManagerConfig
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&cfg)
+		}
+	}
+	rest := NewTrainingRestClient(apiKey, baseURL, cfg.restOptions...)
+	inferenceURL := cfg.inferenceURL
+	if inferenceURL == "" {
+		inferenceURL = baseURL
+	}
+	hotloadAPIURL := cfg.hotloadAPIURL
+	if hotloadAPIURL == "" {
+		hotloadAPIURL = baseURL
+	}
+	return &DeploymentManager{
+		TrainingRestClient: rest,
+		InferenceURL:       strings.TrimRight(inferenceURL, "/"),
+		HotloadAPIURL:      strings.TrimRight(hotloadAPIURL, "/"),
+	}
+}
+
+func (m *DeploymentManager) HotloadHeaders(ctx context.Context, deploymentID, baseModel, path string) (http.Header, error) {
+	accountID, err := m.AccountID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	extra := map[string]string{
+		"Authorization":        "Bearer " + m.APIKey(),
+		"fireworks-model":      baseModel,
+		"fireworks-deployment": "accounts/" + accountID + "/deployments/" + deploymentID,
+	}
+	if path != "" {
+		extra[HotloadSourceURLHeader] = path
+	}
+	return m.Headers(extra), nil
+}
+
+func (m *DeploymentManager) GetDeployment(ctx context.Context, deploymentID string) (map[string]any, error) {
+	accountID, err := m.AccountID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := m.Get(ctx, "/v1/accounts/"+accountID+"/deployments/"+deploymentID, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, nil
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("get deployment %s: HTTP %d: %s", deploymentID, resp.StatusCode, ParseAPIErrorBody(body))
+	}
+	if len(body) == 0 {
+		return map[string]any{}, nil
+	}
+	var out map[string]any
+	if err := json.Unmarshal(body, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (m *DeploymentManager) GetTrainerRegion(ctx context.Context, trainerJob string) string {
+	resp, err := m.Get(ctx, "/v1/"+strings.TrimLeft(trainerJob, "/"), nil)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return ""
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return ""
+	}
+	trainingConfig, _ := payload["trainingConfig"].(map[string]any)
+	return stringFromAny(trainingConfig["region"])
+}
+
+func (m *DeploymentManager) DeleteDeployment(ctx context.Context, deploymentID string, ignoreChecks, hard bool) error {
+	accountID, err := m.AccountID(ctx)
+	if err != nil {
+		return err
+	}
+	query := url.Values{}
+	if ignoreChecks {
+		query.Set("ignoreChecks", "true")
+	}
+	if hard {
+		query.Set("hard", "true")
+	}
+	path := "/v1/accounts/" + accountID + "/deployments/" + deploymentID
+	if len(query) > 0 {
+		path += "?" + query.Encode()
+	}
+	resp, err := m.Delete(ctx, path, nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("delete deployment %s: HTTP %d: %s", deploymentID, resp.StatusCode, ParseAPIErrorBody(body))
+	}
+	return nil
+}
+
+func (m *DeploymentManager) CreateDeployment(ctx context.Context, config DeploymentConfig) (map[string]any, error) {
+	accountID, err := m.AccountID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	query := url.Values{}
+	query.Set("deploymentId", config.DeploymentID)
+	if config.SkipShapeValidation {
+		query.Set("skipShapeValidation", "true")
+	}
+	if config.DisableSpeculativeDecoding {
+		query.Set("disableSpeculativeDecoding", "true")
+	}
+	path := "/v1/accounts/" + accountID + "/deployments?" + query.Encode()
+
+	region := config.Region
+	if config.HotLoadTrainerJob != "" {
+		trainerRegion := m.GetTrainerRegion(ctx, config.HotLoadTrainerJob)
+		if trainerRegion != "" {
+			if config.Region != "" && config.Region != trainerRegion {
+				return nil, fmt.Errorf("hot_load_trainer_job %s is in region %s, but the deployment requests region %s; hot-load requires the deployment to be colocated with the trainer. Leave region unset to inherit the trainer's region", config.HotLoadTrainerJob, trainerRegion, config.Region)
+			}
+			if config.Region == "" {
+				region = trainerRegion
+			}
+		}
+	}
+
+	resp, err := m.Post(ctx, path, BuildDeploymentBody(config, region), nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode == http.StatusConflict {
+		existing, getErr := m.GetDeployment(ctx, config.DeploymentID)
+		if getErr != nil {
+			return nil, getErr
+		}
+		if existing != nil {
+			return existing, nil
+		}
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		hint := HTTPStatusHints[resp.StatusCode]
+		extra := ""
+		if resp.StatusCode == http.StatusBadRequest {
+			extra = "\n  Verify region, deployment_shape, base_model, and extra_args match the selected deployment flow.\n  For hotload, use one documented scope: PER_TRAINER via hot_load_trainer_job, or PER_DEPLOYMENT via a deployment-owned bucket."
+		}
+		return nil, fmt.Errorf("%s", FormatSDKError(
+			fmt.Sprintf("Deployment creation failed (HTTP %d)", resp.StatusCode),
+			ParseAPIErrorBody(body),
+			hint+extra,
+			SDKErrorFormatOptions{DocsURL: DocsSDK},
+		))
+	}
+	if len(body) == 0 {
+		return map[string]any{}, nil
+	}
+	var out map[string]any
+	if err := json.Unmarshal(body, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func BuildDeploymentBody(config DeploymentConfig, resolvedRegion ...string) map[string]any {
+	region := config.Region
+	if len(resolvedRegion) > 0 {
+		region = resolvedRegion[0]
+	}
+	description := config.Description
+	if description == "" {
+		description = DefaultDeploymentDescription
+	}
+	maxReplicaCount := config.MaxReplicaCount
+	if maxReplicaCount == nil {
+		defaultMaxReplicaCount := 1
+		maxReplicaCount = &defaultMaxReplicaCount
+	}
+	acceleratorType := config.AcceleratorType
+	if acceleratorType == "" {
+		acceleratorType = "NVIDIA_H200_141GB"
+	}
+	hotLoadBucketType := config.HotLoadBucketType
+	if hotLoadBucketType == nil {
+		defaultHotLoadBucketType := "FW_HOSTED"
+		hotLoadBucketType = &defaultHotLoadBucketType
+	}
+	enableHotLoad := true
+	if config.EnableHotLoad != nil {
+		enableHotLoad = *config.EnableHotLoad
+	}
+
+	body := map[string]any{
+		"baseModel":       config.BaseModel,
+		"description":     description,
+		"minReplicaCount": config.MinReplicaCount,
+		"maxReplicaCount": *maxReplicaCount,
+		"enableHotLoad":   enableHotLoad,
+		"forTraining":     enableHotLoad,
+	}
+	if region != "" {
+		body["placement"] = map[string]any{"region": region}
+	}
+	if *hotLoadBucketType != "" {
+		body["hotLoadBucketType"] = *hotLoadBucketType
+	}
+	if config.HotLoadTrainerJob != "" {
+		body["hotLoadTrainerJob"] = config.HotLoadTrainerJob
+	}
+	if config.DeploymentShape != "" {
+		body["deploymentShape"] = config.DeploymentShape
+	} else {
+		body["acceleratorType"] = acceleratorType
+	}
+	if len(config.ExtraArgs) > 0 {
+		body["extraArgs"] = flattenExtraArgs(config.ExtraArgs)
+	}
+	if len(config.ExtraValues) > 0 {
+		body["extraValues"] = cloneStringMap(config.ExtraValues)
+	}
+	if len(config.Annotations) > 0 {
+		body["annotations"] = cloneStringMap(config.Annotations)
+	}
+	return body
+}
+
+func (m *DeploymentManager) ParseDeploymentInfo(deploymentID string, data map[string]any) DeploymentInfo {
+	accountID := m.accountID
+	return DeploymentInfo{
+		DeploymentID:           deploymentID,
+		Name:                   stringFromAny(data["name"]),
+		State:                  stringOrDefault(data["state"], "UNKNOWN"),
+		HotLoadBucketURL:       stringFromAny(data["hotLoadBucketUrl"]),
+		HotLoadTrainerJob:      firstString(data, "hotLoadTrainerJob", "hot_load_trainer_job"),
+		DeploymentShapeVersion: firstString(data, "deploymentShape", "deployment_shape"),
+		InferenceModel:         "accounts/" + accountID + "/deployments/" + deploymentID,
+	}
+}
+
+func (m *DeploymentManager) WaitForDeletion(ctx context.Context, deploymentID string, opts ...DeploymentWaitOptions) error {
+	opt := deploymentWaitOptions(DeploymentDeletionTimeout, DeploymentDeletionPoll, opts...)
+	start := opt.Now()
+	for opt.Now().Sub(start) < opt.Timeout {
+		data, err := m.GetDeployment(ctx, deploymentID)
+		if err != nil {
+			return err
+		}
+		if data == nil || stringFromAny(data["state"]) == "DELETED" {
+			return nil
+		}
+		opt.Sleep(opt.PollInterval)
+	}
+	return nil
+}
+
+func (m *DeploymentManager) CreateOrGet(ctx context.Context, config DeploymentConfig, forceRecreate bool) (DeploymentInfo, error) {
+	existing, err := m.GetDeployment(ctx, config.DeploymentID)
+	if err != nil {
+		return DeploymentInfo{}, err
+	}
+	if existing != nil {
+		state := stringOrDefault(existing["state"], "UNKNOWN")
+		if state == "FAILED" || state == "DELETED" || state == "DELETING" || forceRecreate {
+			_ = m.DeleteDeployment(ctx, config.DeploymentID, true, true)
+			_ = m.WaitForDeletion(ctx, config.DeploymentID)
+		} else {
+			return m.ParseDeploymentInfo(config.DeploymentID, existing), nil
+		}
+	}
+	created, err := m.CreateDeployment(ctx, config)
+	if err != nil {
+		return DeploymentInfo{}, err
+	}
+	return m.ParseDeploymentInfo(config.DeploymentID, created), nil
+}
+
+type DeploymentWaitOptions struct {
+	Timeout      time.Duration
+	PollInterval time.Duration
+	Now          func() time.Time
+	Sleep        func(time.Duration)
+	Probe        func(context.Context, string) bool
+	Get          func(context.Context, string) (map[string]any, error)
+}
+
+func (m *DeploymentManager) WaitForReady(ctx context.Context, deploymentID string, opts ...DeploymentWaitOptions) (DeploymentInfo, error) {
+	opt := deploymentWaitOptions(DeploymentReadyDefaultTimeout, DeploymentReadyPoll, opts...)
+	if opt.Probe == nil {
+		opt.Probe = m.ProbeInference
+	}
+	if opt.Get == nil {
+		opt.Get = m.GetDeployment
+	}
+	accountID, err := m.AccountID(ctx)
+	if err != nil {
+		return DeploymentInfo{}, err
+	}
+	model := "accounts/" + accountID + "/deployments/" + deploymentID
+	start := opt.Now()
+	for opt.Now().Sub(start) < opt.Timeout {
+		data, err := opt.Get(ctx, deploymentID)
+		if err != nil {
+			return DeploymentInfo{}, err
+		}
+		if data == nil {
+			return DeploymentInfo{}, fmt.Errorf("%s", FormatSDKError(
+				"Deployment '"+deploymentID+"' not found",
+				"The control plane returned no deployment record for this deployment ID.",
+				"Verify the deployment ID and account. Create the deployment first if this is a new run.",
+				SDKErrorFormatOptions{DocsURL: DocsSDK},
+			))
+		}
+		state := stringOrDefault(data["state"], "UNKNOWN")
+		if state == "READY" {
+			m.BootTime = opt.Now().Sub(start)
+			return m.ParseDeploymentInfo(deploymentID, data), nil
+		}
+		if state == "FAILED" || state == "DELETED" || state == "DELETING" {
+			return DeploymentInfo{}, fmt.Errorf("%s", FormatSDKError(
+				"Deployment '"+deploymentID+"' entered bad state: "+state,
+				"The control plane reports deployment state "+state+", so readiness polling stopped.",
+				"Check deployment events and logs in the Fireworks console: "+ConsoleURL+"\n  Recreate the deployment if the config is wrong or the resource was deleted.",
+				SDKErrorFormatOptions{DocsURL: DocsSDK, ShowSupport: true},
+			))
+		}
+		if state == "CREATING" && opt.Probe(ctx, model) {
+			m.BootTime = opt.Now().Sub(start)
+			return m.ParseDeploymentInfo(deploymentID, data), nil
+		}
+		opt.Sleep(opt.PollInterval)
+	}
+	return DeploymentInfo{}, fmt.Errorf("%s", FormatSDKError(
+		fmt.Sprintf("Deployment '%s' not ready within %.0fs", deploymentID, opt.Timeout.Seconds()),
+		"The control-plane state did not reach READY and the token-in warmup probe did not return HTTP 200 before the timeout.",
+		fmt.Sprintf("Increase the deployment ready timeout (current: %.0fs) and check deployment status in the Fireworks console: %s", opt.Timeout.Seconds(), ConsoleURL),
+		SDKErrorFormatOptions{DocsURL: DocsSDK},
+	))
+}
+
+func (m *DeploymentManager) GetInfo(ctx context.Context, deploymentID string) (DeploymentInfo, bool, error) {
+	data, err := m.GetDeployment(ctx, deploymentID)
+	if err != nil {
+		return DeploymentInfo{}, false, err
+	}
+	if data == nil {
+		return DeploymentInfo{}, false, nil
+	}
+	return m.ParseDeploymentInfo(deploymentID, data), true, nil
+}
+
+func (m *DeploymentManager) DeleteInfo(ctx context.Context, deploymentID string) error {
+	return m.DeleteDeployment(ctx, deploymentID, true, true)
+}
+
+func (m *DeploymentManager) ScaleToZero(ctx context.Context, deploymentID string) error {
+	return m.UpdateRaw(ctx, deploymentID, map[string]any{"maxReplicaCount": 0, "minReplicaCount": 0}, []string{"max_replica_count", "min_replica_count"})
+}
+
+func (m *DeploymentManager) UpdateRaw(ctx context.Context, deploymentID string, body map[string]any, updateMask any) error {
+	accountID, err := m.AccountID(ctx)
+	if err != nil {
+		return err
+	}
+	mask := updateMaskString(updateMask)
+	path := "/v1/accounts/" + accountID + "/deployments/" + deploymentID
+	if mask != "" {
+		query := url.Values{}
+		query.Set("updateMask", mask)
+		path += "?" + query.Encode()
+	}
+	resp, err := m.Patch(ctx, path, body, nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	payload, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("update deployment %s: HTTP %d: %s", deploymentID, resp.StatusCode, ParseAPIErrorBody(payload))
+	}
+	return nil
+}
+
+func (m *DeploymentManager) Update(ctx context.Context, deploymentID string, body map[string]any, updateMask any) (DeploymentInfo, error) {
+	accountID, err := m.AccountID(ctx)
+	if err != nil {
+		return DeploymentInfo{}, err
+	}
+	mask := updateMaskString(updateMask)
+	path := "/v1/accounts/" + accountID + "/deployments/" + deploymentID
+	if mask != "" {
+		query := url.Values{}
+		query.Set("updateMask", mask)
+		path += "?" + query.Encode()
+	}
+	resp, err := m.Patch(ctx, path, body, nil)
+	if err != nil {
+		return DeploymentInfo{}, err
+	}
+	defer resp.Body.Close()
+	payload, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return DeploymentInfo{}, fmt.Errorf("update deployment %s: HTTP %d: %s", deploymentID, resp.StatusCode, ParseAPIErrorBody(payload))
+	}
+	var out map[string]any
+	if len(payload) > 0 {
+		if err := json.Unmarshal(payload, &out); err != nil {
+			return DeploymentInfo{}, err
+		}
+	}
+	return m.ParseDeploymentInfo(deploymentID, out), nil
+}
+
+func (m *DeploymentManager) ProbeInference(ctx context.Context, model string) bool {
+	payload := map[string]any{
+		"model":      model,
+		"prompt":     []int{1},
+		"max_tokens": 1,
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return false
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, m.InferenceURL+"/inference/v1/completions", bytes.NewReader(data))
+	if err != nil {
+		return false
+	}
+	req.Header = m.Headers(map[string]string{"Authorization": "Bearer " + m.APIKey()})
+	resp, err := m.httpClient.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode == http.StatusOK
+}
+
+func deploymentWaitOptions(defaultTimeout, defaultPoll time.Duration, opts ...DeploymentWaitOptions) DeploymentWaitOptions {
+	opt := DeploymentWaitOptions{
+		Timeout:      defaultTimeout,
+		PollInterval: defaultPoll,
+		Now:          time.Now,
+		Sleep:        time.Sleep,
+	}
+	if len(opts) > 0 {
+		provided := opts[0]
+		if provided.Timeout != 0 {
+			opt.Timeout = provided.Timeout
+		}
+		if provided.PollInterval != 0 {
+			opt.PollInterval = provided.PollInterval
+		}
+		if provided.Now != nil {
+			opt.Now = provided.Now
+		}
+		if provided.Sleep != nil {
+			opt.Sleep = provided.Sleep
+		}
+		if provided.Probe != nil {
+			opt.Probe = provided.Probe
+		}
+		if provided.Get != nil {
+			opt.Get = provided.Get
+		}
+	}
+	return opt
+}
+
+func firstString(data map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if value := stringFromAny(data[key]); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func stringOrDefault(value any, fallback string) string {
+	if got := stringFromAny(value); got != "" {
+		return got
+	}
+	return fallback
+}
+
+func updateMaskString(updateMask any) string {
+	switch value := updateMask.(type) {
+	case string:
+		return value
+	case []string:
+		return strings.Join(value, ",")
+	default:
+		return ""
+	}
+}
