@@ -44,8 +44,10 @@ type Client struct {
 	baseURL           *url.URL
 	baseURLOverridden bool
 	httpClient        *http.Client
+	httpClientOwned   bool
 	defaultHeaders    http.Header
 	defaultQuery      url.Values
+	timeout           time.Duration
 	maxRetries        int
 
 	Chat                         *ChatResource
@@ -80,9 +82,12 @@ type clientConfig struct {
 	baseURL           string
 	baseURLSet        bool
 	httpClient        *http.Client
+	httpClientOwned   bool
 	defaultHeaders    http.Header
 	defaultHeadersSet bool
 	defaultQuery      url.Values
+	timeout           time.Duration
+	timeoutSet        bool
 	maxRetries        int
 }
 
@@ -108,6 +113,14 @@ func WithBaseURL(baseURL string) ClientOption {
 func WithHTTPClient(httpClient *http.Client) ClientOption {
 	return func(c *clientConfig) {
 		c.httpClient = httpClient
+		c.httpClientOwned = false
+	}
+}
+
+func WithDefaultTimeout(timeout time.Duration) ClientOption {
+	return func(c *clientConfig) {
+		c.timeout = timeout
+		c.timeoutSet = true
 	}
 }
 
@@ -177,7 +190,7 @@ func WithMaxRetries(maxRetries int) ClientOption {
 }
 
 func NewClient(opts ...ClientOption) (*Client, error) {
-	cfg := clientConfig{maxRetries: defaultMaxRetries}
+	cfg := clientConfig{maxRetries: defaultMaxRetries, timeout: defaultTimeout}
 	for _, opt := range opts {
 		if opt != nil {
 			opt(&cfg)
@@ -202,6 +215,9 @@ func NewClient(opts ...ClientOption) (*Client, error) {
 	}
 	if cfg.baseURL == "" {
 		cfg.baseURL = defaultBaseURL
+	}
+	if cfg.timeout <= 0 {
+		cfg.timeout = defaultTimeout
 	}
 
 	parsedBaseURL, err := url.Parse(cfg.baseURL)
@@ -230,7 +246,8 @@ func NewClient(opts ...ClientOption) (*Client, error) {
 
 	httpClient := cfg.httpClient
 	if httpClient == nil {
-		httpClient = defaultHTTPClient()
+		httpClient = defaultHTTPClientWithTimeout(cfg.timeout)
+		cfg.httpClientOwned = true
 	}
 
 	c := &Client{
@@ -239,8 +256,10 @@ func NewClient(opts ...ClientOption) (*Client, error) {
 		baseURL:           parsedBaseURL,
 		baseURLOverridden: baseURLOverridden,
 		httpClient:        httpClient,
+		httpClientOwned:   cfg.httpClientOwned,
 		defaultHeaders:    headers,
 		defaultQuery:      cloneValues(cfg.defaultQuery),
+		timeout:           cfg.timeout,
 		maxRetries:        cfg.maxRetries,
 	}
 	c.initResources()
@@ -257,14 +276,16 @@ func MustNewClient(opts ...ClientOption) *Client {
 
 func (c *Client) WithOptions(opts ...ClientOption) (*Client, error) {
 	cfg := clientConfig{
-		apiKey:         c.apiKey,
-		accountID:      c.accountID,
-		baseURL:        c.baseURL.String(),
-		baseURLSet:     c.baseURLOverridden,
-		httpClient:     c.httpClient,
-		defaultHeaders: c.defaultHeaders.Clone(),
-		defaultQuery:   cloneValues(c.defaultQuery),
-		maxRetries:     c.maxRetries,
+		apiKey:          c.apiKey,
+		accountID:       c.accountID,
+		baseURL:         c.baseURL.String(),
+		baseURLSet:      c.baseURLOverridden,
+		httpClient:      c.httpClient,
+		httpClientOwned: c.httpClientOwned,
+		defaultHeaders:  c.defaultHeaders.Clone(),
+		defaultQuery:    cloneValues(c.defaultQuery),
+		timeout:         c.timeout,
+		maxRetries:      c.maxRetries,
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -278,8 +299,14 @@ func (c *Client) WithOptions(opts ...ClientOption) (*Client, error) {
 		cfg.baseURL = defaultBaseURL
 		cfg.baseURLSet = false
 	}
+	if cfg.timeout <= 0 {
+		cfg.timeout = defaultTimeout
+	}
 	if cfg.httpClient == nil {
-		cfg.httpClient = defaultHTTPClient()
+		cfg.httpClient = defaultHTTPClientWithTimeout(cfg.timeout)
+		cfg.httpClientOwned = true
+	} else if cfg.timeoutSet && cfg.httpClientOwned {
+		cfg.httpClient = defaultHTTPClientWithTimeout(cfg.timeout)
 	}
 
 	parsedBaseURL, err := url.Parse(cfg.baseURL)
@@ -293,8 +320,10 @@ func (c *Client) WithOptions(opts ...ClientOption) (*Client, error) {
 		baseURL:           parsedBaseURL,
 		baseURLOverridden: cfg.baseURLSet && cfg.baseURL != "",
 		httpClient:        cfg.httpClient,
+		httpClientOwned:   cfg.httpClientOwned,
 		defaultHeaders:    cfg.defaultHeaders.Clone(),
 		defaultQuery:      cloneValues(cfg.defaultQuery),
+		timeout:           cfg.timeout,
 		maxRetries:        cfg.maxRetries,
 	}
 	clone.initResources()
@@ -323,6 +352,10 @@ func (c *Client) BaseURL() string {
 
 func (c *Client) MaxRetries() int {
 	return c.maxRetries
+}
+
+func (c *Client) Timeout() time.Duration {
+	return c.timeout
 }
 
 func (c *Client) initResources() {
@@ -406,7 +439,11 @@ func (c *Client) newRequestWithReader(ctx context.Context, method, path string, 
 	req.Header.Set("User-Agent", "Fireworks/Go "+Version)
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	req.Header.Set("X-Stainless-Async", "false")
-	req.Header.Set("X-Stainless-Read-Timeout", readTimeoutHeader(reqOpts.Timeout))
+	readTimeout := c.timeout
+	if reqOpts.Timeout > 0 {
+		readTimeout = reqOpts.Timeout
+	}
+	req.Header.Set("X-Stainless-Read-Timeout", readTimeoutHeader(readTimeout))
 	for key, values := range c.defaultHeaders {
 		if values == nil {
 			omitRequestHeader(req.Header, key)
@@ -854,6 +891,13 @@ func (c *Client) platformHeaders() http.Header {
 }
 
 func defaultHTTPClient() *http.Client {
+	return defaultHTTPClientWithTimeout(defaultTimeout)
+}
+
+func defaultHTTPClientWithTimeout(timeout time.Duration) *http.Client {
+	if timeout <= 0 {
+		timeout = defaultTimeout
+	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.MaxConnsPerHost = DefaultMaxConnectionsPerHost
 	transport.MaxIdleConnsPerHost = DefaultMaxIdleConnectionsPerHost
@@ -862,7 +906,7 @@ func defaultHTTPClient() *http.Client {
 		KeepAlive: 30 * time.Second,
 	}).DialContext
 	return &http.Client{
-		Timeout:   defaultTimeout,
+		Timeout:   timeout,
 		Transport: transport,
 	}
 }

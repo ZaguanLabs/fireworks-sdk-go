@@ -276,6 +276,28 @@ func TestWithOptionsCanReplaceDefaultHeadersAndQuery(t *testing.T) {
 	}
 }
 
+func TestWithOptionsCanReplaceDefaultTimeout(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+
+	client, err := NewClient(WithDefaultTimeout(3 * time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	clone, err := client.WithOptions(WithDefaultTimeout(1500 * time.Millisecond))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.Timeout() != 3*time.Second {
+		t.Fatalf("original timeout = %s", client.Timeout())
+	}
+	if clone.Timeout() != 1500*time.Millisecond {
+		t.Fatalf("clone timeout = %s", clone.Timeout())
+	}
+	if clone.httpClient.Timeout != 1500*time.Millisecond {
+		t.Fatalf("http client timeout = %s", clone.httpClient.Timeout)
+	}
+}
+
 func TestSetDefaultHeadersReplacesEnvironmentCustomHeaders(t *testing.T) {
 	t.Setenv("FIREWORKS_API_KEY", "test-key")
 	t.Setenv("FIREWORKS_CUSTOM_HEADERS", "X-From-Env: yes")
@@ -375,6 +397,28 @@ func TestReadTimeoutHeaderUsesRequestTimeoutAndCanBeOmitted(t *testing.T) {
 	}
 }
 
+func TestReadTimeoutHeaderUsesClientDefaultTimeout(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+
+	var seen string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = r.Header.Get("X-Stainless-Read-Timeout")
+		_ = json.NewEncoder(w).Encode(JSON{"ok": true})
+	}))
+	defer server.Close()
+
+	client, err := NewClient(WithBaseURL(server.URL), WithDefaultTimeout(2500*time.Millisecond))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Get(context.Background(), "/timeout"); err != nil {
+		t.Fatal(err)
+	}
+	if seen != "2.5" {
+		t.Fatalf("timeout header = %q", seen)
+	}
+}
+
 func TestRawHonorsRequestTimeout(t *testing.T) {
 	t.Setenv("FIREWORKS_API_KEY", "test-key")
 
@@ -401,6 +445,29 @@ func TestRawHonorsRequestTimeout(t *testing.T) {
 	}
 	if !errors.Is(err, context.DeadlineExceeded) && !strings.Contains(err.Error(), "context deadline exceeded") {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestClientDefaultTimeoutIsAppliedByDefaultHTTPClient(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(50 * time.Millisecond)
+		_ = json.NewEncoder(w).Encode(JSON{"ok": true})
+	}))
+	defer server.Close()
+
+	client, err := NewClient(WithBaseURL(server.URL), WithDefaultTimeout(time.Millisecond), WithMaxRetries(0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.Get(context.Background(), "/slow")
+	if err == nil {
+		t.Fatal("expected timeout error")
+	}
+	var timeoutErr *APITimeoutError
+	if !errors.As(err, &timeoutErr) {
+		t.Fatalf("error type = %T, want APITimeoutError", err)
 	}
 }
 
