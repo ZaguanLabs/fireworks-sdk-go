@@ -25,9 +25,17 @@ resp, err := client.Chat.Completions.CreateTyped(ctx, types.ChatCompletionCreate
 })
 ```
 
-The Python SDK type catalog is mirrored in the `types` subpackage and can be
-regenerated from the vendored Python SDK source:
+The Python SDK type catalog is mirrored in the `types` subpackage. Regeneration
+expects the ignored Python SDK source snapshot at
+`docs/fireworks-py/python-sdk-1.2.0-alpha.76/src/fireworks/types`:
 
 ```sh
 go generate ./types
+```
+
+You can also point the generator at another local checkout or extracted source
+tree:
+
+```sh
+FIREWORKS_PY_TYPES_ROOT=/path/to/python-sdk-1.2.0-alpha.76/src/fireworks/types go generate ./types
 ```

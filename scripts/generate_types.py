@@ -3,14 +3,34 @@ from __future__ import annotations
 
 import ast
 import keyword
+import os
 import re
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-ROOT = REPO_ROOT / "docs/fireworks-py/python-sdk-1.2.0-alpha.76/src/fireworks/types"
+PYTHON_SDK_VERSION = "1.2.0-alpha.76"
+DEFAULT_ROOT = REPO_ROOT / f"docs/fireworks-py/python-sdk-{PYTHON_SDK_VERSION}/src/fireworks/types"
+ROOT = Path(os.environ.get("FIREWORKS_PY_TYPES_ROOT", DEFAULT_ROOT)).expanduser()
 OUT = REPO_ROOT / "types/generated.go"
+
+
+def require_root() -> None:
+    if ROOT.is_dir():
+        return
+
+    message = f"""Fireworks Python SDK types root not found: {ROOT}
+
+Set FIREWORKS_PY_TYPES_ROOT to the Python SDK source types directory, for example:
+  FIREWORKS_PY_TYPES_ROOT=/path/to/python-sdk-{PYTHON_SDK_VERSION}/src/fireworks/types go generate ./types
+
+Or place the ignored SDK snapshot at:
+  {DEFAULT_ROOT}
+"""
+    sys.stderr.write(message)
+    raise SystemExit(1)
 
 
 @dataclass(frozen=True)
@@ -289,6 +309,7 @@ def build_file(refs: dict[tuple[str, str], ClassRef]) -> str:
 
 
 def main() -> None:
+    require_root()
     refs = collect_classes()
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(build_file(refs))
