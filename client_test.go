@@ -218,6 +218,61 @@ func TestRawHonorsRequestTimeout(t *testing.T) {
 	}
 }
 
+func TestClientHTTPVerbHelpers(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+
+	seen := make(map[string]bool)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen[r.Method] = true
+		if got := r.Header.Get("Authorization"); got != "Bearer test-key" {
+			t.Errorf("Authorization = %q", got)
+		}
+		if got := r.URL.Query().Get("source"); got != "helper" {
+			t.Errorf("source query = %q", got)
+		}
+		var body map[string]any
+		if r.Body != nil {
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil && err != io.EOF {
+				t.Errorf("decode body: %v", err)
+			}
+		}
+		if r.Method != http.MethodGet && body["ok"] != true {
+			t.Errorf("%s body = %#v", r.Method, body)
+		}
+		_ = json.NewEncoder(w).Encode(JSON{"method": r.Method})
+	}))
+	defer server.Close()
+
+	client, err := NewClient(WithBaseURL(server.URL), WithDefaultQuery(map[string]any{"source": "helper"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := []struct {
+		method string
+		call   func() (Response, error)
+	}{
+		{http.MethodGet, func() (Response, error) { return client.Get(context.Background(), "/low-level") }},
+		{http.MethodPost, func() (Response, error) { return client.Post(context.Background(), "/low-level", JSON{"ok": true}) }},
+		{http.MethodPatch, func() (Response, error) { return client.Patch(context.Background(), "/low-level", JSON{"ok": true}) }},
+		{http.MethodPut, func() (Response, error) { return client.Put(context.Background(), "/low-level", JSON{"ok": true}) }},
+		{http.MethodDelete, func() (Response, error) { return client.Delete(context.Background(), "/low-level", JSON{"ok": true}) }},
+	}
+	for _, call := range calls {
+		out, err := call.call()
+		if err != nil {
+			t.Fatalf("%s: %v", call.method, err)
+		}
+		if out["method"] != call.method {
+			t.Fatalf("%s response = %#v", call.method, out)
+		}
+	}
+	for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodPatch, http.MethodPut, http.MethodDelete} {
+		if !seen[method] {
+			t.Fatalf("did not see %s", method)
+		}
+	}
+}
+
 func TestStatusErrorMapping(t *testing.T) {
 	t.Setenv("FIREWORKS_API_KEY", "test-key")
 

@@ -506,6 +506,36 @@ func (c *Client) Request(ctx context.Context, method, path string, body any, out
 	return c.Do(req, out)
 }
 
+func (c *Client) Get(ctx context.Context, path string, opts ...RequestOption) (Response, error) {
+	var out Response
+	err := c.Request(ctx, http.MethodGet, path, nil, &out, opts...)
+	return out, err
+}
+
+func (c *Client) Post(ctx context.Context, path string, body any, opts ...RequestOption) (Response, error) {
+	var out Response
+	err := c.Request(ctx, http.MethodPost, path, body, &out, opts...)
+	return out, err
+}
+
+func (c *Client) Patch(ctx context.Context, path string, body any, opts ...RequestOption) (Response, error) {
+	var out Response
+	err := c.Request(ctx, http.MethodPatch, path, body, &out, opts...)
+	return out, err
+}
+
+func (c *Client) Put(ctx context.Context, path string, body any, opts ...RequestOption) (Response, error) {
+	var out Response
+	err := c.Request(ctx, http.MethodPut, path, body, &out, opts...)
+	return out, err
+}
+
+func (c *Client) Delete(ctx context.Context, path string, body any, opts ...RequestOption) (Response, error) {
+	var out Response
+	err := c.Request(ctx, http.MethodDelete, path, body, &out, opts...)
+	return out, err
+}
+
 func (c *Client) Raw(ctx context.Context, method, path string, body any, opts ...RequestOption) (*http.Response, error) {
 	ctx, cancel := contextWithRequestTimeout(ctx, opts)
 	req, err := c.NewRequest(ctx, method, path, body, opts...)
