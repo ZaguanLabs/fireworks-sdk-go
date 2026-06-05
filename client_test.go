@@ -20,6 +20,24 @@ func TestVersionMatchesPythonSDK(t *testing.T) {
 	}
 }
 
+func TestDefaultConstantsMatchPythonSDK(t *testing.T) {
+	if DefaultTimeout != time.Minute {
+		t.Fatalf("DefaultTimeout = %s", DefaultTimeout)
+	}
+	if DefaultConnectTimeout != 5*time.Second {
+		t.Fatalf("DefaultConnectTimeout = %s", DefaultConnectTimeout)
+	}
+	if DefaultMaxRetries != 2 {
+		t.Fatalf("DefaultMaxRetries = %d", DefaultMaxRetries)
+	}
+	if DefaultMaxConnectionsPerHost != 1000 {
+		t.Fatalf("DefaultMaxConnectionsPerHost = %d", DefaultMaxConnectionsPerHost)
+	}
+	if DefaultMaxIdleConnectionsPerHost != 20 {
+		t.Fatalf("DefaultMaxIdleConnectionsPerHost = %d", DefaultMaxIdleConnectionsPerHost)
+	}
+}
+
 func TestNewClientRequiresAPIKey(t *testing.T) {
 	t.Setenv("FIREWORKS_API_KEY", "")
 
@@ -413,6 +431,82 @@ func TestClientHTTPByteContentHelpers(t *testing.T) {
 	}
 	if out["size"].(float64) != 9 {
 		t.Fatalf("response = %#v", out)
+	}
+}
+
+func TestClientRawAndTextResponseHelpers(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		attempts++
+		if attempts == 1 {
+			w.Header().Set("retry-after-ms", "1")
+			http.Error(w, `{"error":"retry"}`, http.StatusTooManyRequests)
+			return
+		}
+		w.Header().Set("Content-Type", "text/plain")
+		_, _ = w.Write([]byte("plain response"))
+	}))
+	defer server.Close()
+
+	client, err := NewClient(WithBaseURL(server.URL), WithMaxRetries(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text, err := client.GetText(context.Background(), "/plain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text != "plain response" {
+		t.Fatalf("text = %q", text)
+	}
+	if attempts != 2 {
+		t.Fatalf("attempts = %d", attempts)
+	}
+
+	raw, err := client.GetRaw(context.Background(), "/plain", WithRequestMaxRetries(0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != "plain response" {
+		t.Fatalf("raw = %q", raw)
+	}
+}
+
+func TestClientRawByteContentResponseHelper(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+
+	var seenBody string
+	var seenContentType string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read body: %v", err)
+		}
+		seenBody = string(body)
+		seenContentType = r.Header.Get("Content-Type")
+		w.Header().Set("Content-Type", "text/plain")
+		_, _ = w.Write([]byte("accepted"))
+	}))
+	defer server.Close()
+
+	client, err := NewClient(WithBaseURL(server.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text, err := client.PostBytesText(context.Background(), "/bytes", []byte("payload"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text != "accepted" {
+		t.Fatalf("text = %q", text)
+	}
+	if seenBody != "payload" {
+		t.Fatalf("body = %q", seenBody)
+	}
+	if seenContentType != "application/octet-stream" {
+		t.Fatalf("Content-Type = %q", seenContentType)
 	}
 }
 

@@ -23,10 +23,17 @@ import (
 )
 
 const (
-	defaultBaseURL      = "https://api.fireworks.ai"
-	defaultTimeout      = time.Minute
-	defaultConnectLimit = 5 * time.Second
-	defaultMaxRetries   = 2
+	defaultBaseURL = "https://api.fireworks.ai"
+
+	DefaultTimeout                   = time.Minute
+	DefaultConnectTimeout            = 5 * time.Second
+	DefaultMaxRetries                = 2
+	DefaultMaxConnectionsPerHost     = 1000
+	DefaultMaxIdleConnectionsPerHost = 20
+
+	defaultTimeout      = DefaultTimeout
+	defaultConnectLimit = DefaultConnectTimeout
+	defaultMaxRetries   = DefaultMaxRetries
 	initialRetryDelay   = 500 * time.Millisecond
 	maxRetryDelay       = 8 * time.Second
 )
@@ -444,11 +451,29 @@ func (c *Client) Do(req *http.Request, out any) error {
 }
 
 func (c *Client) do(req *http.Request, out any, maxRetries int) error {
+	body, err := c.doBytes(req, maxRetries)
+	if err != nil {
+		return err
+	}
+	if out == nil || len(strings.TrimSpace(string(body))) == 0 {
+		return nil
+	}
+	if err := json.Unmarshal(body, out); err != nil {
+		return fmt.Errorf("fireworks: decode response: %w", err)
+	}
+	return nil
+}
+
+func (c *Client) DoBytes(req *http.Request) ([]byte, error) {
+	return c.doBytes(req, c.maxRetries)
+}
+
+func (c *Client) doBytes(req *http.Request, maxRetries int) ([]byte, error) {
 	var bodyCopy []byte
 	if req.Body != nil {
 		payload, err := io.ReadAll(req.Body)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		bodyCopy = payload
 		req.Body = io.NopCloser(bytes.NewReader(payload))
@@ -467,7 +492,7 @@ func (c *Client) do(req *http.Request, out any, maxRetries int) error {
 			select {
 			case <-req.Context().Done():
 				timer.Stop()
-				return req.Context().Err()
+				return nil, req.Context().Err()
 			case <-timer.C:
 			}
 		}
@@ -489,7 +514,7 @@ func (c *Client) do(req *http.Request, out any, maxRetries int) error {
 				nextRetryDelay = retryDelay(attempt)
 				continue
 			}
-			return requestError(attemptReq, err)
+			return nil, requestError(attemptReq, err)
 		}
 
 		body, readErr := io.ReadAll(resp.Body)
@@ -500,20 +525,14 @@ func (c *Client) do(req *http.Request, out any, maxRetries int) error {
 				nextRetryDelay = retryDelay(attempt)
 				continue
 			}
-			return readErr
+			return nil, readErr
 		}
 		if closeErr != nil {
-			return closeErr
+			return nil, closeErr
 		}
 
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-			if out == nil || len(strings.TrimSpace(string(body))) == 0 {
-				return nil
-			}
-			if err := json.Unmarshal(body, out); err != nil {
-				return fmt.Errorf("fireworks: decode response: %w", err)
-			}
-			return nil
+			return body, nil
 		}
 
 		if attempt < retries && shouldRetryResponse(resp, body) {
@@ -521,10 +540,10 @@ func (c *Client) do(req *http.Request, out any, maxRetries int) error {
 			nextRetryDelay = retryDelayForResponse(resp, attempt)
 			continue
 		}
-		return statusError(resp, body)
+		return nil, statusError(resp, body)
 	}
 
-	return lastErr
+	return nil, lastErr
 }
 
 func (c *Client) Request(ctx context.Context, method, path string, body any, out any, opts ...RequestOption) error {
@@ -544,6 +563,31 @@ func (c *Client) Request(ctx context.Context, method, path string, body any, out
 	return c.do(req, out, maxRetries)
 }
 
+func (c *Client) RequestRaw(ctx context.Context, method, path string, body any, opts ...RequestOption) ([]byte, error) {
+	reqOpts := applyRequestOptions(opts)
+	ctx, cancel := contextWithRequestTimeout(ctx, opts)
+	if cancel != nil {
+		defer cancel()
+	}
+	req, err := c.NewRequest(ctx, method, path, body, opts...)
+	if err != nil {
+		return nil, err
+	}
+	maxRetries := c.maxRetries
+	if reqOpts.MaxRetries != nil {
+		maxRetries = *reqOpts.MaxRetries
+	}
+	return c.doBytes(req, maxRetries)
+}
+
+func (c *Client) RequestText(ctx context.Context, method, path string, body any, opts ...RequestOption) (string, error) {
+	bodyBytes, err := c.RequestRaw(ctx, method, path, body, opts...)
+	if err != nil {
+		return "", err
+	}
+	return string(bodyBytes), nil
+}
+
 func (c *Client) RequestBytes(ctx context.Context, method, path string, content []byte, out any, opts ...RequestOption) error {
 	reqOpts := applyRequestOptions(opts)
 	ctx, cancel := contextWithRequestTimeout(ctx, opts)
@@ -561,10 +605,43 @@ func (c *Client) RequestBytes(ctx context.Context, method, path string, content 
 	return c.do(req, out, maxRetries)
 }
 
+func (c *Client) RequestBytesRaw(ctx context.Context, method, path string, content []byte, opts ...RequestOption) ([]byte, error) {
+	reqOpts := applyRequestOptions(opts)
+	ctx, cancel := contextWithRequestTimeout(ctx, opts)
+	if cancel != nil {
+		defer cancel()
+	}
+	req, err := c.newRequestWithReader(ctx, method, path, bytes.NewReader(content), "application/octet-stream", opts...)
+	if err != nil {
+		return nil, err
+	}
+	maxRetries := c.maxRetries
+	if reqOpts.MaxRetries != nil {
+		maxRetries = *reqOpts.MaxRetries
+	}
+	return c.doBytes(req, maxRetries)
+}
+
+func (c *Client) RequestBytesText(ctx context.Context, method, path string, content []byte, opts ...RequestOption) (string, error) {
+	bodyBytes, err := c.RequestBytesRaw(ctx, method, path, content, opts...)
+	if err != nil {
+		return "", err
+	}
+	return string(bodyBytes), nil
+}
+
 func (c *Client) Get(ctx context.Context, path string, opts ...RequestOption) (Response, error) {
 	var out Response
 	err := c.Request(ctx, http.MethodGet, path, nil, &out, opts...)
 	return out, err
+}
+
+func (c *Client) GetRaw(ctx context.Context, path string, opts ...RequestOption) ([]byte, error) {
+	return c.RequestRaw(ctx, http.MethodGet, path, nil, opts...)
+}
+
+func (c *Client) GetText(ctx context.Context, path string, opts ...RequestOption) (string, error) {
+	return c.RequestText(ctx, http.MethodGet, path, nil, opts...)
 }
 
 func (c *Client) Post(ctx context.Context, path string, body any, opts ...RequestOption) (Response, error) {
@@ -573,10 +650,26 @@ func (c *Client) Post(ctx context.Context, path string, body any, opts ...Reques
 	return out, err
 }
 
+func (c *Client) PostRaw(ctx context.Context, path string, body any, opts ...RequestOption) ([]byte, error) {
+	return c.RequestRaw(ctx, http.MethodPost, path, body, opts...)
+}
+
+func (c *Client) PostText(ctx context.Context, path string, body any, opts ...RequestOption) (string, error) {
+	return c.RequestText(ctx, http.MethodPost, path, body, opts...)
+}
+
 func (c *Client) PostBytes(ctx context.Context, path string, content []byte, opts ...RequestOption) (Response, error) {
 	var out Response
 	err := c.RequestBytes(ctx, http.MethodPost, path, content, &out, opts...)
 	return out, err
+}
+
+func (c *Client) PostBytesRaw(ctx context.Context, path string, content []byte, opts ...RequestOption) ([]byte, error) {
+	return c.RequestBytesRaw(ctx, http.MethodPost, path, content, opts...)
+}
+
+func (c *Client) PostBytesText(ctx context.Context, path string, content []byte, opts ...RequestOption) (string, error) {
+	return c.RequestBytesText(ctx, http.MethodPost, path, content, opts...)
 }
 
 func (c *Client) Patch(ctx context.Context, path string, body any, opts ...RequestOption) (Response, error) {
@@ -585,10 +678,26 @@ func (c *Client) Patch(ctx context.Context, path string, body any, opts ...Reque
 	return out, err
 }
 
+func (c *Client) PatchRaw(ctx context.Context, path string, body any, opts ...RequestOption) ([]byte, error) {
+	return c.RequestRaw(ctx, http.MethodPatch, path, body, opts...)
+}
+
+func (c *Client) PatchText(ctx context.Context, path string, body any, opts ...RequestOption) (string, error) {
+	return c.RequestText(ctx, http.MethodPatch, path, body, opts...)
+}
+
 func (c *Client) PatchBytes(ctx context.Context, path string, content []byte, opts ...RequestOption) (Response, error) {
 	var out Response
 	err := c.RequestBytes(ctx, http.MethodPatch, path, content, &out, opts...)
 	return out, err
+}
+
+func (c *Client) PatchBytesRaw(ctx context.Context, path string, content []byte, opts ...RequestOption) ([]byte, error) {
+	return c.RequestBytesRaw(ctx, http.MethodPatch, path, content, opts...)
+}
+
+func (c *Client) PatchBytesText(ctx context.Context, path string, content []byte, opts ...RequestOption) (string, error) {
+	return c.RequestBytesText(ctx, http.MethodPatch, path, content, opts...)
 }
 
 func (c *Client) Put(ctx context.Context, path string, body any, opts ...RequestOption) (Response, error) {
@@ -597,10 +706,26 @@ func (c *Client) Put(ctx context.Context, path string, body any, opts ...Request
 	return out, err
 }
 
+func (c *Client) PutRaw(ctx context.Context, path string, body any, opts ...RequestOption) ([]byte, error) {
+	return c.RequestRaw(ctx, http.MethodPut, path, body, opts...)
+}
+
+func (c *Client) PutText(ctx context.Context, path string, body any, opts ...RequestOption) (string, error) {
+	return c.RequestText(ctx, http.MethodPut, path, body, opts...)
+}
+
 func (c *Client) PutBytes(ctx context.Context, path string, content []byte, opts ...RequestOption) (Response, error) {
 	var out Response
 	err := c.RequestBytes(ctx, http.MethodPut, path, content, &out, opts...)
 	return out, err
+}
+
+func (c *Client) PutBytesRaw(ctx context.Context, path string, content []byte, opts ...RequestOption) ([]byte, error) {
+	return c.RequestBytesRaw(ctx, http.MethodPut, path, content, opts...)
+}
+
+func (c *Client) PutBytesText(ctx context.Context, path string, content []byte, opts ...RequestOption) (string, error) {
+	return c.RequestBytesText(ctx, http.MethodPut, path, content, opts...)
 }
 
 func (c *Client) Delete(ctx context.Context, path string, body any, opts ...RequestOption) (Response, error) {
@@ -609,10 +734,26 @@ func (c *Client) Delete(ctx context.Context, path string, body any, opts ...Requ
 	return out, err
 }
 
+func (c *Client) DeleteRaw(ctx context.Context, path string, body any, opts ...RequestOption) ([]byte, error) {
+	return c.RequestRaw(ctx, http.MethodDelete, path, body, opts...)
+}
+
+func (c *Client) DeleteText(ctx context.Context, path string, body any, opts ...RequestOption) (string, error) {
+	return c.RequestText(ctx, http.MethodDelete, path, body, opts...)
+}
+
 func (c *Client) DeleteBytes(ctx context.Context, path string, content []byte, opts ...RequestOption) (Response, error) {
 	var out Response
 	err := c.RequestBytes(ctx, http.MethodDelete, path, content, &out, opts...)
 	return out, err
+}
+
+func (c *Client) DeleteBytesRaw(ctx context.Context, path string, content []byte, opts ...RequestOption) ([]byte, error) {
+	return c.RequestBytesRaw(ctx, http.MethodDelete, path, content, opts...)
+}
+
+func (c *Client) DeleteBytesText(ctx context.Context, path string, content []byte, opts ...RequestOption) (string, error) {
+	return c.RequestBytesText(ctx, http.MethodDelete, path, content, opts...)
 }
 
 func (c *Client) Raw(ctx context.Context, method, path string, body any, opts ...RequestOption) (*http.Response, error) {
@@ -690,8 +831,8 @@ func (c *Client) platformHeaders() http.Header {
 
 func defaultHTTPClient() *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.MaxConnsPerHost = 1000
-	transport.MaxIdleConnsPerHost = 20
+	transport.MaxConnsPerHost = DefaultMaxConnectionsPerHost
+	transport.MaxIdleConnsPerHost = DefaultMaxIdleConnectionsPerHost
 	transport.DialContext = (&net.Dialer{
 		Timeout:   defaultConnectLimit,
 		KeepAlive: 30 * time.Second,
