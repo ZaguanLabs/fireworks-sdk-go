@@ -410,10 +410,18 @@ func (c *Client) MultipartRequest(ctx context.Context, method, path string, fiel
 	if err != nil {
 		return err
 	}
-	return c.Do(req, out)
+	maxRetries := c.maxRetries
+	if reqOpts.MaxRetries != nil {
+		maxRetries = *reqOpts.MaxRetries
+	}
+	return c.do(req, out, maxRetries)
 }
 
 func (c *Client) Do(req *http.Request, out any) error {
+	return c.do(req, out, c.maxRetries)
+}
+
+func (c *Client) do(req *http.Request, out any, maxRetries int) error {
 	var bodyCopy []byte
 	if req.Body != nil {
 		payload, err := io.ReadAll(req.Body)
@@ -424,7 +432,7 @@ func (c *Client) Do(req *http.Request, out any) error {
 		req.Body = io.NopCloser(bytes.NewReader(payload))
 	}
 
-	retries := c.maxRetries
+	retries := maxRetries
 	if retries < 0 {
 		retries = 0
 	}
@@ -498,6 +506,7 @@ func (c *Client) Do(req *http.Request, out any) error {
 }
 
 func (c *Client) Request(ctx context.Context, method, path string, body any, out any, opts ...RequestOption) error {
+	reqOpts := applyRequestOptions(opts)
 	ctx, cancel := contextWithRequestTimeout(ctx, opts)
 	if cancel != nil {
 		defer cancel()
@@ -506,7 +515,11 @@ func (c *Client) Request(ctx context.Context, method, path string, body any, out
 	if err != nil {
 		return err
 	}
-	return c.Do(req, out)
+	maxRetries := c.maxRetries
+	if reqOpts.MaxRetries != nil {
+		maxRetries = *reqOpts.MaxRetries
+	}
+	return c.do(req, out, maxRetries)
 }
 
 func (c *Client) Get(ctx context.Context, path string, opts ...RequestOption) (Response, error) {

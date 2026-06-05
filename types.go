@@ -11,11 +11,12 @@ type JSON map[string]any
 type Response = JSON
 
 type RequestOptions struct {
-	AccountID string
-	Headers   http.Header
-	Query     url.Values
-	ExtraBody map[string]any
-	Timeout   time.Duration
+	AccountID  string
+	Headers    http.Header
+	Query      url.Values
+	ExtraBody  map[string]any
+	Timeout    time.Duration
+	MaxRetries *int
 }
 
 type RequestOption func(*RequestOptions)
@@ -89,6 +90,12 @@ func WithExtraBody(body map[string]any) RequestOption {
 func WithTimeout(timeout time.Duration) RequestOption {
 	return func(o *RequestOptions) {
 		o.Timeout = timeout
+	}
+}
+
+func WithRequestMaxRetries(maxRetries int) RequestOption {
+	return func(o *RequestOptions) {
+		o.MaxRetries = &maxRetries
 	}
 }
 

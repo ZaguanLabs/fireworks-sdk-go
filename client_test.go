@@ -336,6 +336,60 @@ func TestRetryAfterHeaderIgnoresUnreasonableDelay(t *testing.T) {
 	}
 }
 
+func TestRequestMaxRetriesOverridesClientDefault(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		attempts++
+		http.Error(w, `{"error":"retry"}`, http.StatusTooManyRequests)
+	}))
+	defer server.Close()
+
+	client, err := NewClient(WithBaseURL(server.URL), WithMaxRetries(2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.Get(context.Background(), "/retry", WithRequestMaxRetries(0))
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if attempts != 1 {
+		t.Fatalf("attempts = %d, want 1", attempts)
+	}
+}
+
+func TestRequestMaxRetriesCanIncreaseClientDefault(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		attempts++
+		if attempts == 1 {
+			w.Header().Set("retry-after-ms", "1")
+			http.Error(w, `{"error":"retry"}`, http.StatusTooManyRequests)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(JSON{"ok": true})
+	}))
+	defer server.Close()
+
+	client, err := NewClient(WithBaseURL(server.URL), WithMaxRetries(0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := client.Get(context.Background(), "/retry", WithRequestMaxRetries(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if attempts != 2 {
+		t.Fatalf("attempts = %d, want 2", attempts)
+	}
+	if out["ok"] != true {
+		t.Fatalf("response = %#v", out)
+	}
+}
+
 func TestStreamReadsServerSentEvents(t *testing.T) {
 	t.Setenv("FIREWORKS_API_KEY", "test-key")
 
