@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -494,6 +495,64 @@ func TestDeploymentsScaleTypedUsesActionPath(t *testing.T) {
 	var _ *fwtypes.Deployment = deployment
 	if deployment.DesiredReplicaCount == nil || *deployment.DesiredReplicaCount != 3 {
 		t.Fatalf("deployment = %#v", deployment)
+	}
+}
+
+func TestDatasetsUploadFileTypedUsesMultipart(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Path; got != "/v1/accounts/acct/datasets/ds-1:upload" {
+			t.Errorf("path = %q", got)
+		}
+		if got := r.Header.Get("Content-Type"); !strings.HasPrefix(got, "multipart/form-data; boundary=") {
+			t.Errorf("Content-Type = %q", got)
+		}
+		if err := r.ParseMultipartForm(1 << 20); err != nil {
+			t.Fatalf("parse multipart: %v", err)
+		}
+		file, header, err := r.FormFile("file")
+		if err != nil {
+			t.Fatalf("form file: %v", err)
+		}
+		defer file.Close()
+		payload, err := io.ReadAll(file)
+		if err != nil {
+			t.Fatalf("read uploaded file: %v", err)
+		}
+		if header.Filename != "train.jsonl" {
+			t.Errorf("filename = %q", header.Filename)
+		}
+		if string(payload) != "{\"prompt\":\"hi\"}\n" {
+			t.Errorf("payload = %q", payload)
+		}
+		_ = json.NewEncoder(w).Encode(JSON{
+			"id":       "file-1",
+			"bytes":    len(payload),
+			"filename": header.Filename,
+			"object":   "file",
+			"purpose":  "dataset",
+		})
+	}))
+	defer server.Close()
+
+	client, err := NewClient(WithBaseURL(server.URL), WithDefaultAccountID("acct"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := client.Datasets.UploadTyped(
+		context.Background(),
+		"ds-1",
+		fwtypes.DatasetUploadParams{
+			File: NewFileFromBytes("train.jsonl", []byte("{\"prompt\":\"hi\"}\n")),
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var _ *fwtypes.DatasetUploadResponse = out
+	if out.ID == nil || *out.ID != "file-1" || out.Filename == nil || *out.Filename != "train.jsonl" {
+		t.Fatalf("response = %#v", out)
 	}
 }
 

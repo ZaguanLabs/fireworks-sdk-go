@@ -391,7 +391,21 @@ func (r *DatasetsResource) GetUploadEndpoint(ctx context.Context, datasetID stri
 }
 
 func (r *DatasetsResource) Upload(ctx context.Context, datasetID string, body any, opts ...RequestOption) (Response, error) {
+	if file, ok := uploadFileFromBody(body); ok {
+		return r.UploadFile(ctx, datasetID, file, opts...)
+	}
 	return postInAccount(ctx, r.client, "/datasets/"+pathEscape(datasetID)+":upload", body, opts...)
+}
+
+func (r *DatasetsResource) UploadFile(ctx context.Context, datasetID string, file File, opts ...RequestOption) (Response, error) {
+	res := resource{r.client}
+	path, err := accountSuffixPath(res, opts, "/datasets/"+pathEscape(datasetID)+":upload")
+	if err != nil {
+		return nil, err
+	}
+	var out Response
+	err = r.client.MultipartRequest(ctx, http.MethodPost, path, nil, map[string]File{"file": file}, &out, opts...)
+	return out, err
 }
 
 func (r *DatasetsResource) ValidateUpload(ctx context.Context, datasetID string, body any, opts ...RequestOption) (Response, error) {

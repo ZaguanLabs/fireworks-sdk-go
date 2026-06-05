@@ -160,7 +160,20 @@ func (r *DatasetsResource) GetUploadEndpointTyped(ctx context.Context, datasetID
 }
 
 func (r *DatasetsResource) UploadTyped(ctx context.Context, datasetID string, body any, opts ...RequestOption) (*fwtypes.DatasetUploadResponse, error) {
+	if file, ok := uploadFileFromBody(body); ok {
+		return r.UploadFileTyped(ctx, datasetID, file, opts...)
+	}
 	return typedPostInAccount[fwtypes.DatasetUploadResponse](ctx, r.client, "/datasets/"+pathEscape(datasetID)+":upload", body, opts...)
+}
+
+func (r *DatasetsResource) UploadFileTyped(ctx context.Context, datasetID string, file File, opts ...RequestOption) (*fwtypes.DatasetUploadResponse, error) {
+	path, err := typedAccountPath(r.client, "/datasets/"+pathEscape(datasetID)+":upload", opts)
+	if err != nil {
+		return nil, err
+	}
+	var out fwtypes.DatasetUploadResponse
+	err = r.client.MultipartRequest(ctx, http.MethodPost, path, nil, map[string]File{"file": file}, &out, opts...)
+	return &out, err
 }
 
 func (r *DeploymentsResource) CreateTyped(ctx context.Context, body any, opts ...RequestOption) (*fwtypes.Deployment, error) {

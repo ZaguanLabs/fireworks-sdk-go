@@ -9,8 +9,11 @@ import (
 	"io"
 	"math"
 	"math/rand"
+	"mime"
+	"mime/multipart"
 	"net"
 	"net/http"
+	"net/textproto"
 	"net/url"
 	"os"
 	"runtime"
@@ -303,8 +306,6 @@ func (c *Client) initResources() {
 }
 
 func (c *Client) NewRequest(ctx context.Context, method, path string, body any, opts ...RequestOption) (*http.Request, error) {
-	reqOpts := applyRequestOptions(opts)
-
 	var reqBody io.Reader
 	if body != nil {
 		payload, err := json.Marshal(body)
@@ -313,7 +314,11 @@ func (c *Client) NewRequest(ctx context.Context, method, path string, body any, 
 		}
 		reqBody = bytes.NewReader(payload)
 	}
+	return c.newRequestWithReader(ctx, method, path, reqBody, "application/json", opts...)
+}
 
+func (c *Client) newRequestWithReader(ctx context.Context, method, path string, reqBody io.Reader, contentType string, opts ...RequestOption) (*http.Request, error) {
+	reqOpts := applyRequestOptions(opts)
 	reqURL, err := c.resolveURL(path)
 	if err != nil {
 		return nil, err
@@ -343,7 +348,9 @@ func (c *Client) NewRequest(ctx context.Context, method, path string, body any, 
 		}
 	}
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Content-Type", "application/json")
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
 	req.Header.Set("User-Agent", "Fireworks/Go "+Version)
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	req.Header.Set("X-Stainless-Async", "false")
@@ -361,6 +368,34 @@ func (c *Client) NewRequest(ctx context.Context, method, path string, body any, 
 	}
 
 	return req, nil
+}
+
+func (c *Client) MultipartRequest(ctx context.Context, method, path string, fields map[string]any, files map[string]File, out any, opts ...RequestOption) error {
+	var reqBody bytes.Buffer
+	writer := multipart.NewWriter(&reqBody)
+	for key, value := range fields {
+		if err := writeMultipartField(writer, key, value); err != nil {
+			return err
+		}
+	}
+	for key, file := range files {
+		if err := writeMultipartFile(writer, key, file); err != nil {
+			return err
+		}
+	}
+	if err := writer.Close(); err != nil {
+		return err
+	}
+
+	ctx, cancel := contextWithRequestTimeout(ctx, opts)
+	if cancel != nil {
+		defer cancel()
+	}
+	req, err := c.newRequestWithReader(ctx, method, path, &reqBody, writer.FormDataContentType(), opts...)
+	if err != nil {
+		return err
+	}
+	return c.Do(req, out)
 }
 
 func (c *Client) Do(req *http.Request, out any) error {
@@ -580,6 +615,61 @@ func (r *cancelReadCloser) Close() error {
 	err := r.ReadCloser.Close()
 	r.cancel()
 	return err
+}
+
+func writeMultipartField(writer *multipart.Writer, key string, value any) error {
+	switch v := value.(type) {
+	case nil:
+		return nil
+	case string:
+		return writer.WriteField(key, v)
+	case []string:
+		for _, item := range v {
+			if err := writer.WriteField(key, item); err != nil {
+				return err
+			}
+		}
+		return nil
+	case []byte:
+		return writer.WriteField(key, string(v))
+	default:
+		payload, err := json.Marshal(v)
+		if err != nil {
+			return fmt.Errorf("fireworks: marshal multipart field %q: %w", key, err)
+		}
+		return writer.WriteField(key, string(payload))
+	}
+}
+
+func writeMultipartFile(writer *multipart.Writer, key string, file File) error {
+	if file.Content == nil {
+		return &Error{Message: "multipart file content must be set"}
+	}
+	filename := file.Filename
+	if filename == "" {
+		filename = key
+	}
+
+	var part io.Writer
+	var err error
+	if file.ContentType == "" {
+		part, err = writer.CreateFormFile(key, filename)
+	} else {
+		header := make(textproto.MIMEHeader)
+		header.Set("Content-Disposition", mime.FormatMediaType("form-data", map[string]string{
+			"name":     key,
+			"filename": filename,
+		}))
+		header.Set("Content-Type", file.ContentType)
+		part, err = writer.CreatePart(header)
+	}
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(part, file.Content); err != nil {
+		return err
+	}
+	return nil
 }
 
 func addQueryValue(values url.Values, key string, value any) {
