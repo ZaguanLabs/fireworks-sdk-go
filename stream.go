@@ -37,7 +37,7 @@ func newStream(ctx context.Context, client *Client, path string, body any, opts 
 		if cancel != nil {
 			cancel()
 		}
-		return nil, err
+		return nil, requestError(req, err)
 	}
 	if cancel != nil {
 		if resp.Body != nil {

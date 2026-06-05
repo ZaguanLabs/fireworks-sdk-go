@@ -489,7 +489,7 @@ func (c *Client) do(req *http.Request, out any, maxRetries int) error {
 				nextRetryDelay = retryDelay(attempt)
 				continue
 			}
-			return err
+			return requestError(attemptReq, err)
 		}
 
 		body, readErr := io.ReadAll(resp.Body)
@@ -629,7 +629,7 @@ func (c *Client) Raw(ctx context.Context, method, path string, body any, opts ..
 		if cancel != nil {
 			cancel()
 		}
-		return nil, err
+		return nil, requestError(req, err)
 	}
 	if cancel != nil {
 		if resp.Body != nil {

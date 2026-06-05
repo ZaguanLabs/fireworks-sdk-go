@@ -284,8 +284,35 @@ func TestRawHonorsRequestTimeout(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected timeout error")
 	}
+	var timeoutErr *APITimeoutError
+	if !errors.As(err, &timeoutErr) {
+		t.Fatalf("error type = %T, want APITimeoutError", err)
+	}
 	if !errors.Is(err, context.DeadlineExceeded) && !strings.Contains(err.Error(), "context deadline exceeded") {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestConnectionErrorsAreWrapped(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+
+	client, err := NewClient(WithBaseURL("http://127.0.0.1:1"), WithMaxRetries(0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.Get(context.Background(), "/unreachable")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	var connErr *APIConnectionError
+	if !errors.As(err, &connErr) {
+		t.Fatalf("error type = %T, want APIConnectionError", err)
+	}
+	if connErr.Request == nil || connErr.Request.URL.Path != "/unreachable" {
+		t.Fatalf("request = %#v", connErr.Request)
+	}
+	if errors.Unwrap(connErr) == nil {
+		t.Fatal("expected wrapped transport error")
 	}
 }
 

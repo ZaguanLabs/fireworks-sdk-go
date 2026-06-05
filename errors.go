@@ -1,7 +1,9 @@
 package fireworks
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 )
@@ -31,6 +33,27 @@ func (e *APIError) Error() string {
 
 func (e *APIError) IsStatus(status int) bool {
 	return e != nil && e.StatusCode == status
+}
+
+type APIConnectionError struct {
+	Message string
+	Request *http.Request
+	Err     error
+}
+
+func (e *APIConnectionError) Error() string {
+	if e.Message != "" {
+		return e.Message
+	}
+	return "fireworks: connection error"
+}
+
+func (e *APIConnectionError) Unwrap() error {
+	return e.Err
+}
+
+type APITimeoutError struct {
+	*APIConnectionError
 }
 
 type BadRequestError struct{ *APIError }
@@ -71,6 +94,31 @@ func statusError(resp *http.Response, body []byte) error {
 		}
 		return apiErr
 	}
+}
+
+func requestError(req *http.Request, err error) error {
+	if err == nil {
+		return nil
+	}
+	connErr := &APIConnectionError{
+		Message: "fireworks: connection error",
+		Request: req,
+		Err:     err,
+	}
+	if req != nil && errorsIsTimeout(err, req.Context().Err()) {
+		connErr.Message = "fireworks: request timed out"
+		return &APITimeoutError{APIConnectionError: connErr}
+	}
+	if errorsIsTimeout(err, nil) {
+		connErr.Message = "fireworks: request timed out"
+		return &APITimeoutError{APIConnectionError: connErr}
+	}
+	return connErr
+}
+
+func errorsIsTimeout(err, ctxErr error) bool {
+	return errors.Is(err, context.DeadlineExceeded) ||
+		errors.Is(ctxErr, context.DeadlineExceeded)
 }
 
 func decodeErrorBody(body []byte) any {
