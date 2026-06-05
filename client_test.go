@@ -49,6 +49,9 @@ func TestInferenceRequestUsesPythonCompatibleEnvironmentAndHeaders(t *testing.T)
 		if got := r.Header.Get("X-Stainless-Package-Version"); got != Version {
 			t.Errorf("X-Stainless-Package-Version = %q", got)
 		}
+		if got := r.Header.Get("X-Stainless-Read-Timeout"); got != "60" {
+			t.Errorf("X-Stainless-Read-Timeout = %q", got)
+		}
 		if got := r.Header.Get("X-From-Env"); got != "yes" {
 			t.Errorf("X-From-Env = %q", got)
 		}
@@ -227,6 +230,37 @@ func TestHeaderOmitOptionsRemoveDefaultHeaders(t *testing.T) {
 	}
 	if seenCustom != "" {
 		t.Fatalf("X-Custom = %q", seenCustom)
+	}
+}
+
+func TestReadTimeoutHeaderUsesRequestTimeoutAndCanBeOmitted(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+
+	var seen []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = append(seen, r.Header.Get("X-Stainless-Read-Timeout"))
+		_ = json.NewEncoder(w).Encode(JSON{"ok": true})
+	}))
+	defer server.Close()
+
+	client, err := NewClient(WithBaseURL(server.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Get(context.Background(), "/timeout", WithTimeout(1500*time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Get(context.Background(), "/timeout", WithOmitHeader("X-Stainless-Read-Timeout")); err != nil {
+		t.Fatal(err)
+	}
+	if len(seen) != 2 {
+		t.Fatalf("seen = %#v", seen)
+	}
+	if seen[0] != "1.5" {
+		t.Fatalf("request timeout header = %q", seen[0])
+	}
+	if seen[1] != "" {
+		t.Fatalf("omitted timeout header = %q", seen[1])
 	}
 }
 

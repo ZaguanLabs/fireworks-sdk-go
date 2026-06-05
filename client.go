@@ -375,6 +375,7 @@ func (c *Client) newRequestWithReader(ctx context.Context, method, path string, 
 	req.Header.Set("User-Agent", "Fireworks/Go "+Version)
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	req.Header.Set("X-Stainless-Async", "false")
+	req.Header.Set("X-Stainless-Read-Timeout", readTimeoutHeader(reqOpts.Timeout))
 	for key, values := range c.defaultHeaders {
 		if values == nil {
 			omitRequestHeader(req.Header, key)
@@ -776,6 +777,13 @@ func omitRequestHeader(headers http.Header, key string) {
 	if strings.EqualFold(key, "User-Agent") {
 		headers.Set(key, "")
 	}
+}
+
+func readTimeoutHeader(timeout time.Duration) string {
+	if timeout <= 0 {
+		timeout = defaultTimeout
+	}
+	return strconv.FormatFloat(timeout.Seconds(), 'f', -1, 64)
 }
 
 func addQueryValue(values url.Values, key string, value any) {
