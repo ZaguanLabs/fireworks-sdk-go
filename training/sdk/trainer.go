@@ -1,6 +1,7 @@
 package sdk
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -26,6 +27,20 @@ type TrainerServiceEndpoint struct {
 type CreatedTrainerJob struct {
 	JobName string
 	JobID   string
+}
+
+type LoadAdapterResponse struct {
+	ModelID     string `json:"model_id"`
+	AdapterPath string `json:"adapter_path,omitempty"`
+	Type        string `json:"type"`
+}
+
+type LoadAdapterOptions struct {
+	TrainerBaseURL string
+	ModelID        string
+	AdapterPath    string
+	SeqID          int
+	Timeout        time.Duration
 }
 
 type TrainerJobConfig struct {
@@ -396,6 +411,73 @@ func (m *TrainerJobManager) CheckHealthz(ctx context.Context, baseURL string) bo
 	}
 	defer resp.Body.Close()
 	return resp.StatusCode == http.StatusOK
+}
+
+func (m *TrainerJobManager) LoadAdapter(ctx context.Context, opts LoadAdapterOptions) (LoadAdapterResponse, error) {
+	adapterPath := strings.TrimSpace(opts.AdapterPath)
+	if adapterPath == "" {
+		return LoadAdapterResponse{}, fmt.Errorf("adapter_path must be a non-empty string")
+	}
+	if opts.ModelID == "" {
+		return LoadAdapterResponse{}, fmt.Errorf("model_id must be a non-empty string")
+	}
+	trainerBaseURL := strings.TrimRight(opts.TrainerBaseURL, "/")
+	if trainerBaseURL == "" {
+		return LoadAdapterResponse{}, fmt.Errorf("trainer_base_url must be a non-empty string")
+	}
+	timeout := opts.Timeout
+	if timeout == 0 {
+		timeout = HTTPWriteTimeout
+	}
+	body := map[string]any{
+		"adapter_path": adapterPath,
+		"model_id":     opts.ModelID,
+		"seq_id":       opts.SeqID,
+	}
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return LoadAdapterResponse{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, trainerBaseURL+"/api/v1/load_adapter", bytes.NewReader(payload))
+	if err != nil {
+		return LoadAdapterResponse{}, err
+	}
+	req.Header = m.Headers(map[string]string{"Authorization": "Bearer " + m.APIKey()})
+	if timeout > 0 {
+		ctx, cancel := context.WithTimeout(req.Context(), timeout)
+		defer cancel()
+		req = req.WithContext(ctx)
+	}
+	resp, err := m.httpClient.Do(req)
+	if err != nil {
+		return LoadAdapterResponse{}, err
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return LoadAdapterResponse{}, fmt.Errorf("%s", FormatSDKError(
+			fmt.Sprintf("Load adapter failed (HTTP %d)", resp.StatusCode),
+			ParseAPIErrorBody(respBody),
+			"Verify adapter_path points to a readable HF PEFT adapter directory and the trainer is a LoRA training session.",
+			SDKErrorFormatOptions{DocsURL: DocsSDK},
+		))
+	}
+	out := LoadAdapterResponse{Type: "load_adapter"}
+	if len(respBody) > 0 {
+		if err := json.Unmarshal(respBody, &out); err != nil {
+			return LoadAdapterResponse{}, err
+		}
+	}
+	if out.Type == "" {
+		out.Type = "load_adapter"
+	}
+	if out.ModelID == "" {
+		out.ModelID = opts.ModelID
+	}
+	if out.AdapterPath == "" {
+		out.AdapterPath = adapterPath
+	}
+	return out, nil
 }
 
 func (m *TrainerJobManager) CreateRaw(ctx context.Context, config TrainerJobConfig) (map[string]any, error) {

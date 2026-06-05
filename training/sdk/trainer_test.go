@@ -31,6 +31,106 @@ func TestTrainerJobCreateReturnsJobIdentity(t *testing.T) {
 	}
 }
 
+func TestTrainerJobLoadAdapterValidation(t *testing.T) {
+	mgr := NewTrainerJobManager("test-key", "https://api.example.com")
+	for _, adapterPath := range []string{"", "   "} {
+		_, err := mgr.LoadAdapter(context.Background(), LoadAdapterOptions{
+			TrainerBaseURL: "https://trainer.example.com",
+			ModelID:        "model-1",
+			AdapterPath:    adapterPath,
+		})
+		if err == nil || !strings.Contains(err.Error(), "adapter_path must be a non-empty string") {
+			t.Fatalf("adapter path %q err = %v", adapterPath, err)
+		}
+	}
+	_, err := mgr.LoadAdapter(context.Background(), LoadAdapterOptions{
+		TrainerBaseURL: "https://trainer.example.com",
+		AdapterPath:    "gs://bucket/adapter",
+	})
+	if err == nil || !strings.Contains(err.Error(), "model_id") {
+		t.Fatalf("missing model error = %v", err)
+	}
+}
+
+func TestTrainerJobLoadAdapterPostsGatewayRequest(t *testing.T) {
+	var seenPath string
+	var seenAuth string
+	var payload map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenPath = r.URL.Path
+		seenAuth = r.Header.Get("Authorization")
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Errorf("decode body: %v", err)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"model_id":     "model-1",
+			"adapter_path": "gs://bucket/adapter-dir",
+		})
+	}))
+	defer server.Close()
+
+	mgr := NewTrainerJobManager("test-key", "https://api.example.com")
+	resp, err := mgr.LoadAdapter(context.Background(), LoadAdapterOptions{
+		TrainerBaseURL: server.URL + "/",
+		ModelID:        "model-1",
+		AdapterPath:    "  gs://bucket/adapter-dir  ",
+		SeqID:          43,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if seenPath != "/api/v1/load_adapter" {
+		t.Fatalf("path = %q", seenPath)
+	}
+	if seenAuth != "Bearer test-key" {
+		t.Fatalf("authorization = %q", seenAuth)
+	}
+	if payload["adapter_path"] != "gs://bucket/adapter-dir" || payload["model_id"] != "model-1" || payload["seq_id"].(float64) != 43 {
+		t.Fatalf("payload = %#v", payload)
+	}
+	if resp.ModelID != "model-1" || resp.AdapterPath != "gs://bucket/adapter-dir" || resp.Type != "load_adapter" {
+		t.Fatalf("response = %#v", resp)
+	}
+}
+
+func TestTrainerJobLoadAdapterDefaultsEmptyResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	mgr := NewTrainerJobManager("test-key", "https://api.example.com")
+	resp, err := mgr.LoadAdapter(context.Background(), LoadAdapterOptions{
+		TrainerBaseURL: server.URL,
+		ModelID:        "model-1",
+		AdapterPath:    "gs://bucket/adapter-dir",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.ModelID != "model-1" || resp.AdapterPath != "gs://bucket/adapter-dir" || resp.Type != "load_adapter" {
+		t.Fatalf("response = %#v", resp)
+	}
+}
+
+func TestTrainerJobLoadAdapterHTTPError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":"bad adapter"}`))
+	}))
+	defer server.Close()
+
+	mgr := NewTrainerJobManager("test-key", "https://api.example.com")
+	_, err := mgr.LoadAdapter(context.Background(), LoadAdapterOptions{
+		TrainerBaseURL: server.URL,
+		ModelID:        "model-1",
+		AdapterPath:    "gs://bucket/adapter-dir",
+	})
+	if err == nil || !strings.Contains(err.Error(), "Load adapter failed") || !strings.Contains(err.Error(), "bad adapter") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func TestTrainerJobPayloadConstruction(t *testing.T) {
 	maxContext := 4096
 	nodeCount := 2
