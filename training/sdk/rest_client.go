@@ -22,6 +22,7 @@ type TrainingRestClient struct {
 	verifySSLOverride *bool
 	baseVerifySSL     bool
 	httpClient        *http.Client
+	retryOptions      *RequestRetryOptions
 }
 
 type TrainingRestClientOption func(*TrainingRestClient)
@@ -41,6 +42,12 @@ func WithTrainingVerifySSL(verify bool) TrainingRestClientOption {
 func WithTrainingHTTPClient(httpClient *http.Client) TrainingRestClientOption {
 	return func(c *TrainingRestClient) {
 		c.httpClient = httpClient
+	}
+}
+
+func WithTrainingRetryOptions(opts RequestRetryOptions) TrainingRestClientOption {
+	return func(c *TrainingRestClient) {
+		c.retryOptions = &opts
 	}
 }
 
@@ -192,7 +199,7 @@ func (c *TrainingRestClient) request(ctx context.Context, method, path string, b
 		client = trainingHTTPClient(c.VerifyForURL(requestURL), timeout)
 	}
 
-	return RequestWithRetries(func() (*http.Response, error) {
+	call := func() (*http.Response, error) {
 		var reader io.Reader
 		if payload != nil {
 			reader = bytes.NewReader(payload)
@@ -203,7 +210,11 @@ func (c *TrainingRestClient) request(ctx context.Context, method, path string, b
 		}
 		req.Header = c.Headers(headers)
 		return client.Do(req)
-	})
+	}
+	if c.retryOptions != nil {
+		return RequestWithRetries(call, *c.retryOptions)
+	}
+	return RequestWithRetries(call)
 }
 
 func trainingHTTPClient(verifySSL bool, timeout time.Duration) *http.Client {
