@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -17,6 +18,7 @@ const pollTransientMaxBackoff = 60 * time.Second
 var (
 	resourceIDRE     = regexp.MustCompile(`^[a-z0-9-]+$`)
 	checkpointNameRE = regexp.MustCompile(`^accounts/([^/]+)/rlorTrainerJobs/([^/]+)/checkpoints/([^/]+)$`)
+	trainingShapeRE  = regexp.MustCompile(`^accounts/[^/]+/trainingShapes/[^/]+(/versions/[^/]+)?$`)
 )
 
 type TransientOperationPollError struct {
@@ -37,6 +39,39 @@ func (e *TransientOperationPollError) Unwrap() error {
 
 type FireworksClient struct {
 	*TrainingRestClient
+}
+
+type TrainingShapeProfile struct {
+	TrainingShapeVersion      string
+	TrainerImageTag           string
+	MaxSupportedContextLength int
+	NodeCount                 int
+	DeploymentShapeVersion    string
+	DeploymentImageTag        string
+	AcceleratorType           string
+	AcceleratorCount          int
+	BaseModelWeightPrecision  string
+	PipelineParallelism       int
+	TrainerMode               string
+}
+
+func (p TrainingShapeProfile) TrainingShape() string {
+	if p.TrainingShapeVersion == "" {
+		return ""
+	}
+	idx := strings.Index(p.TrainingShapeVersion, "/versions/")
+	if idx == -1 {
+		return p.TrainingShapeVersion
+	}
+	return p.TrainingShapeVersion[:idx]
+}
+
+func (p TrainingShapeProfile) DeploymentShape() string {
+	return p.DeploymentShapeVersion
+}
+
+func (p TrainingShapeProfile) SupportsLora() bool {
+	return p.TrainerMode == "LORA_TRAINER"
 }
 
 func NewFireworksClient(apiKey, baseURL string, opts ...TrainingRestClientOption) *FireworksClient {
@@ -62,6 +97,84 @@ func ParseCheckpointName(name string) (accountID, jobID, checkpointID string, ok
 		return "", "", "", false
 	}
 	return matches[1], matches[2], matches[3], true
+}
+
+func (c *FireworksClient) ResolveTrainingProfile(ctx context.Context, trainingShapeID string) (TrainingShapeProfile, error) {
+	isVersioned := strings.Contains(trainingShapeID, "/versions/")
+	if !trainingShapeRE.MatchString(trainingShapeID) {
+		return TrainingShapeProfile{}, fmt.Errorf("%s", FormatSDKError(
+			"Invalid training_shape_id format",
+			fmt.Sprintf("%q is not a valid training shape resource name.", trainingShapeID),
+			"Expected: accounts/<account>/trainingShapes/<shape>[/versions/<ver>]\n  Example: accounts/fireworks/trainingShapes/ts-qwen3-8b-policy",
+		))
+	}
+
+	path := "/v1/" + trainingShapeID
+	if !isVersioned {
+		query := url.Values{}
+		query.Set("filter", "latest_validated=true")
+		query.Set("pageSize", "1")
+		path += "/versions?" + query.Encode()
+	}
+	resp, err := c.Get(ctx, path, nil)
+	if err != nil {
+		return TrainingShapeProfile{}, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return TrainingShapeProfile{}, trainingShapeError(resp.StatusCode, body, trainingShapeID)
+	}
+	var data map[string]any
+	if len(body) > 0 {
+		if err := json.Unmarshal(body, &data); err != nil {
+			return TrainingShapeProfile{}, err
+		}
+	}
+	version, err := SelectTrainingShapeVersion(data, isVersioned, trainingShapeID)
+	if err != nil {
+		return TrainingShapeProfile{}, err
+	}
+	return ProfileFromTrainingShapeVersion(version), nil
+}
+
+func SelectTrainingShapeVersion(data map[string]any, isVersioned bool, trainingShapeID string) (map[string]any, error) {
+	if isVersioned {
+		return data, nil
+	}
+	versions, _ := data["trainingShapeVersions"].([]any)
+	if len(versions) == 0 {
+		return nil, fmt.Errorf("%s", FormatSDKError(
+			"Failed to resolve latest validated training shape for '"+trainingShapeID+"'",
+			"No latest validated training-shape version was returned.",
+			"Pass a versioned training_shape_id, or validate one version of this shape before using the unversioned shape resource.",
+			SDKErrorFormatOptions{DocsURL: DocsSDK},
+		))
+	}
+	version, _ := versions[0].(map[string]any)
+	if version == nil {
+		return nil, fmt.Errorf("training shape version payload was not an object")
+	}
+	return version, nil
+}
+
+func ProfileFromTrainingShapeVersion(version map[string]any) TrainingShapeProfile {
+	snapshot, _ := version["snapshot"].(map[string]any)
+	sharding, _ := snapshot["trainerShardingScheme"].(map[string]any)
+	pp := intFromAny(sharding["pipelineParallelism"], 1)
+	return TrainingShapeProfile{
+		TrainingShapeVersion:      stringFromAny(version["name"]),
+		TrainerImageTag:           stringFromAny(snapshot["trainerImageTag"]),
+		MaxSupportedContextLength: intFromAny(snapshot["maxSupportedContextLength"], 0),
+		NodeCount:                 intFromAny(snapshot["nodeCount"], 1),
+		DeploymentShapeVersion:    stringFromAny(snapshot["deploymentShapeVersion"]),
+		DeploymentImageTag:        stringFromAny(snapshot["deploymentImageTag"]),
+		AcceleratorType:           stringFromAny(snapshot["acceleratorType"]),
+		AcceleratorCount:          intFromAny(snapshot["acceleratorCount"], 0),
+		BaseModelWeightPrecision:  stringFromAny(snapshot["baseModelWeightPrecision"]),
+		PipelineParallelism:       pp,
+		TrainerMode:               stringFromAny(snapshot["trainerMode"]),
+	}
 }
 
 func (c *FireworksClient) GetOperation(ctx context.Context, name string) (map[string]any, error) {
@@ -242,6 +355,54 @@ func (c *FireworksClient) PromoteCheckpoint(ctx context.Context, opts PromoteChe
 	return result, nil
 }
 
+func (c *FireworksClient) ListCheckpoints(ctx context.Context, jobID string, pageSize int) ([]map[string]any, error) {
+	if pageSize <= 0 {
+		pageSize = 200
+	}
+	accountID, err := c.AccountID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	basePath := "/v1/accounts/" + accountID + "/rlorTrainerJobs/" + jobID + "/checkpoints"
+	var rows []map[string]any
+	pageToken := ""
+	for {
+		query := url.Values{}
+		query.Set("pageSize", fmt.Sprint(pageSize))
+		if pageToken != "" {
+			query.Set("pageToken", pageToken)
+		}
+		resp, err := c.Get(ctx, basePath+"?"+query.Encode(), nil)
+		if err != nil {
+			return nil, err
+		}
+		body, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return nil, listCheckpointsError(resp.StatusCode, body, jobID)
+		}
+		var payload map[string]any
+		if len(body) > 0 {
+			if err := json.Unmarshal(body, &payload); err != nil {
+				return nil, err
+			}
+		}
+		for _, item := range checkpointPage(payload) {
+			if row, ok := item.(map[string]any); ok {
+				rows = append(rows, row)
+			}
+		}
+		pageToken = stringFromAny(payload["nextPageToken"])
+		if pageToken == "" {
+			pageToken = stringFromAny(payload["next_page_token"])
+		}
+		if pageToken == "" {
+			break
+		}
+	}
+	return rows, nil
+}
+
 func (c *FireworksClient) ResolvePromoteTarget(ctx context.Context, name, jobID, checkpointID string) (string, string, string, error) {
 	if name != "" {
 		if checkpointID != "" {
@@ -332,6 +493,80 @@ func decodeJSONMap(reader io.Reader) (map[string]any, error) {
 		return nil, err
 	}
 	return out, nil
+}
+
+func trainingShapeError(statusCode int, body []byte, trainingShapeID string) error {
+	errorMsg := ParseAPIErrorBody(body)
+	solution := "Verify the training_shape_id is registered and visible to the account resolved from your API key."
+	showSupport := true
+	switch statusCode {
+	case http.StatusUnauthorized:
+		solution = "The API key was rejected for training APIs. Ensure you are using a training-scoped Fireworks API key; inference-only keys return 401 here."
+		showSupport = false
+	case http.StatusNotFound:
+		solution = "Training shape '" + trainingShapeID + "' was not found. Verify the resource name, version segment, and account visibility."
+		showSupport = false
+	case http.StatusForbidden:
+		solution = "Permission denied for training shape '" + trainingShapeID + "'. Ensure your account owns or has access to this shape."
+		showSupport = false
+	}
+	return fmt.Errorf("%s", FormatSDKError(
+		fmt.Sprintf("Failed to fetch training shape %q (HTTP %d)", trainingShapeID, statusCode),
+		errorMsg,
+		solution,
+		SDKErrorFormatOptions{DocsURL: DocsSDK, ShowSupport: showSupport},
+	))
+}
+
+func listCheckpointsError(statusCode int, body []byte, jobID string) error {
+	errorMsg := ParseAPIErrorBody(body)
+	solution := "Retry; if it persists, contact Fireworks support."
+	showSupport := true
+	switch statusCode {
+	case http.StatusNotFound:
+		solution = "Trainer job '" + jobID + "' was not found in this account. Verify the job ID and that your API key resolves to the account that owns it. If the trainer was deleted after the retention window, the checkpoint rows and backing blobs are expected to be gone."
+		showSupport = false
+	case http.StatusForbidden:
+		solution = "Your API key does not have access to this trainer job."
+		showSupport = false
+	}
+	return fmt.Errorf("%s", FormatSDKError(
+		fmt.Sprintf("Failed to list checkpoints for trainer job %q (HTTP %d)", jobID, statusCode),
+		errorMsg,
+		solution,
+		SDKErrorFormatOptions{DocsURL: DocsSDK, ShowSupport: showSupport},
+	))
+}
+
+func checkpointPage(payload map[string]any) []any {
+	if payload == nil {
+		return nil
+	}
+	if rows, ok := payload["checkpoints"].([]any); ok {
+		return rows
+	}
+	if rows, ok := payload["rlorTrainerJobCheckpoints"].([]any); ok {
+		return rows
+	}
+	return nil
+}
+
+func stringFromAny(value any) string {
+	got, _ := value.(string)
+	return got
+}
+
+func intFromAny(value any, fallback int) int {
+	switch v := value.(type) {
+	case int:
+		return v
+	case int64:
+		return int(v)
+	case float64:
+		return int(v)
+	default:
+		return fallback
+	}
 }
 
 func truthy(value any) bool {

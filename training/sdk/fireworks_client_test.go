@@ -328,3 +328,246 @@ func TestFireworksClientPromoteCheckpointRaisesCleanErrorWhenModelUnavailable(t 
 		t.Fatalf("error = %v", err)
 	}
 }
+
+func TestFireworksClientResolveTrainingProfileParsesSharding(t *testing.T) {
+	var seenPath string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenPath = r.URL.String()
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"trainingShapeVersions": []map[string]any{
+				{
+					"name": "accounts/a/trainingShapes/ts-test/versions/ver-123",
+					"snapshot": map[string]any{
+						"name":                      "accounts/a/trainingShapes/ts-test",
+						"trainerImageTag":           "0.33.0",
+						"maxSupportedContextLength": 8192,
+						"nodeCount":                 2,
+						"deploymentShapeVersion":    "dsv",
+						"deploymentImageTag":        "img",
+						"acceleratorType":           "NVIDIA_H100_80GB",
+						"acceleratorCount":          8,
+						"baseModelWeightPrecision":  "bfloat16",
+						"trainerMode":               "LORA_TRAINER",
+						"trainerShardingScheme": map[string]any{
+							"tensorParallelism":   1,
+							"pipelineParallelism": 4,
+							"contextParallelism":  1,
+							"expertParallelism":   1,
+						},
+					},
+				},
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := NewFireworksClient("test-key", server.URL)
+	profile, err := client.ResolveTrainingProfile(context.Background(), "accounts/a/trainingShapes/ts-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(seenPath, "/trainingShapes/ts-test/versions") {
+		t.Fatalf("path = %q", seenPath)
+	}
+	if profile.PipelineParallelism != 4 {
+		t.Fatalf("pipeline parallelism = %d", profile.PipelineParallelism)
+	}
+	if profile.MaxSupportedContextLength != 8192 {
+		t.Fatalf("max context = %d", profile.MaxSupportedContextLength)
+	}
+	if profile.TrainingShapeVersion != "accounts/a/trainingShapes/ts-test/versions/ver-123" {
+		t.Fatalf("training shape version = %q", profile.TrainingShapeVersion)
+	}
+	if profile.TrainingShape() != "accounts/a/trainingShapes/ts-test" {
+		t.Fatalf("training shape = %q", profile.TrainingShape())
+	}
+	if profile.TrainerMode != "LORA_TRAINER" || !profile.SupportsLora() {
+		t.Fatalf("trainer mode = %q supports lora = %t", profile.TrainerMode, profile.SupportsLora())
+	}
+}
+
+func TestFireworksClientResolveTrainingProfileRejectsBareShapeID(t *testing.T) {
+	client := NewFireworksClient("test-key", "https://api.example.com")
+	_, err := client.ResolveTrainingProfile(context.Background(), "ts-test")
+	if err == nil || !strings.Contains(err.Error(), "not a valid training shape resource name") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestFireworksClientResolveTrainingProfileUsesFullyQualifiedPath(t *testing.T) {
+	var seenPath string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenPath = r.URL.String()
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"trainingShapeVersions": []map[string]any{
+				{"name": "accounts/fireworks/trainingShapes/ts-test/versions/ver-123"},
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := NewFireworksClient("test-key", server.URL)
+	_, err := client.ResolveTrainingProfile(context.Background(), "accounts/fireworks/trainingShapes/ts-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(seenPath, "/v1/accounts/fireworks/trainingShapes/ts-test/versions?") {
+		t.Fatalf("path = %q", seenPath)
+	}
+}
+
+func TestFireworksClientResolveTrainingProfile401MentionsTrainingScopedKey(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"error":{"message":"unauthorized"}}`, http.StatusUnauthorized)
+	}))
+	defer server.Close()
+
+	client := NewFireworksClient("test-key", server.URL)
+	_, err := client.ResolveTrainingProfile(context.Background(), "accounts/a/trainingShapes/ts-test")
+	if err == nil || !strings.Contains(err.Error(), "training-scoped Fireworks API key") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestTrainingShapeProfileProperties(t *testing.T) {
+	profile := TrainingShapeProfile{
+		TrainingShapeVersion:   "accounts/fw/trainingShapes/ts-x/versions/1",
+		DeploymentShapeVersion: "accounts/fw/deploymentShapes/ds-x/versions/1",
+		TrainerMode:            "LORA_TRAINER",
+	}
+	if profile.TrainingShape() != "accounts/fw/trainingShapes/ts-x" {
+		t.Fatalf("training shape = %q", profile.TrainingShape())
+	}
+	if profile.DeploymentShape() != "accounts/fw/deploymentShapes/ds-x/versions/1" {
+		t.Fatalf("deployment shape = %q", profile.DeploymentShape())
+	}
+	if !profile.SupportsLora() {
+		t.Fatal("expected SupportsLora")
+	}
+	profile.TrainingShapeVersion = ""
+	if profile.TrainingShape() != "" {
+		t.Fatalf("training shape = %q, want empty", profile.TrainingShape())
+	}
+	profile.DeploymentShapeVersion = ""
+	if profile.DeploymentShape() != "" {
+		t.Fatalf("deployment shape = %q, want empty", profile.DeploymentShape())
+	}
+	profile.TrainerMode = "POLICY_TRAINER"
+	if profile.SupportsLora() {
+		t.Fatal("unexpected SupportsLora")
+	}
+}
+
+func TestFireworksClientListCheckpointsSinglePage(t *testing.T) {
+	var seenPath string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenPath = r.URL.String()
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"checkpoints": []map[string]any{
+				{
+					"name":           "accounts/a/rlorTrainerJobs/j/checkpoints/step-1",
+					"createTime":     "2026-04-16T10:00:00Z",
+					"checkpointType": "INFERENCE_BASE",
+					"promotable":     true,
+				},
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := NewFireworksClient("test-key", server.URL)
+	client.SetAccountID("a")
+	rows, err := client.ListCheckpoints(context.Background(), "j", 200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0]["checkpointType"] != "INFERENCE_BASE" || rows[0]["promotable"] != true {
+		t.Fatalf("rows = %#v", rows)
+	}
+	if !strings.HasPrefix(seenPath, "/v1/accounts/a/rlorTrainerJobs/j/checkpoints?") {
+		t.Fatalf("path = %q", seenPath)
+	}
+	if !strings.Contains(seenPath, "pageSize=200") || strings.Contains(seenPath, "pageToken") {
+		t.Fatalf("path = %q", seenPath)
+	}
+}
+
+func TestFireworksClientListCheckpointsAutoPaginates(t *testing.T) {
+	var seenPaths []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenPaths = append(seenPaths, r.URL.String())
+		if r.URL.Query().Get("pageToken") == "" {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"checkpoints":   []map[string]any{{"name": "c/1", "promotable": true}},
+				"nextPageToken": "tok-2",
+			})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"checkpoints":   []map[string]any{{"name": "c/2", "promotable": false}},
+			"nextPageToken": "",
+		})
+	}))
+	defer server.Close()
+
+	client := NewFireworksClient("test-key", server.URL)
+	client.SetAccountID("a")
+	rows, err := client.ListCheckpoints(context.Background(), "j", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 || rows[0]["name"] != "c/1" || rows[1]["name"] != "c/2" {
+		t.Fatalf("rows = %#v", rows)
+	}
+	if len(seenPaths) != 2 || !strings.Contains(seenPaths[1], "pageToken=tok-2") || !strings.Contains(seenPaths[1], "pageSize=1") {
+		t.Fatalf("paths = %#v", seenPaths)
+	}
+}
+
+func TestFireworksClientListCheckpointsAlternateKeyAndEmpty(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("mode") == "empty" {
+			_ = json.NewEncoder(w).Encode(map[string]any{})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"rlorTrainerJobCheckpoints": []map[string]any{{"name": "c/1", "promotable": true}},
+		})
+	}))
+	defer server.Close()
+
+	client := NewFireworksClient("test-key", server.URL)
+	client.SetAccountID("a")
+	rows, err := client.ListCheckpoints(context.Background(), "j", 200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0]["name"] != "c/1" {
+		t.Fatalf("rows = %#v", rows)
+	}
+}
+
+func TestFireworksClientListCheckpointsErrors(t *testing.T) {
+	tests := []struct {
+		status int
+		want   string
+	}{
+		{status: http.StatusNotFound, want: "was not found in this account"},
+		{status: http.StatusForbidden, want: "does not have access"},
+	}
+	for _, test := range tests {
+		t.Run(http.StatusText(test.status), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				http.Error(w, `{"message":"nope"}`, test.status)
+			}))
+			defer server.Close()
+
+			client := NewFireworksClient("test-key", server.URL)
+			client.SetAccountID("a")
+			_, err := client.ListCheckpoints(context.Background(), "j", 200)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("error = %v", err)
+			}
+		})
+	}
+}
