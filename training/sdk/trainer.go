@@ -160,6 +160,82 @@ func (m *TrainerJobManager) ResumeAndWait(ctx context.Context, jobID string, opt
 	return m.WaitForExisting(ctx, jobID, opts...)
 }
 
+type TrainerReconnectOptions struct {
+	PollOptions         TrainerPollOptions
+	MaxWaitForResumable time.Duration
+	Now                 func() time.Time
+	Sleep               func(time.Duration)
+	GetJob              func(context.Context, string) (map[string]any, error)
+	ResumeAndWait       func(context.Context, string, TrainerPollOptions) (TrainerServiceEndpoint, error)
+	WaitForExisting     func(context.Context, string, TrainerPollOptions) (TrainerServiceEndpoint, error)
+}
+
+func (m *TrainerJobManager) ReconnectAndWait(ctx context.Context, jobID string, opts ...TrainerReconnectOptions) (TrainerServiceEndpoint, error) {
+	opt := TrainerReconnectOptions{
+		MaxWaitForResumable: ResumableWaitTimeout,
+		Now:                 time.Now,
+		Sleep:               time.Sleep,
+		GetJob:              m.GetJob,
+		ResumeAndWait: func(ctx context.Context, jobID string, poll TrainerPollOptions) (TrainerServiceEndpoint, error) {
+			return m.ResumeAndWait(ctx, jobID, poll)
+		},
+		WaitForExisting: func(ctx context.Context, jobID string, poll TrainerPollOptions) (TrainerServiceEndpoint, error) {
+			return m.WaitForExisting(ctx, jobID, poll)
+		},
+	}
+	if len(opts) > 0 {
+		provided := opts[0]
+		opt.PollOptions = provided.PollOptions
+		if provided.MaxWaitForResumable != 0 {
+			opt.MaxWaitForResumable = provided.MaxWaitForResumable
+		}
+		if provided.Now != nil {
+			opt.Now = provided.Now
+		}
+		if provided.Sleep != nil {
+			opt.Sleep = provided.Sleep
+		}
+		if provided.GetJob != nil {
+			opt.GetJob = provided.GetJob
+		}
+		if provided.ResumeAndWait != nil {
+			opt.ResumeAndWait = provided.ResumeAndWait
+		}
+		if provided.WaitForExisting != nil {
+			opt.WaitForExisting = provided.WaitForExisting
+		}
+	}
+
+	start := opt.Now()
+	for {
+		job, err := opt.GetJob(ctx, jobID)
+		if err != nil {
+			if opt.Now().Sub(start) > opt.MaxWaitForResumable {
+				return TrainerServiceEndpoint{}, err
+			}
+			opt.Sleep(PollInterval)
+			continue
+		}
+		state := stringFromAny(job["state"])
+		if state == "JOB_STATE_RUNNING" {
+			return opt.WaitForExisting(ctx, jobID, opt.PollOptions)
+		}
+		switch state {
+		case "JOB_STATE_FAILED", "JOB_STATE_CANCELLED", "JOB_STATE_PAUSED", "JOB_STATE_COMPLETED":
+			return opt.ResumeAndWait(ctx, jobID, opt.PollOptions)
+		}
+		if opt.Now().Sub(start) > opt.MaxWaitForResumable {
+			return TrainerServiceEndpoint{}, fmt.Errorf("%s", FormatSDKError(
+				"Trainer job "+jobID+" stuck in "+state,
+				fmt.Sprintf("Job has been in %q state for %.0fs without transitioning to a resumable state.", state, opt.MaxWaitForResumable.Seconds()),
+				"Check the Fireworks console for job details. If the job will not reach a resumable state, cancel it and create a new one.\n  Console: "+ConsoleURL,
+				SDKErrorFormatOptions{DocsURL: DocsSDK, ShowSupport: true},
+			))
+		}
+		opt.Sleep(SlowPollInterval)
+	}
+}
+
 func (m *TrainerJobManager) GetJob(ctx context.Context, jobID string) (map[string]any, error) {
 	accountID, err := m.AccountID(ctx)
 	if err != nil {

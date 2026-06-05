@@ -3,6 +3,7 @@ package sdk
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -446,5 +447,120 @@ func TestTrainerCreateAndWaitDelegates(t *testing.T) {
 	}
 	if !created || endpoint.JobID != "job-1" {
 		t.Fatalf("created = %t endpoint = %#v", created, endpoint)
+	}
+}
+
+func TestTrainerReconnectAndWaitFailedTriggersResume(t *testing.T) {
+	mgr := NewTrainerJobManager("test-key", "https://api.example.com")
+	expected := TrainerServiceEndpoint{JobName: "n", JobID: "j", BaseURL: "https://u"}
+	resumed := false
+	got, err := mgr.ReconnectAndWait(
+		context.Background(),
+		"j",
+		TrainerReconnectOptions{
+			GetJob: func(context.Context, string) (map[string]any, error) {
+				return map[string]any{"state": "JOB_STATE_FAILED"}, nil
+			},
+			ResumeAndWait: func(_ context.Context, jobID string, _ TrainerPollOptions) (TrainerServiceEndpoint, error) {
+				resumed = true
+				if jobID != "j" {
+					t.Fatalf("jobID = %q", jobID)
+				}
+				return expected, nil
+			},
+			Sleep: func(time.Duration) {},
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !resumed || got != expected {
+		t.Fatalf("resumed = %t endpoint = %#v", resumed, got)
+	}
+}
+
+func TestTrainerReconnectAndWaitRunningWaitsForExisting(t *testing.T) {
+	mgr := NewTrainerJobManager("test-key", "https://api.example.com")
+	expected := TrainerServiceEndpoint{JobName: "n", JobID: "j", BaseURL: "https://u"}
+	waited := false
+	got, err := mgr.ReconnectAndWait(
+		context.Background(),
+		"j",
+		TrainerReconnectOptions{
+			GetJob: func(context.Context, string) (map[string]any, error) {
+				return map[string]any{"state": "JOB_STATE_RUNNING"}, nil
+			},
+			WaitForExisting: func(_ context.Context, jobID string, _ TrainerPollOptions) (TrainerServiceEndpoint, error) {
+				waited = true
+				if jobID != "j" {
+					t.Fatalf("jobID = %q", jobID)
+				}
+				return expected, nil
+			},
+			Sleep: func(time.Duration) {},
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !waited || got != expected {
+		t.Fatalf("waited = %t endpoint = %#v", waited, got)
+	}
+}
+
+func TestTrainerReconnectAndWaitRetriesTransientGetError(t *testing.T) {
+	mgr := NewTrainerJobManager("test-key", "https://api.example.com")
+	calls := 0
+	expected := TrainerServiceEndpoint{JobName: "n", JobID: "j", BaseURL: "https://u"}
+	got, err := mgr.ReconnectAndWait(
+		context.Background(),
+		"j",
+		TrainerReconnectOptions{
+			MaxWaitForResumable: time.Minute,
+			Now: func() time.Time {
+				return time.Unix(0, int64(calls))
+			},
+			GetJob: func(context.Context, string) (map[string]any, error) {
+				calls++
+				if calls == 1 {
+					return nil, errors.New("temporary")
+				}
+				return map[string]any{"state": "JOB_STATE_FAILED"}, nil
+			},
+			ResumeAndWait: func(context.Context, string, TrainerPollOptions) (TrainerServiceEndpoint, error) {
+				return expected, nil
+			},
+			Sleep: func(time.Duration) {},
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 || got != expected {
+		t.Fatalf("calls = %d endpoint = %#v", calls, got)
+	}
+}
+
+func TestTrainerReconnectAndWaitStuckStateRaises(t *testing.T) {
+	mgr := NewTrainerJobManager("test-key", "https://api.example.com")
+	now := time.Unix(0, 0)
+	_, err := mgr.ReconnectAndWait(
+		context.Background(),
+		"j",
+		TrainerReconnectOptions{
+			MaxWaitForResumable: 5 * time.Second,
+			Now: func() time.Time {
+				current := now
+				now = now.Add(3 * time.Second)
+				return current
+			},
+			GetJob: func(context.Context, string) (map[string]any, error) {
+				return map[string]any{"state": "JOB_STATE_CREATING"}, nil
+			},
+			Sleep: func(time.Duration) {},
+		},
+	)
+	if err == nil || !strings.Contains(err.Error(), "stuck") {
+		t.Fatalf("error = %v", err)
 	}
 }
