@@ -1,10 +1,16 @@
 package sdk
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
+	"time"
 )
 
 type ServerMetrics struct {
@@ -16,6 +22,357 @@ type ServerMetrics struct {
 	PromptTokens            *int
 	ServerProcessingTime    *float64
 	ClientTTFT              *float64
+}
+
+type SampledCompletion struct {
+	Text              string
+	FullTokens        []int
+	PromptLen         int
+	FinishReason      string
+	CompletionLen     int
+	InferenceLogprobs []float64
+	LogprobsEchoed    bool
+	RoutingMatrices   []string
+}
+
+type DeploymentTokenizer interface {
+	ApplyChatTemplate(messages []map[string]string) ([]int, error)
+	Decode(tokenIDs []int) (string, error)
+}
+
+type SamplingConcurrencyController interface {
+	Acquire(context.Context) error
+	Release(*ServerMetrics)
+}
+
+type CompletionRequestOptions struct {
+	MaxTokens            int
+	Temperature          float64
+	RawOutput            bool
+	Logprobs             bool
+	Echo                 bool
+	IncludeRoutingMatrix bool
+	Stop                 []string
+	Extra                map[string]any
+}
+
+type CompletionRequester func(context.Context, []int, CompletionRequestOptions) (map[string]any, ServerMetrics, error)
+
+type DeploymentSampler struct {
+	InferenceURL string
+	Model        string
+	APIKey       string
+	Tokenizer    DeploymentTokenizer
+
+	ConcurrencyController SamplingConcurrencyController
+	CompletionRequester   CompletionRequester
+	HTTPClient            *http.Client
+
+	mu            sync.Mutex
+	recentMetrics []ServerMetrics
+}
+
+type DeploymentSamplerOption func(*DeploymentSampler)
+
+func WithDeploymentSamplerTokenizer(tokenizer DeploymentTokenizer) DeploymentSamplerOption {
+	return func(s *DeploymentSampler) {
+		s.Tokenizer = tokenizer
+	}
+}
+
+func WithDeploymentSamplerConcurrencyController(controller SamplingConcurrencyController) DeploymentSamplerOption {
+	return func(s *DeploymentSampler) {
+		s.ConcurrencyController = controller
+	}
+}
+
+func WithDeploymentSamplerRequester(requester CompletionRequester) DeploymentSamplerOption {
+	return func(s *DeploymentSampler) {
+		s.CompletionRequester = requester
+	}
+}
+
+func WithDeploymentSamplerHTTPClient(client *http.Client) DeploymentSamplerOption {
+	return func(s *DeploymentSampler) {
+		s.HTTPClient = client
+	}
+}
+
+func NewDeploymentSampler(inferenceURL, model, apiKey string, opts ...DeploymentSamplerOption) *DeploymentSampler {
+	sampler := &DeploymentSampler{
+		InferenceURL: strings.TrimRight(inferenceURL, "/"),
+		Model:        model,
+		APIKey:       apiKey,
+		HTTPClient:   &http.Client{Timeout: 10 * time.Minute},
+	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(sampler)
+		}
+	}
+	if sampler.CompletionRequester == nil {
+		sampler.CompletionRequester = sampler.defaultCompletionRequest
+	}
+	return sampler
+}
+
+type SampleOptions struct {
+	N                    int
+	MaxTokens            int
+	Temperature          float64
+	MaxSeqLen            int
+	Logprobs             bool
+	Echo                 bool
+	IncludeRoutingMatrix bool
+	Stop                 any
+	Extra                map[string]any
+}
+
+func (s *DeploymentSampler) SampleWithTokens(ctx context.Context, messages []map[string]string, opts ...SampleOptions) ([]SampledCompletion, error) {
+	if s.Tokenizer == nil {
+		return nil, fmt.Errorf("tokenizer is required for SampleWithTokens")
+	}
+	promptIDs, err := s.Tokenizer.ApplyChatTemplate(messages)
+	if err != nil {
+		return nil, err
+	}
+	return s.SampleWithPromptTokens(ctx, promptIDs, opts...)
+}
+
+func (s *DeploymentSampler) SampleWithPromptTokens(ctx context.Context, promptTokenIDs []int, opts ...SampleOptions) ([]SampledCompletion, error) {
+	opt := sampleOptions(opts...)
+	if opt.MaxSeqLen > 0 && len(promptTokenIDs) >= opt.MaxSeqLen {
+		return nil, nil
+	}
+	stop, err := s.resolveStop(opt.Stop)
+	if err != nil {
+		return nil, err
+	}
+	var out []SampledCompletion
+	for i := 0; i < opt.N; i++ {
+		batch, err := s.doOneCompletion(ctx, promptTokenIDs, opt, stop)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, batch...)
+	}
+	return out, nil
+}
+
+func (s *DeploymentSampler) DrainMetrics() []ServerMetrics {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := append([]ServerMetrics(nil), s.recentMetrics...)
+	s.recentMetrics = nil
+	return out
+}
+
+func (s *DeploymentSampler) doOneCompletion(ctx context.Context, promptIDs []int, opt SampleOptions, stop []string) ([]SampledCompletion, error) {
+	if s.ConcurrencyController != nil {
+		if err := s.ConcurrencyController.Acquire(ctx); err != nil {
+			return nil, err
+		}
+	}
+	var metrics *ServerMetrics
+	defer func() {
+		if s.ConcurrencyController != nil {
+			s.ConcurrencyController.Release(metrics)
+		}
+		if metrics != nil {
+			s.mu.Lock()
+			s.recentMetrics = append(s.recentMetrics, *metrics)
+			s.mu.Unlock()
+		}
+	}()
+
+	result, serverMetrics, err := s.CompletionRequester(ctx, promptIDs, CompletionRequestOptions{
+		MaxTokens:            opt.MaxTokens,
+		Temperature:          opt.Temperature,
+		RawOutput:            true,
+		Logprobs:             opt.Logprobs,
+		Echo:                 opt.Echo,
+		IncludeRoutingMatrix: opt.IncludeRoutingMatrix,
+		Stop:                 stop,
+		Extra:                cloneAnyMap(opt.Extra),
+	})
+	if err != nil {
+		return nil, err
+	}
+	metrics = &serverMetrics
+	return s.ParseCompletionsResult(result, promptIDs, opt.MaxSeqLen, opt.Logprobs, opt.IncludeRoutingMatrix, opt.Echo)
+}
+
+func (s *DeploymentSampler) ParseCompletionsResult(result map[string]any, promptIDs []int, maxSeqLen int, userRequestedLogprobs, routingRequested, echoMode bool) ([]SampledCompletion, error) {
+	choices, _ := result["choices"].([]any)
+	completions := make([]SampledCompletion, 0, len(choices))
+	for _, item := range choices {
+		choice, _ := item.(map[string]any)
+		if choice == nil {
+			continue
+		}
+		text := stringFromAny(choice["text"])
+		finishReason := stringOrDefault(choice["finish_reason"], "unknown")
+		raw, _ := choice["raw_output"].(map[string]any)
+		if raw == nil {
+			raw = map[string]any{}
+		}
+		completionIDs, ok := intSliceFromAny(raw["completion_token_ids"])
+		if !ok {
+			return nil, fmt.Errorf("%s", FormatSDKError(
+				"Deployment did not return raw_output token IDs",
+				fmt.Sprintf("The API response is missing completion_token_ids. Got choice keys: %v", mapKeys(choice)),
+				"The sampler requested raw_output=True, which is required for token-in RL rollouts. Use a deployment path that returns raw_output.completion_token_ids for completions.",
+				SDKErrorFormatOptions{DocsURL: DocsSDK, ShowSupport: true},
+			))
+		}
+
+		var tokenLogprobs []float64
+		if userRequestedLogprobs {
+			tokenLogprobs, _ = ExtractLogprobs(choice)
+		}
+		var routingMatrices []string
+		if routingRequested {
+			routingMatrices, _ = ExtractRoutingMatrices(choice)
+		}
+
+		promptForFull := append([]int(nil), promptIDs...)
+		if expanded, ok := intSliceFromAny(choice["prompt_token_ids"]); ok {
+			promptForFull = expanded
+		} else if expanded, ok := intSliceFromAny(raw["prompt_token_ids"]); ok {
+			promptForFull = expanded
+		}
+
+		logprobsEchoed := false
+		if echoMode {
+			if len(completionIDs) < len(promptForFull) || !intSlicePrefixEqual(completionIDs, promptForFull) {
+				return nil, fmt.Errorf("%s", FormatSDKError(
+					"Echo response format mismatch",
+					"echo=True was requested but completion_token_ids do not include the prompt prefix.",
+					"The sampler uses echo=True to align prompt and completion token logprobs. Use a deployment path whose raw_output token IDs include the prompt prefix when echo is enabled.",
+					SDKErrorFormatOptions{DocsURL: DocsSDK, ShowSupport: true},
+				))
+			}
+			completionIDs = append([]int(nil), completionIDs[len(promptForFull):]...)
+			if tokenLogprobs != nil {
+				if len(tokenLogprobs) > 0 {
+					tokenLogprobs = append([]float64(nil), tokenLogprobs[1:]...)
+				}
+				logprobsEchoed = true
+			}
+			if routingMatrices != nil {
+				if len(routingMatrices) > 0 {
+					routingMatrices = append([]string(nil), routingMatrices[1:]...)
+				}
+			}
+		}
+
+		fullTokens := append(append([]int(nil), promptForFull...), completionIDs...)
+		if maxSeqLen > 0 && len(fullTokens) > maxSeqLen {
+			continue
+		}
+		completions = append(completions, SampledCompletion{
+			Text:              text,
+			FullTokens:        fullTokens,
+			PromptLen:         len(promptForFull),
+			FinishReason:      finishReason,
+			CompletionLen:     len(completionIDs),
+			InferenceLogprobs: tokenLogprobs,
+			LogprobsEchoed:    logprobsEchoed,
+			RoutingMatrices:   routingMatrices,
+		})
+	}
+	return completions, nil
+}
+
+func ExtractLogprobs(choice map[string]any) ([]float64, bool) {
+	lpData, _ := choice["logprobs"].(map[string]any)
+	if lpData == nil {
+		return nil, false
+	}
+	content, _ := lpData["content"].([]any)
+	if len(content) == 0 {
+		return nil, false
+	}
+	out := make([]float64, 0, len(content))
+	for _, item := range content {
+		token, _ := item.(map[string]any)
+		out = append(out, floatFromAny(token["logprob"]))
+	}
+	return out, true
+}
+
+func ExtractRoutingMatrices(choice map[string]any) ([]string, bool) {
+	lpData, _ := choice["logprobs"].(map[string]any)
+	if lpData == nil {
+		return nil, false
+	}
+	content, _ := lpData["content"].([]any)
+	if len(content) == 0 {
+		return nil, false
+	}
+	out := make([]string, 0, len(content))
+	anySet := false
+	for _, item := range content {
+		token, _ := item.(map[string]any)
+		matrix := stringFromAny(token["routing_matrix"])
+		if matrix != "" {
+			anySet = true
+		}
+		out = append(out, matrix)
+	}
+	if !anySet {
+		return nil, false
+	}
+	return out, true
+}
+
+func (s *DeploymentSampler) defaultCompletionRequest(ctx context.Context, prompt []int, opts CompletionRequestOptions) (map[string]any, ServerMetrics, error) {
+	payload := map[string]any{
+		"model":       s.Model,
+		"prompt":      prompt,
+		"n":           1,
+		"max_tokens":  opts.MaxTokens,
+		"temperature": opts.Temperature,
+		"stream":      false,
+		"raw_output":  opts.RawOutput,
+	}
+	if opts.Logprobs {
+		payload["logprobs"] = true
+	}
+	if opts.Echo {
+		payload["echo"] = true
+	}
+	if opts.IncludeRoutingMatrix {
+		payload["include_routing_matrix"] = true
+	}
+	if len(opts.Stop) > 0 {
+		payload["stop"] = opts.Stop
+	}
+	for key, value := range opts.Extra {
+		payload[key] = value
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return nil, ServerMetrics{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.InferenceURL+"/inference/v1/completions", bytes.NewReader(data))
+	if err != nil {
+		return nil, ServerMetrics{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Api-Key", s.APIKey)
+	req.Header.Set("Authorization", "Bearer "+s.APIKey)
+	resp, err := s.HTTPClient.Do(req)
+	if err != nil {
+		return nil, ServerMetrics{}, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, ServerMetricsFromHTTPHeaders(resp.Header), fmt.Errorf("completions: HTTP %d: %s", resp.StatusCode, ParseAPIErrorBody(body))
+	}
+	result, err := decodeJSONMapOrEmpty(body)
+	return result, ServerMetricsFromHTTPHeaders(resp.Header), err
 }
 
 func ServerMetricsFromHeaders(headers map[string]string, clientTTFT ...float64) ServerMetrics {
@@ -45,6 +402,174 @@ func ServerMetricsFromHTTPHeaders(headers http.Header, clientTTFT ...float64) Se
 		"server-processing-time":     headers.Get("server-processing-time"),
 	}
 	return ServerMetricsFromHeaders(values, clientTTFT...)
+}
+
+func sampleOptions(opts ...SampleOptions) SampleOptions {
+	opt := SampleOptions{
+		N:           1,
+		MaxTokens:   1024,
+		Temperature: 1.0,
+	}
+	if len(opts) > 0 {
+		provided := opts[0]
+		if provided.N != 0 {
+			opt.N = provided.N
+		}
+		if provided.MaxTokens != 0 {
+			opt.MaxTokens = provided.MaxTokens
+		}
+		if provided.Temperature != 0 {
+			opt.Temperature = provided.Temperature
+		}
+		opt.MaxSeqLen = provided.MaxSeqLen
+		opt.Logprobs = provided.Logprobs
+		opt.Echo = provided.Echo
+		opt.IncludeRoutingMatrix = provided.IncludeRoutingMatrix
+		opt.Stop = provided.Stop
+		opt.Extra = cloneAnyMap(provided.Extra)
+	}
+	return opt
+}
+
+func (s *DeploymentSampler) resolveStop(stop any) ([]string, error) {
+	switch values := stop.(type) {
+	case nil:
+		return nil, nil
+	case []string:
+		return append([]string(nil), values...), nil
+	case []int:
+		if s.Tokenizer == nil {
+			return nil, fmt.Errorf("tokenizer is required to convert integer stop token IDs to string stop sequences for the completions API")
+		}
+		out := make([]string, 0, len(values))
+		for _, tokenID := range values {
+			text, err := s.Tokenizer.Decode([]int{tokenID})
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, text)
+		}
+		return out, nil
+	case []any:
+		if len(values) == 0 {
+			return nil, nil
+		}
+		allString := true
+		allInt := true
+		for _, value := range values {
+			if _, ok := value.(string); !ok {
+				allString = false
+			}
+			if _, ok := intFromStrictAny(value); !ok {
+				allInt = false
+			}
+		}
+		if allString {
+			out := make([]string, 0, len(values))
+			for _, value := range values {
+				out = append(out, value.(string))
+			}
+			return out, nil
+		}
+		if allInt {
+			ints := make([]int, 0, len(values))
+			for _, value := range values {
+				got, _ := intFromStrictAny(value)
+				ints = append(ints, got)
+			}
+			return s.resolveStop(ints)
+		}
+	}
+	return nil, fmt.Errorf("stop must be []string or []int")
+}
+
+func intSliceFromAny(value any) ([]int, bool) {
+	switch values := value.(type) {
+	case []int:
+		return append([]int(nil), values...), true
+	case []int64:
+		out := make([]int, len(values))
+		for i, value := range values {
+			out[i] = int(value)
+		}
+		return out, true
+	case []float64:
+		out := make([]int, len(values))
+		for i, value := range values {
+			out[i] = int(value)
+		}
+		return out, true
+	case []any:
+		out := make([]int, 0, len(values))
+		for _, value := range values {
+			got, ok := intFromStrictAny(value)
+			if !ok {
+				return nil, false
+			}
+			out = append(out, got)
+		}
+		return out, true
+	default:
+		return nil, false
+	}
+}
+
+func intFromStrictAny(value any) (int, bool) {
+	switch v := value.(type) {
+	case int:
+		return v, true
+	case int64:
+		return int(v), true
+	case float64:
+		return int(v), true
+	case json.Number:
+		i, err := v.Int64()
+		if err == nil {
+			return int(i), true
+		}
+		f, err := strconv.ParseFloat(string(v), 64)
+		return int(f), err == nil
+	default:
+		return 0, false
+	}
+}
+
+func floatFromAny(value any) float64 {
+	switch v := value.(type) {
+	case float64:
+		return v
+	case float32:
+		return float64(v)
+	case int:
+		return float64(v)
+	case int64:
+		return float64(v)
+	case json.Number:
+		out, _ := strconv.ParseFloat(string(v), 64)
+		return out
+	default:
+		return 0
+	}
+}
+
+func intSlicePrefixEqual(values, prefix []int) bool {
+	if len(values) < len(prefix) {
+		return false
+	}
+	for i := range prefix {
+		if values[i] != prefix[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func mapKeys(values map[string]any) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	return keys
 }
 
 type FixedConcurrencyController struct {
