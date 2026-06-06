@@ -151,7 +151,7 @@ func queryAlias(key string) string {
 }
 
 func pathEscape(value string) string {
-	return url.PathEscape(value)
+	return quotePathSegmentPart(value)
 }
 
 type ChatResource struct {

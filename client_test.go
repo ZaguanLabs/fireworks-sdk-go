@@ -198,6 +198,116 @@ func TestAccountResourcePathAndCommaQuery(t *testing.T) {
 	}
 }
 
+func TestPathTemplateMatchesPythonInterpolation(t *testing.T) {
+	cases := []struct {
+		template string
+		values   JSON
+		want     string
+	}{
+		{"/v1/{id}", JSON{"id": "abc"}, "/v1/abc"},
+		{"/v1/{a}/{b}", JSON{"a": "x", "b": "y"}, "/v1/x/y"},
+		{"/v1/{a}{b}/path/{c}?val={d}#{e}", JSON{"a": "x", "b": "y", "c": "z", "d": "u", "e": "v"}, "/v1/xy/path/z?val=u#v"},
+		{"/{w}/{w}", JSON{"w": "echo"}, "/echo/echo"},
+		{"/v1/static", JSON{}, "/v1/static"},
+		{"", JSON{}, ""},
+		{"/v1/?q={n}&count=10", JSON{"n": 42}, "/v1/?q=42&count=10"},
+		{"/v1/{v}", JSON{"v": nil}, "/v1/null"},
+		{"/v1/{v}", JSON{"v": true}, "/v1/true"},
+		{"/v1/{v}", JSON{"v": false}, "/v1/false"},
+		{"/v1/{v}", JSON{"v": ".hidden"}, "/v1/.hidden"},
+		{"/v1/{v}", JSON{"v": "file.txt"}, "/v1/file.txt"},
+		{"/v1/{v}", JSON{"v": "..."}, "/v1/..."},
+		{"/v1/{a}{b}", JSON{"a": ".", "b": "txt"}, "/v1/.txt"},
+		{"/items?q={v}#{f}", JSON{"v": ".", "f": ".."}, "/items?q=.#.."},
+		{"/v1/{a}?query={b}", JSON{"a": "../../other/endpoint", "b": "a&bad=true"}, "/v1/..%2F..%2Fother%2Fendpoint?query=a%26bad%3Dtrue"},
+		{"/v1/{val}", JSON{"val": "a/b/c"}, "/v1/a%2Fb%2Fc"},
+		{"/v1/{val}", JSON{"val": "a/b/c?query=value"}, "/v1/a%2Fb%2Fc%3Fquery=value"},
+		{"/v1/{val}", JSON{"val": "a/b/c?query=value&bad=true"}, "/v1/a%2Fb%2Fc%3Fquery=value&bad=true"},
+		{"/v1/{val}", JSON{"val": "%20"}, "/v1/%2520"},
+		{"/items?q={v}", JSON{"v": "a/b"}, "/items?q=a/b"},
+		{"/items?q={v}", JSON{"v": "a?b"}, "/items?q=a?b"},
+		{"/items?q={v}", JSON{"v": "a#b"}, "/items?q=a%23b"},
+		{"/items?q={v}", JSON{"v": "a b"}, "/items?q=a%20b"},
+		{"/docs#{v}", JSON{"v": "a/b"}, "/docs#a/b"},
+		{"/docs#{v}", JSON{"v": "a?b"}, "/docs#a?b"},
+		{"/v1/{v}", JSON{"v": "a?b"}, "/v1/a%3Fb"},
+		{"/v1/{v}", JSON{"v": "a#b"}, "/v1/a%23b"},
+		{"/v1/{v}?q={v}#{v}", JSON{"v": "a/b?c#d"}, "/v1/a%2Fb%3Fc%23d?q=a/b?c%23d#a/b?c%23d"},
+		{"/v1/{val}", JSON{"val": "x?admin=true"}, "/v1/x%3Fadmin=true"},
+		{"/v1/{val}", JSON{"val": "x#admin"}, "/v1/x%23admin"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.template+" -> "+tc.want, func(t *testing.T) {
+			got, err := pathTemplate(tc.template, tc.values)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tc.want {
+				t.Fatalf("pathTemplate(%q) = %q, want %q", tc.template, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestPathTemplateMissingPlaceholderAndDotSegments(t *testing.T) {
+	if _, err := pathTemplate("/v1/{org_id}", JSON{}); err == nil || !strings.Contains(err.Error(), "{org_id}") {
+		t.Fatalf("missing placeholder err = %v", err)
+	}
+
+	for _, tc := range []struct {
+		template string
+		values   JSON
+	}{
+		{"{a}/path", JSON{"a": "."}},
+		{"{a}/path", JSON{"a": ".."}},
+		{"/v1/{a}", JSON{"a": "."}},
+		{"/v1/{a}", JSON{"a": ".."}},
+		{"/v1/{a}/path", JSON{"a": "."}},
+		{"/v1/{a}/path", JSON{"a": ".."}},
+		{"/v1/{a}{b}", JSON{"a": ".", "b": "."}},
+		{"/v1/{a}.", JSON{"a": "."}},
+		{"/v1/{a}{b}", JSON{"a": "", "b": "."}},
+		{"/v1/%2e/{x}", JSON{"x": "ok"}},
+		{"/v1/%2e./{x}", JSON{"x": "ok"}},
+		{"/v1/.%2E/{x}", JSON{"x": "ok"}},
+		{"/v1/{v}?q=1", JSON{"v": ".."}},
+		{"/v1/{v}#frag", JSON{"v": ".."}},
+	} {
+		t.Run(tc.template, func(t *testing.T) {
+			_, err := pathTemplate(tc.template, tc.values)
+			if err == nil || !strings.Contains(err.Error(), "dot-segment") {
+				t.Fatalf("err = %v", err)
+			}
+		})
+	}
+}
+
+func TestResourcePathEscapingUsesPythonPathSegmentSafeSet(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+	t.Setenv("FIREWORKS_ACCOUNT_ID", "acct")
+
+	var seenPath string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenPath = r.URL.EscapedPath()
+		_ = json.NewEncoder(w).Encode(JSON{"ok": true})
+	}))
+	defer server.Close()
+
+	client, err := NewClient(WithBaseURL(server.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.Models.Get(context.Background(), "model/with space/%20/!$&'()*+,;=:@")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "/v1/accounts/acct/models/model%2Fwith%20space%2F%2520%2F!$&'()*+,;=:@"
+	if seenPath != want {
+		t.Fatalf("path = %q, want %q", seenPath, want)
+	}
+}
+
 func TestResourceMethodsRejectMissingPathArguments(t *testing.T) {
 	t.Setenv("FIREWORKS_API_KEY", "test-key")
 
