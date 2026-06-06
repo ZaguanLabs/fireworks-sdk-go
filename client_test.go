@@ -1258,6 +1258,90 @@ func TestMultipartFieldsUsePythonBracketSerialization(t *testing.T) {
 	}
 }
 
+func TestMultipartRequestHonorsExplicitContentTypeBoundary(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+
+	const boundary = "6b7ba517decee4a450543ea6ae821c82"
+	var body []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Content-Type"); got != "multipart/form-data; boundary="+boundary {
+			t.Errorf("Content-Type = %q", got)
+		}
+		var err error
+		body, err = io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read body: %v", err)
+		}
+		_ = json.NewEncoder(w).Encode(JSON{"ok": true})
+	}))
+	defer server.Close()
+
+	client, err := NewClient(WithBaseURL(server.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out Response
+	err = client.MultipartRequest(
+		context.Background(),
+		http.MethodPost,
+		"/multipart",
+		map[string]any{"array": []string{"foo", "bar"}},
+		map[string]File{"foo.txt": NewFileFromBytes("upload", []byte("hello world"))},
+		&out,
+		WithHeader("Content-Type", "multipart/form-data; boundary="+boundary),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bodyText := string(body)
+	if !strings.HasPrefix(bodyText, "--"+boundary+"\r\n") {
+		t.Fatalf("body starts with %q, want boundary %q", bodyText, boundary)
+	}
+	if !strings.Contains(bodyText, `name="array[]"`) {
+		t.Fatalf("body does not contain array field: %q", bodyText)
+	}
+	if !strings.Contains(bodyText, `name="foo.txt"; filename="upload"`) {
+		t.Fatalf("body does not contain file field: %q", bodyText)
+	}
+}
+
+func TestMultipartRequestReplacesBareMultipartContentType(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		contentType := r.Header.Get("Content-Type")
+		if !strings.HasPrefix(contentType, "multipart/form-data; boundary=") {
+			t.Fatalf("Content-Type = %q", contentType)
+		}
+		if err := r.ParseMultipartForm(1 << 20); err != nil {
+			t.Fatalf("parse multipart: %v", err)
+		}
+		if got := r.MultipartForm.Value["name"]; len(got) != 1 || got[0] != "value" {
+			t.Fatalf("name = %#v", got)
+		}
+		_ = json.NewEncoder(w).Encode(JSON{"ok": true})
+	}))
+	defer server.Close()
+
+	client, err := NewClient(WithBaseURL(server.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out Response
+	err = client.MultipartRequest(
+		context.Background(),
+		http.MethodPost,
+		"/multipart",
+		map[string]any{"name": "value"},
+		nil,
+		&out,
+		WithHeader("Content-Type", "multipart/form-data"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestStatusErrorMapping(t *testing.T) {
 	t.Setenv("FIREWORKS_API_KEY", "test-key")
 

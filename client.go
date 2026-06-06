@@ -529,6 +529,13 @@ func (c *Client) MultipartRequest(ctx context.Context, method, path string, fiel
 	reqOpts := applyRequestOptions(opts)
 	var reqBody bytes.Buffer
 	writer := multipart.NewWriter(&reqBody)
+	if boundary, ok, err := c.multipartBoundary(reqOpts); err != nil {
+		return err
+	} else if ok {
+		if err := writer.SetBoundary(boundary); err != nil {
+			return fmt.Errorf("fireworks: invalid multipart boundary: %w", err)
+		}
+	}
 	for key, value := range reqOpts.ExtraBody {
 		if fields == nil {
 			fields = make(map[string]any)
@@ -556,6 +563,9 @@ func (c *Client) MultipartRequest(ctx context.Context, method, path string, fiel
 	req, err := c.newRequestWithReader(ctx, method, path, &reqBody, writer.FormDataContentType(), opts...)
 	if err != nil {
 		return err
+	}
+	if shouldSetMultipartContentType(req.Header.Get("Content-Type")) {
+		req.Header.Set("Content-Type", writer.FormDataContentType())
 	}
 	maxRetries := c.maxRetries
 	if reqOpts.MaxRetries != nil {
@@ -1148,6 +1158,42 @@ func (r *cancelReadCloser) Close() error {
 	err := r.ReadCloser.Close()
 	r.cancel()
 	return err
+}
+
+func (c *Client) multipartBoundary(opts RequestOptions) (string, bool, error) {
+	headers := make(http.Header)
+	mergeEffectiveHeaders(headers, c.defaultHeaders)
+	mergeEffectiveHeaders(headers, opts.Headers)
+	contentType := headers.Get("Content-Type")
+	if !strings.HasPrefix(strings.ToLower(contentType), "multipart/form-data") {
+		return "", false, nil
+	}
+	_, params, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		return "", false, fmt.Errorf("fireworks: parse multipart content type: %w", err)
+	}
+	boundary := params["boundary"]
+	return boundary, boundary != "", nil
+}
+
+func shouldSetMultipartContentType(contentType string) bool {
+	if !strings.HasPrefix(strings.ToLower(contentType), "multipart/form-data") {
+		return false
+	}
+	_, params, err := mime.ParseMediaType(contentType)
+	return err != nil || params["boundary"] == ""
+}
+
+func mergeEffectiveHeaders(dst, src http.Header) {
+	for key, values := range src {
+		dst.Del(key)
+		if values == nil {
+			continue
+		}
+		for _, value := range values {
+			dst.Add(key, value)
+		}
+	}
 }
 
 func writeMultipartField(writer *multipart.Writer, key string, value any) error {
