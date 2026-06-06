@@ -57,12 +57,13 @@ func (r *APIResponse) ParseJSON(out any) error {
 }
 
 type RequestOptions struct {
-	AccountID  string
-	Headers    http.Header
-	Query      url.Values
-	ExtraBody  map[string]any
-	Timeout    time.Duration
-	MaxRetries *int
+	AccountID       string
+	Headers         http.Header
+	Query           url.Values
+	ExtraBody       map[string]any
+	Timeout         time.Duration
+	MaxRetries      *int
+	FollowRedirects *bool
 }
 
 type RequestOption func(*RequestOptions)
@@ -151,6 +152,12 @@ func WithTimeout(timeout time.Duration) RequestOption {
 func WithRequestMaxRetries(maxRetries int) RequestOption {
 	return func(o *RequestOptions) {
 		o.MaxRetries = &maxRetries
+	}
+}
+
+func WithFollowRedirects(followRedirects bool) RequestOption {
+	return func(o *RequestOptions) {
+		o.FollowRedirects = &followRedirects
 	}
 }
 

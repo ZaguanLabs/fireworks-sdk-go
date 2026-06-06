@@ -512,15 +512,15 @@ func (c *Client) MultipartRequest(ctx context.Context, method, path string, fiel
 	if reqOpts.MaxRetries != nil {
 		maxRetries = *reqOpts.MaxRetries
 	}
-	return c.do(req, out, maxRetries)
+	return c.do(req, out, maxRetries, followRedirects(reqOpts))
 }
 
 func (c *Client) Do(req *http.Request, out any) error {
-	return c.do(req, out, c.maxRetries)
+	return c.do(req, out, c.maxRetries, true)
 }
 
-func (c *Client) do(req *http.Request, out any, maxRetries int) error {
-	resp, err := c.doResponse(req, maxRetries)
+func (c *Client) do(req *http.Request, out any, maxRetries int, followRedirects bool) error {
+	resp, err := c.doResponse(req, maxRetries, followRedirects)
 	if err != nil {
 		return err
 	}
@@ -535,11 +535,11 @@ func (c *Client) do(req *http.Request, out any, maxRetries int) error {
 }
 
 func (c *Client) DoBytes(req *http.Request) ([]byte, error) {
-	return c.doBytes(req, c.maxRetries)
+	return c.doBytes(req, c.maxRetries, true)
 }
 
-func (c *Client) doBytes(req *http.Request, maxRetries int) ([]byte, error) {
-	resp, err := c.doResponse(req, maxRetries)
+func (c *Client) doBytes(req *http.Request, maxRetries int, followRedirects bool) ([]byte, error) {
+	resp, err := c.doResponse(req, maxRetries, followRedirects)
 	if err != nil {
 		return nil, err
 	}
@@ -547,10 +547,10 @@ func (c *Client) doBytes(req *http.Request, maxRetries int) ([]byte, error) {
 }
 
 func (c *Client) DoResponse(req *http.Request) (*APIResponse, error) {
-	return c.doResponse(req, c.maxRetries)
+	return c.doResponse(req, c.maxRetries, true)
 }
 
-func (c *Client) doResponse(req *http.Request, maxRetries int) (*APIResponse, error) {
+func (c *Client) doResponse(req *http.Request, maxRetries int, followRedirects bool) (*APIResponse, error) {
 	var bodyCopy []byte
 	if req.Body != nil {
 		payload, err := io.ReadAll(req.Body)
@@ -591,7 +591,7 @@ func (c *Client) doResponse(req *http.Request, maxRetries int) (*APIResponse, er
 			}
 		}
 
-		resp, err := c.httpClient.Do(attemptReq)
+		resp, err := c.httpClientForRequest(followRedirects).Do(attemptReq)
 		if err != nil {
 			lastErr = err
 			if attempt < retries && shouldRetryError(err) {
@@ -652,7 +652,7 @@ func (c *Client) Request(ctx context.Context, method, path string, body any, out
 	if reqOpts.MaxRetries != nil {
 		maxRetries = *reqOpts.MaxRetries
 	}
-	return c.do(req, out, maxRetries)
+	return c.do(req, out, maxRetries, followRedirects(reqOpts))
 }
 
 func (c *Client) RequestRaw(ctx context.Context, method, path string, body any, opts ...RequestOption) ([]byte, error) {
@@ -677,7 +677,7 @@ func (c *Client) RequestResponse(ctx context.Context, method, path string, body 
 	if reqOpts.MaxRetries != nil {
 		maxRetries = *reqOpts.MaxRetries
 	}
-	return c.doResponse(req, maxRetries)
+	return c.doResponse(req, maxRetries, followRedirects(reqOpts))
 }
 
 func (c *Client) RequestText(ctx context.Context, method, path string, body any, opts ...RequestOption) (string, error) {
@@ -702,7 +702,7 @@ func (c *Client) RequestBytes(ctx context.Context, method, path string, content 
 	if reqOpts.MaxRetries != nil {
 		maxRetries = *reqOpts.MaxRetries
 	}
-	return c.do(req, out, maxRetries)
+	return c.do(req, out, maxRetries, followRedirects(reqOpts))
 }
 
 func (c *Client) RequestBytesRaw(ctx context.Context, method, path string, content []byte, opts ...RequestOption) ([]byte, error) {
@@ -727,7 +727,7 @@ func (c *Client) RequestBytesResponse(ctx context.Context, method, path string, 
 	if reqOpts.MaxRetries != nil {
 		maxRetries = *reqOpts.MaxRetries
 	}
-	return c.doResponse(req, maxRetries)
+	return c.doResponse(req, maxRetries, followRedirects(reqOpts))
 }
 
 func (c *Client) RequestBytesText(ctx context.Context, method, path string, content []byte, opts ...RequestOption) (string, error) {
@@ -901,6 +901,7 @@ func (c *Client) DeleteBytesText(ctx context.Context, path string, content []byt
 }
 
 func (c *Client) Raw(ctx context.Context, method, path string, body any, opts ...RequestOption) (*http.Response, error) {
+	reqOpts := applyRequestOptions(opts)
 	ctx, cancel := contextWithRequestTimeout(ctx, opts)
 	req, err := c.NewRequest(ctx, method, path, body, opts...)
 	if err != nil {
@@ -909,7 +910,7 @@ func (c *Client) Raw(ctx context.Context, method, path string, body any, opts ..
 		}
 		return nil, err
 	}
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.httpClientForRequest(followRedirects(reqOpts)).Do(req)
 	if err != nil {
 		if cancel != nil {
 			cancel()
@@ -924,6 +925,21 @@ func (c *Client) Raw(ctx context.Context, method, path string, body any, opts ..
 		}
 	}
 	return resp, nil
+}
+
+func (c *Client) httpClientForRequest(followRedirects bool) *http.Client {
+	if followRedirects {
+		return c.httpClient
+	}
+	noRedirectClient := *c.httpClient
+	noRedirectClient.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	return &noRedirectClient
+}
+
+func followRedirects(opts RequestOptions) bool {
+	return opts.FollowRedirects == nil || *opts.FollowRedirects
 }
 
 func (c *Client) resolveAccountID(opts RequestOptions) (string, error) {

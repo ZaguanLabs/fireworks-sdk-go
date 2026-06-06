@@ -1347,6 +1347,70 @@ func TestRetryAfterHeaderIgnoresUnreasonableDelay(t *testing.T) {
 	}
 }
 
+func TestRequestsFollowRedirectsByDefault(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/redirect":
+			http.Redirect(w, r, "/redirected", http.StatusFound)
+		case "/redirected":
+			_ = json.NewEncoder(w).Encode(JSON{"status": "ok"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client, err := NewClient(WithBaseURL(server.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := client.Post(context.Background(), "/redirect", JSON{"key": "value"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out["status"] != "ok" {
+		t.Fatalf("response = %#v", out)
+	}
+}
+
+func TestRequestsCanDisableRedirectFollowing(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/redirect":
+			w.Header().Set("Location", "/redirected")
+			w.WriteHeader(http.StatusFound)
+		case "/redirected":
+			_ = json.NewEncoder(w).Encode(JSON{"status": "ok"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client, err := NewClient(WithBaseURL(server.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.Post(context.Background(), "/redirect", JSON{"key": "value"}, WithFollowRedirects(false))
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	var statusErr *APIStatusError
+	if !errors.As(err, &statusErr) {
+		t.Fatalf("error type = %T, want APIStatusError", err)
+	}
+	if statusErr.StatusCode != http.StatusFound {
+		t.Fatalf("status code = %d", statusErr.StatusCode)
+	}
+	if statusErr.Header.Get("Location") != "/redirected" {
+		t.Fatalf("Location = %q", statusErr.Header.Get("Location"))
+	}
+}
+
 func TestRetryCountHeaderCanBeOverriddenOrOmitted(t *testing.T) {
 	t.Setenv("FIREWORKS_API_KEY", "test-key")
 
