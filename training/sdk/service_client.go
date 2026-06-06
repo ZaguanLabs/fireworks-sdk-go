@@ -172,6 +172,24 @@ func (c *FiretitanServiceClient) Close(ctx context.Context) error {
 	return nil
 }
 
+func (c *FiretitanServiceClient) GetTelemetry() any {
+	return nil
+}
+
+func (c *FiretitanServiceClient) CreateRestClient() *FireworksClient {
+	if c == nil {
+		return nil
+	}
+	return c.Fireworks
+}
+
+func (c *FiretitanServiceClient) GetServerCapabilities() ServerCapabilitiesResponse {
+	if c == nil {
+		return LazyManagedServerCapabilities(nil)
+	}
+	return LazyManagedServerCapabilities(&c.Config)
+}
+
 func (c *FiretitanServiceClient) AttachSamplerBackend(backend *TinkerSamplerBackend) *FiretitanServiceClient {
 	if c != nil {
 		c.SamplerBackend = backend

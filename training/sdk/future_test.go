@@ -288,6 +288,22 @@ func TestFiretitanServiceClientSamplerFutures(t *testing.T) {
 	}
 }
 
+func TestFiretitanServiceClientGetServerCapabilitiesFuture(t *testing.T) {
+	svc, err := NewFiretitanServiceClient(FiretitanServiceClientOptions{
+		Config: FiretitanProvisioningConfig{BaseModel: "accounts/acct/models/base"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	capabilities, err := svc.GetServerCapabilitiesFuture(context.Background()).Await()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(capabilities.SupportedModels) != 1 || capabilities.SupportedModels[0].ModelName != "accounts/acct/models/base" {
+		t.Fatalf("capabilities = %#v", capabilities)
+	}
+}
+
 func TestFiretitanServiceClientCreateTrainingClientFromStateFuture(t *testing.T) {
 	state := &fakeTrainingStateBackend{}
 	svc, err := NewFiretitanServiceClient(FiretitanServiceClientOptions{

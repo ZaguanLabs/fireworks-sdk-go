@@ -20,6 +20,17 @@ func TestLazyTrainingRunsResponse(t *testing.T) {
 	}
 }
 
+func TestLazyManagedServerCapabilities(t *testing.T) {
+	got := LazyManagedServerCapabilities(&FiretitanProvisioningConfig{BaseModel: "accounts/acct/models/base"})
+	if len(got.SupportedModels) != 1 || got.SupportedModels[0].ModelName != "accounts/acct/models/base" {
+		t.Fatalf("capabilities = %#v", got)
+	}
+	empty := LazyManagedServerCapabilities(nil)
+	if len(empty.SupportedModels) != 0 {
+		t.Fatalf("empty capabilities = %#v", empty)
+	}
+}
+
 func TestLazyCheckpointsListResponse(t *testing.T) {
 	got := LazyCheckpointsListResponse(100, 0)
 	if len(got.Checkpoints) != 0 {

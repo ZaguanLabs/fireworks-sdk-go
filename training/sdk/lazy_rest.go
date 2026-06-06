@@ -1,5 +1,13 @@
 package sdk
 
+type SupportedModel struct {
+	ModelName string
+}
+
+type ServerCapabilitiesResponse struct {
+	SupportedModels []SupportedModel
+}
+
 type TrainingRunsResponse struct {
 	TrainingRuns []TrainingRunMetadata
 	Cursor       Cursor
@@ -29,6 +37,15 @@ func LazyTrainingRunsResponse(run TrainingRunMetadata, limit, offset int) Traini
 	return TrainingRunsResponse{
 		TrainingRuns: []TrainingRunMetadata{run},
 		Cursor:       EmptyCursor(limit, offset),
+	}
+}
+
+func LazyManagedServerCapabilities(config *FiretitanProvisioningConfig) ServerCapabilitiesResponse {
+	if config == nil || config.BaseModel == "" {
+		return ServerCapabilitiesResponse{SupportedModels: []SupportedModel{}}
+	}
+	return ServerCapabilitiesResponse{
+		SupportedModels: []SupportedModel{{ModelName: config.BaseModel}},
 	}
 }
 

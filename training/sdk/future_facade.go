@@ -50,6 +50,10 @@ func (c *FiretitanServiceClient) CreateDeploymentSamplerFuture(ctx context.Conte
 	})
 }
 
+func (c *FiretitanServiceClient) GetServerCapabilitiesFuture(context.Context) *Future[ServerCapabilitiesResponse] {
+	return ReadyFuture(c.GetServerCapabilities(), nil)
+}
+
 func (c *FiretitanServiceClient) CreateTrainingClientFromStateFuture(ctx context.Context, path string, opts ...CreateTrainingClientFromStateOptions) *Future[*FiretitanTrainingClient] {
 	return SubmitFuture(func() (*FiretitanTrainingClient, error) {
 		return c.CreateTrainingClientFromState(ctx, path, opts...)

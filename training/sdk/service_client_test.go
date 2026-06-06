@@ -229,6 +229,34 @@ func TestFiretitanServiceClientReferenceIDsAndRelease(t *testing.T) {
 	}
 }
 
+func TestFiretitanServiceClientUtilityFacades(t *testing.T) {
+	fireworks := NewFireworksClient("fw-key", "https://api.example.com")
+	svc, err := NewFiretitanServiceClient(FiretitanServiceClientOptions{
+		Config:          FiretitanProvisioningConfig{BaseModel: "accounts/acct/models/base"},
+		FireworksClient: fireworks,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if svc.GetTelemetry() != nil {
+		t.Fatalf("telemetry = %#v", svc.GetTelemetry())
+	}
+	if svc.CreateRestClient() != fireworks {
+		t.Fatalf("rest client = %#v", svc.CreateRestClient())
+	}
+	capabilities := svc.GetServerCapabilities()
+	if len(capabilities.SupportedModels) != 1 || capabilities.SupportedModels[0].ModelName != "accounts/acct/models/base" {
+		t.Fatalf("capabilities = %#v", capabilities)
+	}
+	var nilSvc *FiretitanServiceClient
+	if nilSvc.CreateRestClient() != nil {
+		t.Fatal("nil service should not return a rest client")
+	}
+	if len(nilSvc.GetServerCapabilities().SupportedModels) != 0 {
+		t.Fatalf("nil capabilities = %#v", nilSvc.GetServerCapabilities())
+	}
+}
+
 func TestFiretitanServiceClientCreateBaseTrainingClientSkipsDuplicateRegistry(t *testing.T) {
 	svc, err := NewFiretitanServiceClient(FiretitanServiceClientOptions{
 		Config: FiretitanProvisioningConfig{BaseModel: "accounts/acct/models/base"},
