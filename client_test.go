@@ -2338,6 +2338,99 @@ func TestCompletionCreateTypedStream(t *testing.T) {
 	}
 }
 
+func TestAccountsTypedAllParamsUsePythonAliases(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/accounts":
+			query := r.URL.Query()
+			if got := query.Get("filter"); got != "state=ACTIVE" {
+				t.Errorf("filter = %q", got)
+			}
+			if got := query.Get("orderBy"); got != "create_time desc" {
+				t.Errorf("orderBy = %q", got)
+			}
+			if got := query.Get("pageSize"); got != "0" {
+				t.Errorf("pageSize = %q", got)
+			}
+			if got := query.Get("pageToken"); got != "cursor-1" {
+				t.Errorf("pageToken = %q", got)
+			}
+			if got := query.Get("readMask"); got != "name,displayName" {
+				t.Errorf("readMask = %q", got)
+			}
+			for _, key := range []string{"account_id", "order_by", "page_size", "page_token", "read_mask"} {
+				if got := query.Get(key); got != "" {
+					t.Errorf("unexpected query %s=%q", key, got)
+				}
+			}
+			_ = json.NewEncoder(w).Encode(JSON{
+				"accounts": []JSON{
+					{"name": "accounts/acct", "displayName": "Account One", "email": "owner@example.com", "state": "ACTIVE"},
+				},
+				"nextPageToken": "cursor-2",
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/accounts/acct":
+			query := r.URL.Query()
+			if got := query.Get("readMask"); got != "name,displayName" {
+				t.Errorf("readMask = %q", got)
+			}
+			for _, key := range []string{"account_id", "read_mask"} {
+				if got := query.Get(key); got != "" {
+					t.Errorf("unexpected query %s=%q", key, got)
+				}
+			}
+			_ = json.NewEncoder(w).Encode(JSON{
+				"name":        "accounts/acct",
+				"displayName": "Account One",
+				"email":       "owner@example.com",
+				"state":       "ACTIVE",
+			})
+
+		default:
+			t.Errorf("unexpected request %s %s?%s", r.Method, r.URL.Path, r.URL.RawQuery)
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client, err := NewClient(WithBaseURL(server.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	page, err := client.Accounts.ListTyped(context.Background(), fwtypes.AccountListParams{
+		Filter:    "state=ACTIVE",
+		OrderBy:   "create_time desc",
+		PageSize:  0,
+		PageToken: "cursor-1",
+		ReadMask:  "name,displayName",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var _ *fwtypes.AccountsPage = page
+	if len(page.Accounts) != 1 || page.NextPageToken == nil || *page.NextPageToken != "cursor-2" {
+		t.Fatalf("page = %#v", page)
+	}
+	if page.Accounts[0].Name == nil || *page.Accounts[0].Name != "accounts/acct" {
+		t.Fatalf("account = %#v", page.Accounts[0])
+	}
+
+	got, err := client.Accounts.GetTyped(context.Background(), "acct", fwtypes.AccountGetParams{
+		AccountID: "acct",
+		ReadMask:  "name,displayName",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Name == nil || *got.Name != "accounts/acct" || got.DisplayName == nil || *got.DisplayName != "Account One" {
+		t.Fatalf("got = %#v", got)
+	}
+}
+
 func TestMessagesCreateTyped(t *testing.T) {
 	t.Setenv("FIREWORKS_API_KEY", "test-key")
 
