@@ -288,6 +288,15 @@ func TestQueryEncodingUsesCommaForArbitrarySlicesAndArrays(t *testing.T) {
 		if got := query.Get("array"); got != "a,b" {
 			t.Errorf("array = %q", got)
 		}
+		if got := query.Get("nested[enabled]"); got != "true" {
+			t.Errorf("nested[enabled] = %q", got)
+		}
+		if got := query.Get("nested[inner][value]"); got != "x" {
+			t.Errorf("nested[inner][value] = %q", got)
+		}
+		if got := query.Get("maybe"); got != "a,true" {
+			t.Errorf("maybe = %q", got)
+		}
 		_ = json.NewEncoder(w).Encode(JSON{"ok": true})
 	}))
 	defer server.Close()
@@ -302,6 +311,11 @@ func TestQueryEncodingUsesCommaForArbitrarySlicesAndArrays(t *testing.T) {
 		WithQueryParam("float32s", []float32{1.25, 2.5}),
 		WithQueryParam("uints", []uint{7, 8}),
 		WithQueryParam("array", [2]string{"a", "b"}),
+		WithQueryParam("nested", map[string]any{
+			"enabled": true,
+			"inner":   map[string]any{"value": "x"},
+		}),
+		WithQueryParam("maybe", []any{"a", nil, true}),
 	)
 	if err != nil {
 		t.Fatal(err)

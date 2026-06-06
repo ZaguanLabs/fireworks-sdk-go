@@ -1119,6 +1119,10 @@ func readTimeoutHeader(timeout time.Duration) string {
 }
 
 func addQueryValue(values url.Values, key string, value any) {
+	addQueryItem(values, key, value)
+}
+
+func addQueryItem(values url.Values, key string, value any) {
 	switch v := value.(type) {
 	case nil:
 		return
@@ -1153,20 +1157,48 @@ func addQueryValue(values url.Values, key string, value any) {
 	case []any:
 		parts := make([]string, 0, len(v))
 		for _, item := range v {
-			parts = append(parts, fmt.Sprint(item))
+			if item == nil {
+				continue
+			}
+			parts = append(parts, queryPrimitiveString(item))
 		}
 		values.Set(key, strings.Join(parts, ","))
+	case map[string]any:
+		for subkey, subvalue := range v {
+			addQueryItem(values, key+"["+subkey+"]", subvalue)
+		}
 	default:
 		reflected := reflect.ValueOf(value)
+		if reflected.IsValid() && reflected.Kind() == reflect.Map {
+			for _, mapKey := range reflected.MapKeys() {
+				addQueryItem(values, key+"["+fmt.Sprint(mapKey.Interface())+"]", reflected.MapIndex(mapKey).Interface())
+			}
+			return
+		}
 		if reflected.IsValid() && (reflected.Kind() == reflect.Slice || reflected.Kind() == reflect.Array) {
 			parts := make([]string, 0, reflected.Len())
 			for i := 0; i < reflected.Len(); i++ {
-				parts = append(parts, fmt.Sprint(reflected.Index(i).Interface()))
+				item := reflected.Index(i).Interface()
+				if item == nil {
+					continue
+				}
+				parts = append(parts, queryPrimitiveString(item))
 			}
 			values.Set(key, strings.Join(parts, ","))
 			return
 		}
-		values.Set(key, fmt.Sprint(v))
+		values.Set(key, queryPrimitiveString(v))
+	}
+}
+
+func queryPrimitiveString(value any) string {
+	switch v := value.(type) {
+	case bool:
+		return strconv.FormatBool(v)
+	case string:
+		return v
+	default:
+		return fmt.Sprint(v)
 	}
 }
 
