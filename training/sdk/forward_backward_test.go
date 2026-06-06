@@ -42,6 +42,46 @@ func TestNormalizeLossFnRejectsUnknown(t *testing.T) {
 	}
 }
 
+func TestModelInputFromInts(t *testing.T) {
+	tokens := []int{1, 2, 3}
+	modelInput := ModelInputFromInts(tokens)
+	tokens[0] = 99
+	chunks := modelInput["chunks"].([]map[string]any)
+	if len(chunks) != 1 || chunks[0]["type"] != "encoded_text" {
+		t.Fatalf("chunks = %#v", chunks)
+	}
+	if !reflect.DeepEqual(chunks[0]["tokens"], []int{1, 2, 3}) {
+		t.Fatalf("tokens = %#v", chunks[0]["tokens"])
+	}
+	if _, ok := modelInput["routing_matrices"]; ok {
+		t.Fatalf("model input unexpectedly includes routing matrices: %#v", modelInput)
+	}
+}
+
+func TestModelInputFromIntsWithRoutingMatrices(t *testing.T) {
+	routing := []string{"rm1"}
+	modelInput := ModelInputFromInts([]int{1, 2, 3}, routing)
+	routing[0] = "mutated"
+	if !reflect.DeepEqual(modelInput["routing_matrices"], []string{"rm1"}) {
+		t.Fatalf("routing matrices = %#v", modelInput["routing_matrices"])
+	}
+	if got := RoutingMatricesFromModelInput(modelInput); !reflect.DeepEqual(got, []string{"rm1"}) {
+		t.Fatalf("routing matrices readback = %#v", got)
+	}
+}
+
+func TestRoutingMatricesFromModelInputAnySlice(t *testing.T) {
+	got := RoutingMatricesFromModelInput(map[string]any{
+		"routing_matrices": []any{"rm1", "rm2", 3},
+	})
+	if !reflect.DeepEqual(got, []string{"rm1", "rm2"}) {
+		t.Fatalf("routing matrices = %#v", got)
+	}
+	if got := RoutingMatricesFromModelInput(map[string]any{}); got != nil {
+		t.Fatalf("missing routing matrices = %#v", got)
+	}
+}
+
 func TestCountResponseTokensPrefersNonZeroWeights(t *testing.T) {
 	got := CountResponseTokens([]TrainingDatum{
 		{

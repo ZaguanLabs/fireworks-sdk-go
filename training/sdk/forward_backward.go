@@ -48,6 +48,43 @@ type TrainingDatum struct {
 	ModelInput   map[string]any        `json:"model_input,omitempty"`
 }
 
+func ModelInputFromInts(tokens []int, routingMatrices ...[]string) map[string]any {
+	chunkTokens := append([]int(nil), tokens...)
+	modelInput := map[string]any{
+		"chunks": []map[string]any{
+			{
+				"type":   "encoded_text",
+				"tokens": chunkTokens,
+			},
+		},
+	}
+	if len(routingMatrices) > 0 && routingMatrices[0] != nil {
+		modelInput["routing_matrices"] = append([]string(nil), routingMatrices[0]...)
+	}
+	return modelInput
+}
+
+func RoutingMatricesFromModelInput(modelInput map[string]any) []string {
+	value, ok := modelInput["routing_matrices"]
+	if !ok || value == nil {
+		return nil
+	}
+	switch matrices := value.(type) {
+	case []string:
+		return append([]string(nil), matrices...)
+	case []any:
+		out := make([]string, 0, len(matrices))
+		for _, item := range matrices {
+			if matrix, ok := item.(string); ok {
+				out = append(out, matrix)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
 type ForwardBackwardOutput struct {
 	LossFnOutputType string             `json:"loss_fn_output_type,omitempty"`
 	LossFnOutputs    []map[string]any   `json:"loss_fn_outputs,omitempty"`
