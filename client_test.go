@@ -1347,6 +1347,44 @@ func TestRetryAfterHeaderIgnoresUnreasonableDelay(t *testing.T) {
 	}
 }
 
+func TestRetryCountHeaderCanBeOverriddenOrOmitted(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+
+	var seen [][]string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = append(seen, r.Header.Values("X-Stainless-Retry-Count"))
+		_ = json.NewEncoder(w).Encode(JSON{"ok": true})
+	}))
+	defer server.Close()
+
+	client, err := NewClient(WithBaseURL(server.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Get(context.Background(), "/default"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Get(context.Background(), "/override", WithHeader("X-Stainless-Retry-Count", "42")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Get(context.Background(), "/omit", WithOmitHeader("X-Stainless-Retry-Count")); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(seen) != 3 {
+		t.Fatalf("seen = %#v", seen)
+	}
+	if got := seen[0]; len(got) != 1 || got[0] != "0" {
+		t.Fatalf("default retry count = %#v", got)
+	}
+	if got := seen[1]; len(got) != 1 || got[0] != "42" {
+		t.Fatalf("overridden retry count = %#v", got)
+	}
+	if got := seen[2]; len(got) != 0 {
+		t.Fatalf("omitted retry count = %#v", got)
+	}
+}
+
 func TestRequestMaxRetriesOverridesClientDefault(t *testing.T) {
 	t.Setenv("FIREWORKS_API_KEY", "test-key")
 

@@ -581,7 +581,9 @@ func (c *Client) doResponse(req *http.Request, maxRetries int) (*APIResponse, er
 
 		attemptReq := req.Clone(req.Context())
 		attemptReq.Header = req.Header.Clone()
-		attemptReq.Header.Set("X-Stainless-Retry-Count", strconv.Itoa(attempt))
+		if shouldSetRetryCountHeader(req.Header) {
+			attemptReq.Header.Set("X-Stainless-Retry-Count", strconv.Itoa(attempt))
+		}
 		if len(bodyCopy) > 0 {
 			attemptReq.Body = io.NopCloser(bytes.NewReader(bodyCopy))
 			attemptReq.GetBody = func() (io.ReadCloser, error) {
@@ -1173,9 +1175,18 @@ func writeMultipartFile(writer *multipart.Writer, key string, file File) error {
 
 func omitRequestHeader(headers http.Header, key string) {
 	headers.Del(key)
+	if strings.EqualFold(key, "X-Stainless-Retry-Count") {
+		headers[http.CanonicalHeaderKey(key)] = nil
+		return
+	}
 	if strings.EqualFold(key, "User-Agent") {
 		headers.Set(key, "")
 	}
+}
+
+func shouldSetRetryCountHeader(headers http.Header) bool {
+	_, ok := headers[http.CanonicalHeaderKey("X-Stainless-Retry-Count")]
+	return !ok
 }
 
 func readTimeoutHeader(timeout time.Duration) string {
