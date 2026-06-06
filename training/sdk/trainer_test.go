@@ -343,6 +343,21 @@ func TestTrainerJobConfigValidateRejectsBaseAndDeprecatedGradientAccumulation(t 
 	}
 }
 
+func TestTrainerJobConfigValidationWarnings(t *testing.T) {
+	if warnings := (TrainerJobConfig{BaseModel: "accounts/test/models/m"}).ValidationWarnings(); len(warnings) != 0 {
+		t.Fatalf("warnings = %#v", warnings)
+	}
+	steps := 4
+	if warnings := (TrainerJobConfig{BaseModel: "accounts/test/models/m", GradientAccumulationSteps: &steps}).ValidationWarnings(); len(warnings) != 0 {
+		t.Fatalf("warnings = %#v", warnings)
+	}
+	steps = 1
+	warnings := (TrainerJobConfig{BaseModel: "accounts/test/models/m", GradientAccumulationSteps: &steps}).ValidationWarnings()
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "gradient_accumulation_steps=1 is deprecated") {
+		t.Fatalf("warnings = %#v", warnings)
+	}
+}
+
 func TestTrainerJobConfigValidateRejectsBadInactivityTimeout(t *testing.T) {
 	if err := (TrainerJobConfig{BaseModel: "accounts/test/models/m", InactivityTimeout: -time.Second}).Validate(); err == nil || !strings.Contains(err.Error(), "inactivity_timeout") {
 		t.Fatalf("error = %v", err)

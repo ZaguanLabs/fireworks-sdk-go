@@ -18,6 +18,8 @@ var (
 	shapeRefRE      = regexp.MustCompile(`^accounts/[^/]+/trainingShapes/[^/]+(/versions/[^/]+)?$`)
 )
 
+const GradientAccumulationStepsOneWarning = "TrainerJobConfig.gradient_accumulation_steps=1 is deprecated and ignored. Express gradient accumulation as client-side control flow (multiple forward_backward calls per optim_step) and pass grad_accumulation_normalization on the optim_step request."
+
 type TrainerServiceEndpoint struct {
 	JobName string
 	JobID   string
@@ -96,6 +98,13 @@ func (c TrainerJobConfig) Validate() error {
 	}
 	if len(errors) > 0 {
 		return fmt.Errorf("%s", strings.Join(errors, "\n"))
+	}
+	return nil
+}
+
+func (c TrainerJobConfig) ValidationWarnings() []string {
+	if c.GradientAccumulationSteps != nil && *c.GradientAccumulationSteps == 1 {
+		return []string{GradientAccumulationStepsOneWarning}
 	}
 	return nil
 }
