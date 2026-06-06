@@ -355,6 +355,47 @@ func TestWithOptionsClonesClientAndPreservesDefaultInferenceBaseURLMode(t *testi
 	}
 }
 
+func TestBaseURLJoiningMatchesPythonClient(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+
+	for _, baseURL := range []string{"http://localhost:5000/custom/path/", "http://localhost:5000/custom/path"} {
+		client, err := NewClient(WithBaseURL(baseURL))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		req, err := client.NewRequest(context.Background(), http.MethodPost, "/foo", JSON{"foo": "bar"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, want := req.URL.String(), "http://localhost:5000/custom/path/foo"; got != want {
+			t.Fatalf("base %q url = %q, want %q", baseURL, got, want)
+		}
+
+		req, err = client.NewRequest(
+			context.Background(),
+			http.MethodGet,
+			"/files/a%2Fb?beta=true",
+			nil,
+			WithQuery(map[string]any{"limit": "10"}),
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, want := req.URL.String(), "http://localhost:5000/custom/path/files/a%2Fb?beta=true&limit=10"; got != want {
+			t.Fatalf("base %q url = %q, want %q", baseURL, got, want)
+		}
+
+		req, err = client.NewRequest(context.Background(), http.MethodPost, "https://myapi.com/foo", JSON{"foo": "bar"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, want := req.URL.String(), "https://myapi.com/foo"; got != want {
+			t.Fatalf("absolute url = %q, want %q", got, want)
+		}
+	}
+}
+
 func TestWithOptionsOverridesClientSettingsForRequests(t *testing.T) {
 	t.Setenv("FIREWORKS_API_KEY", "env-key")
 

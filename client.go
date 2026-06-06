@@ -953,11 +953,35 @@ func (c *Client) resolveURL(path string) (*url.URL, error) {
 		return url.Parse(path)
 	}
 	base := *c.baseURL
-	joined, err := url.JoinPath(base.String(), path)
+	rel, err := url.Parse(path)
 	if err != nil {
 		return nil, err
 	}
-	return url.Parse(joined)
+	base.RawQuery = ""
+	base.Fragment = ""
+
+	basePath := strings.TrimRight(base.EscapedPath(), "/")
+	relPath := strings.TrimLeft(rel.EscapedPath(), "/")
+	escapedPath := basePath
+	if relPath != "" {
+		escapedPath += "/" + relPath
+	}
+	if escapedPath == "" {
+		escapedPath = "/"
+	}
+	decodedPath, err := url.PathUnescape(escapedPath)
+	if err != nil {
+		return nil, err
+	}
+	base.Path = decodedPath
+	if escapedPath != base.EscapedPath() {
+		base.RawPath = escapedPath
+	} else {
+		base.RawPath = ""
+	}
+	base.RawQuery = rel.RawQuery
+	base.Fragment = rel.Fragment
+	return &base, nil
 }
 
 func (c *Client) platformHeaders() http.Header {
