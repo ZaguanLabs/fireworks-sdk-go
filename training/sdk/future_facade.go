@@ -8,6 +8,18 @@ func (c *FiretitanServiceClient) CreateTrainingClientFuture(ctx context.Context,
 	})
 }
 
+func (c *FiretitanServiceClient) CreateBaseTrainingClientFuture(ctx context.Context, baseModel string, userMetadata map[string]string) *Future[*FiretitanTrainingClient] {
+	return SubmitFuture(func() (*FiretitanTrainingClient, error) {
+		return c.CreateBaseTrainingClient(ctx, baseModel, userMetadata)
+	})
+}
+
+func (c *FiretitanServiceClient) CreateReferenceClientFuture(ctx context.Context, baseModel string, opts ...CreateReferenceClientOptions) *Future[*FiretitanTrainingClient] {
+	return SubmitFuture(func() (*FiretitanTrainingClient, error) {
+		return c.CreateReferenceClient(ctx, baseModel, opts...)
+	})
+}
+
 func (c *FiretitanServiceClient) CreateTrainingClientFromStateFuture(ctx context.Context, path string, opts ...CreateTrainingClientFromStateOptions) *Future[*FiretitanTrainingClient] {
 	return SubmitFuture(func() (*FiretitanTrainingClient, error) {
 		return c.CreateTrainingClientFromState(ctx, path, opts...)

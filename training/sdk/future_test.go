@@ -82,6 +82,92 @@ func TestFiretitanServiceClientCreateTrainingClientFuture(t *testing.T) {
 	}
 }
 
+func TestFiretitanServiceClientCreateBaseTrainingClientFuture(t *testing.T) {
+	svc, err := NewFiretitanServiceClient(FiretitanServiceClientOptions{
+		Config: FiretitanProvisioningConfig{
+			BaseModel: "accounts/acct/models/base",
+			LoraRank:  8,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.CreateTrainingClient(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	client, err := svc.CreateBaseTrainingClientFuture(context.Background(), "accounts/acct/models/base", map[string]string{"purpose": "base"}).Await()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.Config.BaseModel != "accounts/acct/models/base" || client.Config.LoraRank != 0 || !client.Config.ForwardOnly {
+		t.Fatalf("base client config = %#v", client.Config)
+	}
+	if client.Config.CreateDeployment == nil || *client.Config.CreateDeployment {
+		t.Fatalf("base client should not request deployment: %#v", client.Config.CreateDeployment)
+	}
+	if client.UserMetadata["purpose"] != "base" {
+		t.Fatalf("metadata = %#v", client.UserMetadata)
+	}
+}
+
+func TestFiretitanServiceClientCreateReferenceClientFuture(t *testing.T) {
+	shared, err := NewFiretitanServiceClient(FiretitanServiceClientOptions{
+		Config: FiretitanProvisioningConfig{
+			BaseModel: "accounts/acct/models/base",
+			LoraRank:  8,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := shared.CreateReferenceClientFuture(context.Background(), "accounts/acct/models/base", CreateReferenceClientOptions{LoraRank: 8}).Await()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.Config.LoraRank != 0 || !client.Config.ForwardOnly {
+		t.Fatalf("shared reference config = %#v", client.Config)
+	}
+
+	trainer := &fakeManagedTrainer{}
+	deployment := &fakeManagedDeployment{existing: map[string]DeploymentInfo{}}
+	separate, err := NewFiretitanServiceClient(FiretitanServiceClientOptions{
+		Config: FiretitanProvisioningConfig{
+			BaseModel:                "accounts/acct/models/base",
+			CreateDeployment:         boolPointer(false),
+			ReferenceRequired:        true,
+			ReferenceTrainingShapeID: "accounts/acct/trainingShapes/ref",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = separate.ProvisionManagedHandle(context.Background(), ManagedProvisionOptions{
+		ProfileResolver: fakeProfileResolver{profiles: map[string]TrainingShapeProfile{
+			"accounts/acct/trainingShapes/ref": {
+				TrainingShapeVersion: "accounts/acct/trainingShapes/ref/versions/4",
+				TrainerMode:          ForwardOnlyMode,
+			},
+		}},
+		Trainer:    trainer,
+		Deployment: deployment,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err = separate.CreateReferenceClientFuture(context.Background(), "accounts/acct/models/base", CreateReferenceClientOptions{
+		UserMetadata: map[string]string{"purpose": "reference"},
+	}).Await()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.Config.TrainerJobID != "job-new-2" || !client.Config.ForwardOnly {
+		t.Fatalf("separate reference config = %#v", client.Config)
+	}
+	if client.UserMetadata["purpose"] != "reference" {
+		t.Fatalf("metadata = %#v", client.UserMetadata)
+	}
+}
+
 func TestFiretitanServiceClientCreateTrainingClientFromStateFuture(t *testing.T) {
 	state := &fakeTrainingStateBackend{}
 	svc, err := NewFiretitanServiceClient(FiretitanServiceClientOptions{
