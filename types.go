@@ -2,8 +2,11 @@ package fireworks
 
 import (
 	"encoding/json"
+	"fmt"
+	"mime"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -68,6 +71,47 @@ func (r *APIResponse) ParseJSON(out any) error {
 		return responseValidationError(r, r.Body, err)
 	}
 	return nil
+}
+
+func (r *APIResponse) Bool() (bool, error) {
+	if r == nil {
+		return false, nil
+	}
+	text := strings.TrimSpace(r.Text())
+	switch {
+	case strings.EqualFold(text, "true"):
+		return true, nil
+	case strings.EqualFold(text, "false"):
+		return false, nil
+	default:
+		return false, responseValidationError(r, r.Body, fmt.Errorf("expected boolean response body, got %q", text))
+	}
+}
+
+func (r *APIResponse) IsJSON() bool {
+	if r == nil {
+		return false
+	}
+	contentType := r.Header.Get("Content-Type")
+	if contentType == "" {
+		return false
+	}
+	mediaType, _, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		mediaType = contentType
+	}
+	mediaType = strings.ToLower(mediaType)
+	return mediaType == "application/json" || strings.HasSuffix(mediaType, "+json")
+}
+
+func (r *APIResponse) JSONOrText() (any, error) {
+	if r == nil {
+		return nil, nil
+	}
+	if !r.IsJSON() {
+		return r.Text(), nil
+	}
+	return r.JSON()
 }
 
 type RequestOptions struct {

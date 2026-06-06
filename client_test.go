@@ -1248,6 +1248,89 @@ func TestClientAPIResponseHelperExposesMetadataAndParsing(t *testing.T) {
 	}
 }
 
+func TestAPIResponseBoolMatchesPythonParseBool(t *testing.T) {
+	for _, tc := range []struct {
+		content string
+		want    bool
+	}{
+		{content: "false", want: false},
+		{content: "true", want: true},
+		{content: "False", want: false},
+		{content: "True", want: true},
+		{content: "TrUe", want: true},
+		{content: "FalSe", want: false},
+	} {
+		t.Run(tc.content, func(t *testing.T) {
+			resp := &APIResponse{Body: []byte(tc.content)}
+			got, err := resp.Bool()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tc.want {
+				t.Fatalf("Bool() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestAPIResponseBoolValidationErrorKeepsMetadata(t *testing.T) {
+	req, err := http.NewRequest(http.MethodGet, "https://api.fireworks.ai/v1/bool", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp := &APIResponse{
+		Request:    req,
+		Status:     "200 OK",
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"X-Request-Id": []string{"req-bool"}},
+		Body:       []byte("maybe"),
+		RequestID:  "req-bool",
+	}
+	_, err = resp.Bool()
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	var validationErr *APIResponseValidationError
+	if !errors.As(err, &validationErr) {
+		t.Fatalf("error type = %T, want APIResponseValidationError", err)
+	}
+	if validationErr.Response != resp || validationErr.Request != req || validationErr.Header.Get("X-Request-Id") != "req-bool" {
+		t.Fatalf("validation metadata = %#v", validationErr)
+	}
+}
+
+func TestAPIResponseJSONOrTextUsesContentType(t *testing.T) {
+	jsonResp := &APIResponse{
+		Header: http.Header{"Content-Type": []string{"application/vnd.fireworks+json; charset=utf-8"}},
+		Body:   []byte(`{"ok":true}`),
+	}
+	if !jsonResp.IsJSON() {
+		t.Fatal("expected JSON content type")
+	}
+	parsed, err := jsonResp.JSONOrText()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.(map[string]any)["ok"] != true {
+		t.Fatalf("parsed = %#v", parsed)
+	}
+
+	textResp := &APIResponse{
+		Header: http.Header{"Content-Type": []string{"application/text"}},
+		Body:   []byte("foo"),
+	}
+	if textResp.IsJSON() {
+		t.Fatal("did not expect JSON content type")
+	}
+	parsed, err = textResp.JSONOrText()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed != "foo" {
+		t.Fatalf("parsed = %#v", parsed)
+	}
+}
+
 func TestAPIResponseValidationErrorForInvalidSuccessBody(t *testing.T) {
 	t.Setenv("FIREWORKS_API_KEY", "test-key")
 
