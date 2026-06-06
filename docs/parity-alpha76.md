@@ -22,6 +22,7 @@ Status values:
 | `errors.py` | `training/sdk/errors.go` | ported | Structured SDK errors, API body parsing, and retryable request helpers are covered. |
 | `trainer.py` | `training/sdk/trainer.go` | ported | Create, wait, reconnect/resume, adapter loading, training profile parsing, checkpoint listing, inactivity timeout, and validation warnings are covered. |
 | `deployment.py` | `training/sdk/deployment.go`, `sampling.go` | ported | Create/get/delete/scale, hotload, reattach, warmup, token sampling, routing matrices, concurrency, SSE truncation retries, and server metrics are covered. |
+| `concurrency.py` | `training/sdk/sampling.go` | ported | Fixed and adaptive AIMD concurrency controllers, step-level metrics, cache hit summaries, sampler integration, and max-concurrency fallback construction are covered. |
 | `fireworks_client.py` | `training/sdk/fireworks_client.go` | ported | Checkpoint promotion/listing and long-running operation polling are covered. |
 | `training_spec.py` | `training/sdk/training_spec.go` | ported | Training spec encoding and scheduler/warmup calculations are covered. |
 | `weight_syncer.py` | `training/sdk/weight_syncer.go`, `future_facade.go` | ported | Save/hotload lifecycle, hotload manager readiness, timing, sampler client helpers, and training-client facade wrappers are covered. |
@@ -31,6 +32,7 @@ Status values:
 | `tinker_compat.py` | `service_init.go`, `service_helpers.go` | go-native | Python monkeypatch/context-manager behavior is not portable. Go should expose explicit construction helpers instead. |
 | `patches/_builtin_loss_fn_patch.py` | `forward_backward.go` | go-native | Python mutates Pydantic literals; Go exposes `LossFnDAPO`, `LossFnGSPO`, and normalization helpers. |
 | `patches/_discriminator_patch.py` | n/a | go-native | Pydantic serialization patch is Python-only. Go uses maps/typed request helpers and does not need discriminator patching. |
+| `patches/_model_utils.py` | n/a | go-native | Python-only Pydantic rebuild helper used by monkeypatches; Go has no generated Pydantic model graph to rebuild. |
 | `patches/_tinker_r3_patch.py` | `forward_backward.go` | go-native | Go exposes `ModelInputFromInts` and routing matrix helpers. |
 | `scripts/setup_trainer.py` | `training/sdk/setup_cli.go`, `cmd/fireworks-training` | ported | Go helper and CLI subcommand mirror trainer creation, polling, defaults, env fallback, and JSON output. |
 | `scripts/setup_deployment.py` | `training/sdk/setup_cli.go`, `cmd/fireworks-training` | ported | Go helper and CLI subcommand mirror deployment creation, readiness polling, defaults, env fallback, and JSON output. |

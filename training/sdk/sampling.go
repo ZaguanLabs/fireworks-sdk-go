@@ -95,6 +95,7 @@ type DeploymentSampler struct {
 	HTTPClient            *http.Client
 	Now                   func() time.Time
 	Sleep                 func(time.Duration)
+	maxConcurrency        int
 
 	mu            sync.Mutex
 	recentMetrics []ServerMetrics
@@ -111,6 +112,12 @@ func WithDeploymentSamplerTokenizer(tokenizer DeploymentTokenizer) DeploymentSam
 func WithDeploymentSamplerConcurrencyController(controller SamplingConcurrencyController) DeploymentSamplerOption {
 	return func(s *DeploymentSampler) {
 		s.ConcurrencyController = controller
+	}
+}
+
+func WithDeploymentSamplerMaxConcurrency(maxConcurrency int) DeploymentSamplerOption {
+	return func(s *DeploymentSampler) {
+		s.maxConcurrency = maxConcurrency
 	}
 }
 
@@ -153,6 +160,9 @@ func NewDeploymentSampler(inferenceURL, model, apiKey string, opts ...Deployment
 	}
 	if sampler.CompletionRequester == nil {
 		sampler.CompletionRequester = sampler.defaultCompletionRequest
+	}
+	if sampler.ConcurrencyController == nil && sampler.maxConcurrency > 0 {
+		sampler.ConcurrencyController = NewFixedConcurrencyController(sampler.maxConcurrency)
 	}
 	return sampler
 }

@@ -87,6 +87,31 @@ func TestFixedConcurrencyController(t *testing.T) {
 	}
 }
 
+func TestDeploymentSamplerMaxConcurrencyCreatesFixedController(t *testing.T) {
+	sampler := NewDeploymentSampler("https://api.example.com", "m", "key", WithDeploymentSamplerMaxConcurrency(3))
+	ctrl, ok := sampler.ConcurrencyController.(*FixedConcurrencyController)
+	if !ok {
+		t.Fatalf("controller = %T, want *FixedConcurrencyController", sampler.ConcurrencyController)
+	}
+	if ctrl.WindowSize() != 3 {
+		t.Fatalf("window = %d, want 3", ctrl.WindowSize())
+	}
+}
+
+func TestDeploymentSamplerExplicitControllerOverridesMaxConcurrency(t *testing.T) {
+	ctrl := NewAdaptiveConcurrencyController(AdaptiveConcurrencyOptions{InitialWindow: 5})
+	sampler := NewDeploymentSampler(
+		"https://api.example.com",
+		"m",
+		"key",
+		WithDeploymentSamplerMaxConcurrency(3),
+		WithDeploymentSamplerConcurrencyController(ctrl),
+	)
+	if sampler.ConcurrencyController != ctrl {
+		t.Fatalf("controller = %T, want explicit controller", sampler.ConcurrencyController)
+	}
+}
+
 func TestAdaptiveConcurrencyControllerInitialWindow(t *testing.T) {
 	ctrl := NewAdaptiveConcurrencyController(AdaptiveConcurrencyOptions{InitialWindow: 16})
 	if ctrl.WindowSize() != 16 {
