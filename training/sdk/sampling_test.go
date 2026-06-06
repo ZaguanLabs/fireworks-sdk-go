@@ -696,9 +696,12 @@ func TestDeploymentSamplerStreamingTruncationRetry(t *testing.T) {
 	}))
 	defer server.Close()
 
-	sampler := NewDeploymentSampler(server.URL, "m", "key", WithDeploymentSamplerClock(nil, func(d time.Duration) {
-		sleeps = append(sleeps, d)
-	}))
+	sampler := NewDeploymentSampler(server.URL, "m", "key",
+		WithDeploymentSamplerClock(nil, func(d time.Duration) {
+			sleeps = append(sleeps, d)
+		}),
+		WithDeploymentSamplerRetryJitter(func() float64 { return 0.5 }),
+	)
 	results, err := sampler.SampleWithPromptTokens(context.Background(), []int{1, 2, 3})
 	if err != nil {
 		t.Fatal(err)
@@ -707,6 +710,47 @@ func TestDeploymentSamplerStreamingTruncationRetry(t *testing.T) {
 		t.Fatalf("attempts=%d sleeps=%#v", attempts, sleeps)
 	}
 	if len(results) != 1 || results[0].FinishReason != "stop" {
+		t.Fatalf("results = %#v", results)
+	}
+}
+
+func TestDeploymentSamplerRetryBackoffUsesJitter(t *testing.T) {
+	attempts := 0
+	var sleeps []time.Duration
+	jitters := []float64{0, 1}
+	sampler := NewDeploymentSampler("https://api.example.com", "m", "key",
+		WithDeploymentSamplerClock(nil, func(d time.Duration) {
+			sleeps = append(sleeps, d)
+		}),
+		WithDeploymentSamplerRetryJitter(func() float64 {
+			out := jitters[0]
+			jitters = jitters[1:]
+			return out
+		}),
+		WithDeploymentSamplerRequester(func(context.Context, []int, CompletionRequestOptions) (map[string]any, ServerMetrics, error) {
+			attempts++
+			if attempts < 3 {
+				return nil, ServerMetrics{}, &CompletionHTTPStatusError{StatusCode: http.StatusServiceUnavailable}
+			}
+			return map[string]any{"choices": []any{map[string]any{
+				"text":       "ok",
+				"raw_output": map[string]any{"completion_token_ids": []any{7.0}},
+			}}}, ServerMetrics{}, nil
+		}),
+	)
+
+	results, err := sampler.SampleWithPromptTokens(context.Background(), []int{1, 2, 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if attempts != 3 {
+		t.Fatalf("attempts = %d, want 3", attempts)
+	}
+	want := []time.Duration{SamplerRetryBaseBackoff / 2, SamplerRetryBaseBackoff * 3}
+	if len(sleeps) != len(want) || sleeps[0] != want[0] || sleeps[1] != want[1] {
+		t.Fatalf("sleeps = %#v, want %#v", sleeps, want)
+	}
+	if len(results) != 1 || results[0].Text != "ok" {
 		t.Fatalf("results = %#v", results)
 	}
 }

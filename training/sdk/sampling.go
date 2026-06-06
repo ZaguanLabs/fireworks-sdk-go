@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
 	"strconv"
 	"strings"
@@ -95,6 +96,7 @@ type DeploymentSampler struct {
 	HTTPClient            *http.Client
 	Now                   func() time.Time
 	Sleep                 func(time.Duration)
+	RetryJitter           func() float64
 	maxConcurrency        int
 
 	mu            sync.Mutex
@@ -144,6 +146,14 @@ func WithDeploymentSamplerClock(now func() time.Time, sleep func(time.Duration))
 	}
 }
 
+func WithDeploymentSamplerRetryJitter(jitter func() float64) DeploymentSamplerOption {
+	return func(s *DeploymentSampler) {
+		if jitter != nil {
+			s.RetryJitter = jitter
+		}
+	}
+}
+
 func NewDeploymentSampler(inferenceURL, model, apiKey string, opts ...DeploymentSamplerOption) *DeploymentSampler {
 	sampler := &DeploymentSampler{
 		InferenceURL: strings.TrimRight(inferenceURL, "/"),
@@ -152,6 +162,7 @@ func NewDeploymentSampler(inferenceURL, model, apiKey string, opts ...Deployment
 		HTTPClient:   &http.Client{Timeout: 10 * time.Minute},
 		Now:          time.Now,
 		Sleep:        time.Sleep,
+		RetryJitter:  rand.Float64,
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -434,13 +445,26 @@ func (s *DeploymentSampler) doOneCompletion(ctx context.Context, promptIDs []int
 		if !samplerRetryableCompletionError(err) || attempt == SamplerRetryMaxAttempts {
 			return nil, err
 		}
-		s.Sleep(backoff)
+		s.Sleep(s.retryBackoffDelay(backoff))
 		backoff *= 2
 		if backoff > SamplerRetryMaxBackoff {
 			backoff = SamplerRetryMaxBackoff
 		}
 	}
 	return nil, fmt.Errorf("unreachable: sampler retry loop exited")
+}
+
+func (s *DeploymentSampler) retryBackoffDelay(backoff time.Duration) time.Duration {
+	jitter := 0.5
+	if s.RetryJitter != nil {
+		jitter = s.RetryJitter()
+	}
+	if jitter < 0 {
+		jitter = 0
+	} else if jitter > 1 {
+		jitter = 1
+	}
+	return time.Duration(float64(backoff) * (0.5 + jitter))
 }
 
 func (s *DeploymentSampler) ParseCompletionsResult(result map[string]any, promptIDs []int, maxSeqLen int, userRequestedLogprobs, routingRequested, echoMode bool) ([]SampledCompletion, error) {
