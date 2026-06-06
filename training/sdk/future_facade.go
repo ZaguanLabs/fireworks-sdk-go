@@ -72,6 +72,12 @@ func (c *FiretitanTrainingClient) SaveWeightsForSamplerFuture(ctx context.Contex
 	})
 }
 
+func (c *FiretitanTrainingClient) SaveWeightsForSamplerExtFuture(ctx context.Context, name string, opts SaveWeightsForSamplerOptions) *Future[SaveSamplerResult] {
+	return SubmitFuture(func() (SaveSamplerResult, error) {
+		return c.SaveWeightsForSamplerExt(ctx, name, opts)
+	})
+}
+
 func (c *FiretitanTrainingClient) SaveWeightsAndHotloadFuture(ctx context.Context, name string, checkpointType ...string) *Future[SaveSamplerResult] {
 	return SubmitFuture(func() (SaveSamplerResult, error) {
 		return c.SaveWeightsAndHotload(ctx, name, checkpointType...)

@@ -217,22 +217,41 @@ func (s *WeightSyncer) MarkFirstSaveDone() {
 }
 
 func (s *WeightSyncer) SaveOnly(ctx context.Context, name string, checkpointType ...string) (string, error) {
+	var opts SaveWeightsForSamplerOptions
+	if len(checkpointType) > 0 {
+		opts.CheckpointType = checkpointType[0]
+	}
+	saveResult, err := s.SaveOnlyExt(ctx, name, opts)
+	if err != nil {
+		return "", err
+	}
+	return saveResult.SnapshotName, nil
+}
+
+func (s *WeightSyncer) SaveOnlyExt(ctx context.Context, name string, opts SaveWeightsForSamplerOptions) (SaveSamplerResult, error) {
 	s.LastTiming = map[string]time.Duration{}
 	if s.PolicyClient == nil {
-		return "", fmt.Errorf("WeightSyncer requires PolicyClient")
+		return SaveSamplerResult{}, fmt.Errorf("WeightSyncer requires PolicyClient")
 	}
-	ckptType, err := s.NextCheckpointType(checkpointType...)
+	ckptType, err := s.NextCheckpointType(opts.CheckpointType)
 	if err != nil {
-		return "", err
+		return SaveSamplerResult{}, err
 	}
+	opts.CheckpointType = string(ckptType)
 	start := s.now()()
-	saveResult, err := s.PolicyClient.SaveWeightsForSamplerExt(ctx, name, SaveWeightsForSamplerOptions{CheckpointType: string(ckptType)})
+	saveResult, err := s.PolicyClient.SaveWeightsForSamplerExt(ctx, name, opts)
 	s.LastTiming["save_time_s"] = s.now()().Sub(start)
 	if err != nil {
-		return "", err
+		return SaveSamplerResult{}, err
+	}
+	if saveResult.SnapshotName == "" {
+		saveResult.SnapshotName = saveResult.Path
+	}
+	if saveResult.Path == "" {
+		saveResult.Path = saveResult.SnapshotName
 	}
 	s.MarkFirstSaveDone()
-	return saveResult.SnapshotName, nil
+	return saveResult, nil
 }
 
 func (s *WeightSyncer) Hotload(ctx context.Context, snapshotName, checkpointType string) (bool, error) {

@@ -272,6 +272,32 @@ func TestWeightSyncerSaveOnlyThenHotloadUsesSnapshotIdentity(t *testing.T) {
 	}
 }
 
+func TestWeightSyncerSaveOnlyExtPreservesOptions(t *testing.T) {
+	saver := &fakeSamplerSaver{
+		results: []SaveSamplerResult{{SnapshotName: "snap-1"}},
+	}
+	syncer := newWeightSyncerForTest(saver)
+	result, err := syncer.SaveOnlyExt(context.Background(), "step-1", SaveWeightsForSamplerOptions{
+		CheckpointType: "delta",
+		TTL:            2 * time.Hour,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Path != "snap-1" || result.SnapshotName != "snap-1" {
+		t.Fatalf("result = %#v", result)
+	}
+	if len(saver.names) != 1 || saver.names[0] != "step-1" {
+		t.Fatalf("names = %#v", saver.names)
+	}
+	if len(saver.calls) != 1 || saver.calls[0].CheckpointType != "delta" || saver.calls[0].TTL != 2*time.Hour {
+		t.Fatalf("calls = %#v", saver.calls)
+	}
+	if !syncer.BaseSaved {
+		t.Fatal("SaveOnlyExt should mark first save done")
+	}
+}
+
 func TestWeightSyncerLoraAlwaysBase(t *testing.T) {
 	saver := &fakeSamplerSaver{
 		results: []SaveSamplerResult{

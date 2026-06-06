@@ -656,6 +656,10 @@ func (c *FiretitanTrainingClient) PromoteCheckpoint(ctx context.Context, opts Pr
 	return c.Service.PromoteCheckpointFunc(ctx, opts)
 }
 
+func (c *FiretitanTrainingClient) ResolveCheckpointPath(checkpointName string, sourceJobID ...string) (string, error) {
+	return ResolveCheckpointPath(checkpointName, sourceJobID...)
+}
+
 func (c *FiretitanTrainingClient) SaveState(ctx context.Context, name string, opts ...SaveStateOptions) (SaveStateResult, error) {
 	if c == nil {
 		return SaveStateResult{}, fmt.Errorf("FiretitanTrainingClient is nil")
@@ -761,11 +765,31 @@ func (c *FiretitanTrainingClient) SaveWeightsForSampler(ctx context.Context, nam
 	if c == nil || c.WeightSyncer == nil {
 		return SaveSamplerResult{}, fmt.Errorf("FiretitanTrainingClient requires a WeightSyncer to save weights for sampler")
 	}
-	snapshotName, err := c.WeightSyncer.SaveOnly(ctx, name, checkpointType...)
+	var opts SaveWeightsForSamplerOptions
+	if len(checkpointType) > 0 {
+		opts.CheckpointType = checkpointType[0]
+	}
+	return c.SaveWeightsForSamplerExt(ctx, name, opts)
+}
+
+func (c *FiretitanTrainingClient) SaveWeightsForSamplerExt(ctx context.Context, name string, opts SaveWeightsForSamplerOptions) (SaveSamplerResult, error) {
+	if c == nil || c.WeightSyncer == nil {
+		return SaveSamplerResult{}, fmt.Errorf("FiretitanTrainingClient requires a WeightSyncer to save weights for sampler")
+	}
+	ckptType, err := c.NextSamplerCheckpointType(opts.CheckpointType)
 	if err != nil {
 		return SaveSamplerResult{}, err
 	}
-	return SaveSamplerResult{Path: snapshotName, SnapshotName: snapshotName}, nil
+	opts.CheckpointType = string(ckptType)
+	result, err := c.WeightSyncer.SaveOnlyExt(ctx, name, opts)
+	if err != nil {
+		return SaveSamplerResult{}, err
+	}
+	result.Path = result.SnapshotName
+	if c.SamplerBackend != nil {
+		c.SamplerBackend.RememberSavedSnapshot(result.SnapshotName, opts.CheckpointType)
+	}
+	return result, nil
 }
 
 func (c *FiretitanTrainingClient) SaveWeightsAndHotload(ctx context.Context, name string, checkpointType ...string) (SaveSamplerResult, error) {

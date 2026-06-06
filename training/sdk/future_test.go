@@ -373,11 +373,18 @@ func TestFiretitanTrainingClientWeightSyncerFutures(t *testing.T) {
 	if saved.SnapshotName != "step-1-session" {
 		t.Fatalf("saved = %#v", saved)
 	}
+	saved, err = client.SaveWeightsForSamplerExtFuture(context.Background(), "step-ext", SaveWeightsForSamplerOptions{CheckpointType: "base", TTL: time.Minute}).Await()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.SnapshotName != "step-2-session" || len(saver.calls) < 2 || saver.calls[1].TTL != time.Minute {
+		t.Fatalf("saved ext = %#v calls=%#v", saved, saver.calls)
+	}
 	hotloaded, err := client.SaveWeightsAndHotloadFuture(context.Background(), "step-2").Await()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if hotloaded.SnapshotName != "step-2-session" || client.RequiresInitialSamplerSync() {
+	if hotloaded.SnapshotName != "step-2" || client.RequiresInitialSamplerSync() {
 		t.Fatalf("hotloaded = %#v initialSync=%t", hotloaded, client.RequiresInitialSamplerSync())
 	}
 	if _, err := client.SaveWeightsAndGetSamplingClientFuture(context.Background(), "step-3", nil).Await(); err == nil || err.Error() != SamplingClientFromTrainerMessage {

@@ -901,6 +901,66 @@ func TestFiretitanTrainingClientWeightSyncerSaveWeightsForSampler(t *testing.T) 
 	}
 }
 
+func TestFiretitanTrainingClientSaveWeightsForSamplerExtRecordsSnapshotType(t *testing.T) {
+	saver := &fakeSamplerSaver{
+		results: []SaveSamplerResult{{Path: "storage/path", SnapshotName: "step-1-session"}},
+	}
+	syncer := NewWeightSyncer(WeightSyncerConfig{
+		PolicyClient: saver,
+		BaseModel:    "accounts/acct/models/base",
+	})
+	backend := &TinkerSamplerBackend{}
+	svc, err := NewFiretitanServiceClient(FiretitanServiceClientOptions{
+		Config: FiretitanProvisioningConfig{BaseModel: "accounts/acct/models/base"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := svc.CreateTrainingClient(context.Background(), CreateFiretitanTrainingClientOptions{
+		SamplerBackend: backend,
+		WeightSyncer:   syncer,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := client.SaveWeightsForSamplerExt(context.Background(), "step-1", SaveWeightsForSamplerOptions{
+		CheckpointType: "delta",
+		TTL:            time.Hour,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Path != "step-1-session" || result.SnapshotName != "step-1-session" {
+		t.Fatalf("result = %#v", result)
+	}
+	if len(saver.calls) != 1 || saver.calls[0].CheckpointType != "delta" || saver.calls[0].TTL != time.Hour {
+		t.Fatalf("save calls = %#v", saver.calls)
+	}
+	if backend.snapshotTypes["step-1-session"] != "delta" {
+		t.Fatalf("snapshot types = %#v", backend.snapshotTypes)
+	}
+}
+
+func TestFiretitanTrainingClientResolveCheckpointPath(t *testing.T) {
+	svc, err := NewFiretitanServiceClient(FiretitanServiceClientOptions{
+		Config: FiretitanProvisioningConfig{BaseModel: "accounts/acct/models/base"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := svc.CreateTrainingClient(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := client.ResolveCheckpointPath("checkpoint-1", "job-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "cross_job://job-1/checkpoint-1" {
+		t.Fatalf("path = %q", got)
+	}
+}
+
 func TestFiretitanTrainingClientSaveWeightsAndHotloadClearsInitialSync(t *testing.T) {
 	saver := &fakeSamplerSaver{
 		results: []SaveSamplerResult{{Path: "raw/path", SnapshotName: "step-1-session"}},
