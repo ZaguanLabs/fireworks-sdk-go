@@ -5100,6 +5100,283 @@ func TestEvaluatorsTypedAllParamsUsePythonAliases(t *testing.T) {
 	}
 }
 
+func TestDatasetsTypedAllParamsUsePythonAliases(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/accounts/acct/datasets":
+			if got := r.URL.RawQuery; got != "" {
+				t.Errorf("create query = %q", got)
+			}
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("decode create body: %v", err)
+			}
+			if _, ok := body["account_id"]; ok {
+				t.Errorf("create body should not contain account_id: %#v", body)
+			}
+			if body["datasetId"] != "dataset-1" || body["filter"] != "format=CHAT" || body["sourceDatasetId"] != "source-dataset-1" {
+				t.Errorf("create body aliases = %#v", body)
+			}
+			for _, key := range []string{"dataset_id", "source_dataset_id"} {
+				if _, ok := body[key]; ok {
+					t.Errorf("unexpected snake create key %q: %#v", key, body)
+				}
+			}
+			dataset, ok := body["dataset"].(map[string]any)
+			if !ok {
+				t.Fatalf("dataset = %#v", body["dataset"])
+			}
+			assertDatasetPayloadUsesAliases(t, dataset)
+			_ = json.NewEncoder(w).Encode(JSON{
+				"name":        "accounts/acct/datasets/dataset-1",
+				"displayName": "Dataset One",
+				"format":      "CHAT",
+			})
+
+		case r.Method == http.MethodPatch && r.URL.Path == "/v1/accounts/acct/datasets/dataset-1":
+			if got := r.URL.RawQuery; got != "" {
+				t.Errorf("update query = %q", got)
+			}
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("decode update body: %v", err)
+			}
+			if _, ok := body["account_id"]; ok {
+				t.Errorf("update body should not contain account_id: %#v", body)
+			}
+			assertDatasetPayloadUsesAliases(t, body)
+			_ = json.NewEncoder(w).Encode(JSON{
+				"name":        "accounts/acct/datasets/dataset-1",
+				"displayName": "Dataset One Updated",
+				"format":      "CHAT",
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/accounts/acct/datasets":
+			query := r.URL.Query()
+			if got := query.Get("filter"); got != "format=CHAT" {
+				t.Errorf("filter = %q", got)
+			}
+			if got := query.Get("orderBy"); got != "create_time desc" {
+				t.Errorf("orderBy = %q", got)
+			}
+			if got := query.Get("pageSize"); got != "0" {
+				t.Errorf("pageSize = %q", got)
+			}
+			if got := query.Get("pageToken"); got != "cursor-1" {
+				t.Errorf("pageToken = %q", got)
+			}
+			if got := query.Get("readMask"); got != "name,format" {
+				t.Errorf("readMask = %q", got)
+			}
+			if got := query.Get("account_id"); got != "" {
+				t.Errorf("account_id should not be query param, got %q", got)
+			}
+			_ = json.NewEncoder(w).Encode(JSON{
+				"datasets": []JSON{
+					{"name": "accounts/acct/datasets/dataset-1", "displayName": "Dataset One", "format": "CHAT"},
+				},
+				"nextPageToken": "cursor-2",
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/accounts/acct/datasets/dataset-1":
+			if got := r.URL.Query().Get("readMask"); got != "name,format" {
+				t.Errorf("readMask = %q", got)
+			}
+			_ = json.NewEncoder(w).Encode(JSON{
+				"name":        "accounts/acct/datasets/dataset-1",
+				"displayName": "Dataset One",
+				"format":      "CHAT",
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/accounts/acct/datasets/dataset-1:getDownloadEndpoint":
+			query := r.URL.Query()
+			if got := query.Get("downloadLineage"); got != "true" {
+				t.Errorf("downloadLineage = %q", got)
+			}
+			if got := query.Get("download_lineage"); got != "" {
+				t.Errorf("unexpected download_lineage = %q", got)
+			}
+			if got := query.Get("readMask"); got != "filenameToSignedUrls" {
+				t.Errorf("readMask = %q", got)
+			}
+			_ = json.NewEncoder(w).Encode(JSON{
+				"filenameToSignedUrls": map[string]string{"train.jsonl": "gs://download/train.jsonl"},
+			})
+
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/accounts/acct/datasets/dataset-1:getUploadEndpoint":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("decode get upload body: %v", err)
+			}
+			for _, key := range []string{"account_id", "filename_to_size", "read_mask"} {
+				if _, ok := body[key]; ok {
+					t.Errorf("get upload body should not contain %q: %#v", key, body)
+				}
+			}
+			filenameToSize, ok := body["filenameToSize"].(map[string]any)
+			if !ok || filenameToSize["train.jsonl"] != "123" {
+				t.Errorf("filenameToSize = %#v", body["filenameToSize"])
+			}
+			if body["readMask"] != "filenameToSignedUrls" {
+				t.Errorf("readMask body = %#v", body["readMask"])
+			}
+			_ = json.NewEncoder(w).Encode(JSON{
+				"filenameToSignedUrls": map[string]string{"train.jsonl": "gs://upload/train.jsonl"},
+			})
+
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/accounts/acct/datasets/dataset-1:validateUpload":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("decode validate body: %v", err)
+			}
+			if _, ok := body["account_id"]; ok {
+				t.Errorf("validate body should not contain account_id: %#v", body)
+			}
+			if body["filename"] != "train.jsonl" {
+				t.Errorf("filename = %#v", body["filename"])
+			}
+			_ = json.NewEncoder(w).Encode(JSON{"valid": true})
+
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/accounts/acct/datasets/dataset-1":
+			_ = json.NewEncoder(w).Encode(JSON{"deleted": true})
+
+		default:
+			t.Errorf("unexpected request %s %s?%s", r.Method, r.URL.Path, r.URL.RawQuery)
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client, err := NewClient(WithBaseURL(server.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := client.Datasets.CreateTyped(context.Background(), fwtypes.DatasetCreateParams{
+		AccountID:       "acct",
+		DatasetID:       "dataset-1",
+		Filter:          "format=CHAT",
+		SourceDatasetID: "source-dataset-1",
+		Dataset: fwtypes.DatasetParam{
+			DisplayName:      "Dataset One",
+			EvalProtocol:     JSON{},
+			EvaluationResult: fwtypes.EvaluationResultParam{EvaluationJobID: "evaluation-job-1"},
+			ExampleCount:     "100",
+			ExternalURL:      "https://example.com/train.jsonl",
+			Format:           "CHAT",
+			SourceJobName:    "accounts/acct/jobs/job-1",
+			Splitted:         fwtypes.SplittedParam{SourceDatasetID: "source-dataset-1"},
+			Transformed: fwtypes.TransformedParam{
+				SourceDatasetID: "source-dataset-1",
+				Filter:          "format=CHAT",
+				OriginalFormat:  "COMPLETION",
+			},
+			UserUploaded: JSON{},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.Name == nil || *created.Name != "accounts/acct/datasets/dataset-1" {
+		t.Fatalf("created = %#v", created)
+	}
+
+	updated, err := client.Datasets.UpdateTyped(context.Background(), "dataset-1", fwtypes.DatasetUpdateParams{
+		AccountID:        "acct",
+		DisplayName:      "Dataset One Updated",
+		EvalProtocol:     JSON{},
+		EvaluationResult: fwtypes.EvaluationResultParam{EvaluationJobID: "evaluation-job-2"},
+		ExampleCount:     "101",
+		ExternalURL:      "https://example.com/train-updated.jsonl",
+		Format:           "CHAT",
+		SourceJobName:    "accounts/acct/jobs/job-2",
+		Splitted:         fwtypes.SplittedParam{SourceDatasetID: "source-dataset-1"},
+		Transformed: fwtypes.TransformedParam{
+			SourceDatasetID: "source-dataset-1",
+			Filter:          "format=CHAT",
+			OriginalFormat:  "COMPLETION",
+		},
+		UserUploaded: JSON{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.DisplayName == nil || *updated.DisplayName != "Dataset One Updated" {
+		t.Fatalf("updated = %#v", updated)
+	}
+
+	page, err := client.Datasets.ListTyped(context.Background(), fwtypes.DatasetListParams{
+		AccountID: "acct",
+		Filter:    "format=CHAT",
+		OrderBy:   "create_time desc",
+		PageSize:  0,
+		PageToken: "cursor-1",
+		ReadMask:  "name,format",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var _ *fwtypes.DatasetsPage = page
+	if len(page.Datasets) != 1 || page.NextPageToken == nil || *page.NextPageToken != "cursor-2" {
+		t.Fatalf("page = %#v", page)
+	}
+
+	got, err := client.Datasets.GetTyped(context.Background(), "dataset-1", fwtypes.DatasetGetParams{
+		AccountID: "acct",
+		ReadMask:  "name,format",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Name == nil || *got.Name != "accounts/acct/datasets/dataset-1" {
+		t.Fatalf("got = %#v", got)
+	}
+
+	download, err := client.Datasets.GetDownloadEndpointTyped(context.Background(), "dataset-1", fwtypes.DatasetGetDownloadEndpointParams{
+		AccountID:       "acct",
+		DownloadLineage: true,
+		ReadMask:        "filenameToSignedUrls",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if download.FilenameToSignedUrls["train.jsonl"] != "gs://download/train.jsonl" {
+		t.Fatalf("download = %#v", download)
+	}
+
+	upload, err := client.Datasets.GetUploadEndpointTyped(context.Background(), "dataset-1", fwtypes.DatasetGetUploadEndpointParams{
+		AccountID:      "acct",
+		FilenameToSize: map[string]string{"train.jsonl": "123"},
+		ReadMask:       "filenameToSignedUrls",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if upload.FilenameToSignedUrls["train.jsonl"] != "gs://upload/train.jsonl" {
+		t.Fatalf("upload = %#v", upload)
+	}
+
+	validated, err := client.Datasets.ValidateUploadTyped(context.Background(), "dataset-1", JSON{
+		"account_id": "acct",
+		"filename":   "train.jsonl",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if validated["valid"] != true {
+		t.Fatalf("validated = %#v", validated)
+	}
+
+	deleted, err := client.Datasets.DeleteTyped(context.Background(), "dataset-1", WithAccountID("acct"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deleted["deleted"] != true {
+		t.Fatalf("deleted = %#v", deleted)
+	}
+}
+
 func TestDatasetsUploadFileTypedUsesMultipart(t *testing.T) {
 	t.Setenv("FIREWORKS_API_KEY", "test-key")
 
@@ -5176,6 +5453,53 @@ func TestDatasetsUploadFileTypedUsesMultipart(t *testing.T) {
 	}
 	if requests != 2 {
 		t.Fatalf("requests = %d, want 2", requests)
+	}
+}
+
+func assertDatasetPayloadUsesAliases(t *testing.T, payload map[string]any) {
+	t.Helper()
+
+	for _, key := range []string{"displayName", "evalProtocol", "evaluationResult", "exampleCount", "externalUrl", "format", "sourceJobName", "splitted", "transformed", "userUploaded"} {
+		if _, ok := payload[key]; !ok {
+			t.Errorf("dataset payload missing %q: %#v", key, payload)
+		}
+	}
+	for _, key := range []string{"display_name", "eval_protocol", "evaluation_result", "example_count", "external_url", "source_job_name", "user_uploaded"} {
+		if _, ok := payload[key]; ok {
+			t.Errorf("unexpected snake dataset key %q: %#v", key, payload)
+		}
+	}
+	if payload["displayName"] == "" || payload["exampleCount"] == "" || payload["externalUrl"] == "" || payload["sourceJobName"] == "" {
+		t.Errorf("dataset scalar aliases = %#v", payload)
+	}
+
+	evaluationResult, ok := payload["evaluationResult"].(map[string]any)
+	if !ok || evaluationResult["evaluationJobId"] == "" {
+		t.Errorf("evaluationResult = %#v", payload["evaluationResult"])
+	}
+	if _, ok := evaluationResult["evaluation_job_id"]; ok {
+		t.Errorf("unexpected snake evaluationResult key: %#v", evaluationResult)
+	}
+
+	splitted, ok := payload["splitted"].(map[string]any)
+	if !ok || splitted["sourceDatasetId"] != "source-dataset-1" {
+		t.Errorf("splitted = %#v", payload["splitted"])
+	}
+	if _, ok := splitted["source_dataset_id"]; ok {
+		t.Errorf("unexpected snake splitted key: %#v", splitted)
+	}
+
+	transformed, ok := payload["transformed"].(map[string]any)
+	if !ok {
+		t.Fatalf("transformed = %#v", payload["transformed"])
+	}
+	if transformed["sourceDatasetId"] != "source-dataset-1" || transformed["filter"] != "format=CHAT" || transformed["originalFormat"] != "COMPLETION" {
+		t.Errorf("transformed = %#v", transformed)
+	}
+	for _, key := range []string{"source_dataset_id", "original_format"} {
+		if _, ok := transformed[key]; ok {
+			t.Errorf("unexpected snake transformed key %q: %#v", key, transformed)
+		}
 	}
 }
 
