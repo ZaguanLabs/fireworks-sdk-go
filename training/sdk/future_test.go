@@ -82,6 +82,57 @@ func TestFiretitanServiceClientCreateTrainingClientFuture(t *testing.T) {
 	}
 }
 
+func TestFiretitanServiceClientManagedLifecycleFutures(t *testing.T) {
+	trainer := &fakeManagedTrainer{}
+	deployment := &fakeManagedDeployment{existing: map[string]DeploymentInfo{}}
+	svc, err := NewFiretitanServiceClient(FiretitanServiceClientOptions{
+		Config: FiretitanProvisioningConfig{
+			BaseModel:       "accounts/acct/models/base",
+			DeploymentShape: "accounts/acct/deploymentShapes/serve",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handle, err := svc.ProvisionManagedHandleFuture(context.Background(), ManagedProvisionOptions{
+		Trainer:    trainer,
+		Deployment: deployment,
+		Now:        func() time.Time { return time.Unix(456, 0) },
+	}).Await()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if handle.TrainerEndpoint.JobID != "job-new" || handle.Deployment.DeploymentID != "base-456" {
+		t.Fatalf("handle = %#v", handle)
+	}
+
+	trainer = &fakeManagedTrainer{}
+	deployment = &fakeManagedDeployment{existing: map[string]DeploymentInfo{}}
+	svc, err = NewFiretitanServiceClient(FiretitanServiceClientOptions{
+		Config: FiretitanProvisioningConfig{
+			BaseModel:       "accounts/acct/models/base",
+			DeploymentShape: "accounts/acct/deploymentShapes/serve",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := svc.CreateManagedTrainingClientFuture(context.Background(), ManagedProvisionOptions{
+		Trainer:    trainer,
+		Deployment: deployment,
+		Now:        func() time.Time { return time.Unix(789, 0) },
+	}).Await()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if jobID, err := client.TrainerJobID(); err != nil || jobID != "job-new" {
+		t.Fatalf("jobID=%q err=%v", jobID, err)
+	}
+	if deploymentID, err := client.DeploymentID(); err != nil || deploymentID != "base-789" {
+		t.Fatalf("deploymentID=%q err=%v", deploymentID, err)
+	}
+}
+
 func TestFiretitanServiceClientCreateBaseTrainingClientFuture(t *testing.T) {
 	svc, err := NewFiretitanServiceClient(FiretitanServiceClientOptions{
 		Config: FiretitanProvisioningConfig{

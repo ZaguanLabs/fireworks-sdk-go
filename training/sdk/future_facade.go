@@ -8,6 +8,18 @@ func (c *FiretitanServiceClient) CreateTrainingClientFuture(ctx context.Context,
 	})
 }
 
+func (c *FiretitanServiceClient) ProvisionManagedHandleFuture(ctx context.Context, opts ...ManagedProvisionOptions) *Future[*ManagedProvisionedHandle] {
+	return SubmitFuture(func() (*ManagedProvisionedHandle, error) {
+		return c.ProvisionManagedHandle(ctx, opts...)
+	})
+}
+
+func (c *FiretitanServiceClient) CreateManagedTrainingClientFuture(ctx context.Context, opts ...ManagedProvisionOptions) *Future[*FiretitanTrainingClient] {
+	return SubmitFuture(func() (*FiretitanTrainingClient, error) {
+		return c.CreateManagedTrainingClient(ctx, opts...)
+	})
+}
+
 func (c *FiretitanServiceClient) CreateBaseTrainingClientFuture(ctx context.Context, baseModel string, userMetadata map[string]string) *Future[*FiretitanTrainingClient] {
 	return SubmitFuture(func() (*FiretitanTrainingClient, error) {
 		return c.CreateBaseTrainingClient(ctx, baseModel, userMetadata)
