@@ -53,6 +53,8 @@ func uploadFileFromBody(body any) (File, bool) {
 		return fileFromValue(v.File)
 	case map[string]any:
 		return fileFromValue(v["file"])
+	case JSON:
+		return fileFromValue(v["file"])
 	case map[string]File:
 		file, ok := v["file"]
 		return file, ok

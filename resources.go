@@ -501,6 +501,7 @@ func (r *DatasetsResource) GetUploadEndpoint(ctx context.Context, datasetID stri
 }
 
 func (r *DatasetsResource) Upload(ctx context.Context, datasetID string, body any, opts ...RequestOption) (Response, error) {
+	opts = withAccountFromBody(body, opts)
 	if file, ok := uploadFileFromBody(body); ok {
 		return r.UploadFile(ctx, datasetID, file, opts...)
 	}

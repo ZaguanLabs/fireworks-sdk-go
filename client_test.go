@@ -1943,7 +1943,9 @@ func TestDeploymentsScaleTypedUsesActionPath(t *testing.T) {
 func TestDatasetsUploadFileTypedUsesMultipart(t *testing.T) {
 	t.Setenv("FIREWORKS_API_KEY", "test-key")
 
+	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
 		if got := r.URL.Path; got != "/v1/accounts/acct/datasets/ds-1:upload" {
 			t.Errorf("path = %q", got)
 		}
@@ -1978,7 +1980,7 @@ func TestDatasetsUploadFileTypedUsesMultipart(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := NewClient(WithBaseURL(server.URL), WithDefaultAccountID("acct"))
+	client, err := NewClient(WithBaseURL(server.URL))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1996,6 +1998,24 @@ func TestDatasetsUploadFileTypedUsesMultipart(t *testing.T) {
 	var _ *fwtypes.DatasetUploadResponse = out
 	if out.ID == nil || *out.ID != "file-1" || out.Filename == nil || *out.Filename != "train.jsonl" {
 		t.Fatalf("response = %#v", out)
+	}
+
+	raw, err := client.Datasets.Upload(
+		context.Background(),
+		"ds-1",
+		JSON{
+			"account_id": "acct",
+			"file":       NewFileFromBytes("train.jsonl", []byte("{\"prompt\":\"hi\"}\n")),
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if raw["id"] != "file-1" || raw["filename"] != "train.jsonl" {
+		t.Fatalf("raw upload response = %#v", raw)
+	}
+	if requests != 2 {
+		t.Fatalf("requests = %d, want 2", requests)
 	}
 }
 
