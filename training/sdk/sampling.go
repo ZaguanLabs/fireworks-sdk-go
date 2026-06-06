@@ -287,6 +287,8 @@ func (s *DeploymentSampler) FiretitanSamplingClient() *FiretitanSamplingClient {
 
 type FiretitanSamplingClient struct {
 	DeploymentSampler *DeploymentSampler
+	mu                sync.Mutex
+	closed            bool
 }
 
 func NewFiretitanSamplingClient(sampler *DeploymentSampler) *FiretitanSamplingClient {
@@ -300,6 +302,9 @@ func NewFiretitanSamplingClientForDeployment(inferenceURL, model, apiKey string,
 func (c *FiretitanSamplingClient) Sample(ctx context.Context, prompt []int, numSamples int, params FiretitanSamplingParams, opts ...FiretitanSampleOptions) (FiretitanSampleResponse, error) {
 	if c == nil || c.DeploymentSampler == nil {
 		return FiretitanSampleResponse{}, fmt.Errorf("FiretitanSamplingClient requires a DeploymentSampler")
+	}
+	if err := c.ensureOpen(); err != nil {
+		return FiretitanSampleResponse{}, err
 	}
 	var opt FiretitanSampleOptions
 	if len(opts) > 0 {
@@ -407,7 +412,38 @@ func (c *FiretitanSamplingClient) GetTelemetry() any {
 	return nil
 }
 
-func (c *FiretitanSamplingClient) Close() {}
+func (c *FiretitanSamplingClient) Close() {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	alreadyClosed := c.closed
+	c.closed = true
+	sampler := c.DeploymentSampler
+	c.mu.Unlock()
+	if alreadyClosed || sampler == nil {
+		return
+	}
+	sampler.Close()
+}
+
+func (c *FiretitanSamplingClient) ensureOpen() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return fmt.Errorf("FiretitanSamplingClient is closed")
+	}
+	return nil
+}
+
+func (s *DeploymentSampler) Close() {
+	if s == nil || s.HTTPClient == nil || s.HTTPClient.Transport == nil {
+		return
+	}
+	if transport, ok := s.HTTPClient.Transport.(interface{ CloseIdleConnections() }); ok {
+		transport.CloseIdleConnections()
+	}
+}
 
 func (s *DeploymentSampler) doOneCompletion(ctx context.Context, promptIDs []int, opt SampleOptions, stop []string) ([]SampledCompletion, error) {
 	backoff := SamplerRetryBaseBackoff

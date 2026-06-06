@@ -949,6 +949,28 @@ func TestFiretitanSamplingClientTopKPromptLogprobsUnsupported(t *testing.T) {
 	}
 }
 
+func TestFiretitanSamplingClientClosePreventsSampling(t *testing.T) {
+	sampler := NewDeploymentSampler("https://api.example.com", "m", "key",
+		WithDeploymentSamplerRequester(func(context.Context, []int, CompletionRequestOptions) (map[string]any, ServerMetrics, error) {
+			t.Fatal("requester should not be called after close")
+			return nil, ServerMetrics{}, nil
+		}),
+	)
+	client := NewFiretitanSamplingClient(sampler)
+	client.Close()
+	client.Close()
+
+	if _, err := client.Sample(context.Background(), []int{1, 2}, 1, FiretitanSamplingParams{}); err == nil || !strings.Contains(err.Error(), "closed") {
+		t.Fatalf("sample err = %v", err)
+	}
+	if _, err := client.ComputeLogprobs(context.Background(), []int{1, 2}); err == nil || !strings.Contains(err.Error(), "closed") {
+		t.Fatalf("logprobs err = %v", err)
+	}
+	if got := client.GetBaseModel(); got != "m" {
+		t.Fatalf("base model after close = %q", got)
+	}
+}
+
 func TestFiretitanSamplingClientAccessors(t *testing.T) {
 	tokenizer := &fakeDeploymentTokenizer{}
 	sampler := NewDeploymentSampler("https://api.example.com", "accounts/test/models/m", "key", WithDeploymentSamplerTokenizer(tokenizer))
