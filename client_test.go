@@ -1366,6 +1366,17 @@ func TestClientAPIResponseHelperExposesMetadataAndParsing(t *testing.T) {
 	if resp.Body[0] == 'X' {
 		t.Fatal("Bytes returned the internal body slice")
 	}
+	outputPath := filepath.Join(t.TempDir(), "response.json")
+	if err := resp.WriteToFile(outputPath); err != nil {
+		t.Fatal(err)
+	}
+	written, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(written) != resp.Text() {
+		t.Fatalf("written = %q, want %q", written, resp.Text())
+	}
 }
 
 func TestAPIResponseBoolMatchesPythonParseBool(t *testing.T) {

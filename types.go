@@ -6,6 +6,7 @@ import (
 	"mime"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 )
@@ -50,6 +51,14 @@ func (r *APIResponse) Bytes() []byte {
 		return nil
 	}
 	return append([]byte(nil), r.Body...)
+}
+
+func (r *APIResponse) WriteToFile(path string) error {
+	body := []byte(nil)
+	if r != nil {
+		body = r.Body
+	}
+	return os.WriteFile(path, body, 0o666)
 }
 
 func (r *APIResponse) JSON() (any, error) {
