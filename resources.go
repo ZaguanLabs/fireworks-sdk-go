@@ -246,6 +246,9 @@ func (r *UsersResource) Create(ctx context.Context, body any, opts ...RequestOpt
 }
 
 func (r *UsersResource) Update(ctx context.Context, userID string, body any, opts ...RequestOption) (Response, error) {
+	if err := requirePathArgument("user_id", userID); err != nil {
+		return nil, err
+	}
 	res := resource{r.client}
 	path, err := res.accountPath(opts, func(accountID string) string {
 		return "/v1/accounts/" + accountID + "/users/" + pathEscape(userID)
@@ -266,6 +269,9 @@ func (r *UsersResource) List(ctx context.Context, query map[string]any, opts ...
 }
 
 func (r *UsersResource) Get(ctx context.Context, userID string, opts ...RequestOption) (Response, error) {
+	if err := requirePathArgument("user_id", userID); err != nil {
+		return nil, err
+	}
 	res := resource{r.client}
 	path, err := res.accountPath(opts, func(accountID string) string {
 		return "/v1/accounts/" + accountID + "/users/" + pathEscape(userID)
@@ -281,6 +287,9 @@ type APIKeysResource struct {
 }
 
 func (r *APIKeysResource) Create(ctx context.Context, userID string, body any, opts ...RequestOption) (Response, error) {
+	if err := requirePathArgument("user_id", userID); err != nil {
+		return nil, err
+	}
 	res := resource{r.client}
 	path, err := res.accountPath(opts, func(accountID string) string {
 		return "/v1/accounts/" + accountID + "/users/" + pathEscape(userID) + "/apiKeys"
@@ -292,6 +301,9 @@ func (r *APIKeysResource) Create(ctx context.Context, userID string, body any, o
 }
 
 func (r *APIKeysResource) List(ctx context.Context, userID string, query map[string]any, opts ...RequestOption) (Response, error) {
+	if err := requirePathArgument("user_id", userID); err != nil {
+		return nil, err
+	}
 	res := resource{r.client}
 	path, err := res.accountPath(opts, func(accountID string) string {
 		return "/v1/accounts/" + accountID + "/users/" + pathEscape(userID) + "/apiKeys"
@@ -303,6 +315,9 @@ func (r *APIKeysResource) List(ctx context.Context, userID string, query map[str
 }
 
 func (r *APIKeysResource) Delete(ctx context.Context, userID string, body any, opts ...RequestOption) (Response, error) {
+	if err := requirePathArgument("user_id", userID); err != nil {
+		return nil, err
+	}
 	res := resource{r.client}
 	path, err := res.accountPath(opts, func(accountID string) string {
 		return "/v1/accounts/" + accountID + "/users/" + pathEscape(userID) + "/apiKeys:delete"

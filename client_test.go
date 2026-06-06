@@ -208,6 +208,46 @@ func TestResourceMethodsRejectMissingPathArguments(t *testing.T) {
 			_, err := client.Models.PrepareTyped(context.Background(), "", JSON{})
 			return err
 		}},
+		{"users get", func() error {
+			_, err := client.Users.Get(context.Background(), "")
+			return err
+		}},
+		{"users get typed", func() error {
+			_, err := client.Users.GetTyped(context.Background(), "", nil)
+			return err
+		}},
+		{"users update", func() error {
+			_, err := client.Users.Update(context.Background(), "", JSON{"role": "user"})
+			return err
+		}},
+		{"users update typed", func() error {
+			_, err := client.Users.UpdateTyped(context.Background(), "", fwtypes.UserUpdateParams{Role: "user"})
+			return err
+		}},
+		{"api keys create", func() error {
+			_, err := client.APIKeys.Create(context.Background(), "", JSON{})
+			return err
+		}},
+		{"api keys create typed", func() error {
+			_, err := client.APIKeys.CreateTyped(context.Background(), "", fwtypes.APIKeyCreateParams{})
+			return err
+		}},
+		{"api keys list", func() error {
+			_, err := client.APIKeys.List(context.Background(), "", nil)
+			return err
+		}},
+		{"api keys list typed", func() error {
+			_, err := client.APIKeys.ListTyped(context.Background(), "", nil)
+			return err
+		}},
+		{"api keys delete", func() error {
+			_, err := client.APIKeys.Delete(context.Background(), "", JSON{})
+			return err
+		}},
+		{"api keys delete typed", func() error {
+			_, err := client.APIKeys.DeleteTyped(context.Background(), "", fwtypes.APIKeyDeleteParams{})
+			return err
+		}},
 		{"deployment shape versions list", func() error {
 			_, err := client.DeploymentShapeVersions.List(context.Background(), "", nil)
 			return err

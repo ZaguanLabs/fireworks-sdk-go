@@ -53,6 +53,9 @@ func (r *UsersResource) CreateTyped(ctx context.Context, body any, opts ...Reque
 }
 
 func (r *UsersResource) UpdateTyped(ctx context.Context, userID string, body any, opts ...RequestOption) (*fwtypes.User, error) {
+	if err := requirePathArgument("user_id", userID); err != nil {
+		return nil, err
+	}
 	path, err := typedAccountPath(r.client, "/users/"+pathEscape(userID), opts)
 	if err != nil {
 		return nil, err
@@ -69,6 +72,9 @@ func (r *UsersResource) ListTyped(ctx context.Context, query any, opts ...Reques
 }
 
 func (r *UsersResource) GetTyped(ctx context.Context, userID string, query any, opts ...RequestOption) (*fwtypes.User, error) {
+	if err := requirePathArgument("user_id", userID); err != nil {
+		return nil, err
+	}
 	opts = withQuery(query, opts)
 	path, err := typedAccountPath(r.client, "/users/"+pathEscape(userID), opts)
 	if err != nil {
@@ -78,6 +84,9 @@ func (r *UsersResource) GetTyped(ctx context.Context, userID string, query any, 
 }
 
 func (r *APIKeysResource) CreateTyped(ctx context.Context, userID string, body any, opts ...RequestOption) (*fwtypes.APIKey, error) {
+	if err := requirePathArgument("user_id", userID); err != nil {
+		return nil, err
+	}
 	path, err := typedAccountPath(r.client, "/users/"+pathEscape(userID)+"/apiKeys", opts)
 	if err != nil {
 		return nil, err
@@ -86,6 +95,9 @@ func (r *APIKeysResource) CreateTyped(ctx context.Context, userID string, body a
 }
 
 func (r *APIKeysResource) ListTyped(ctx context.Context, userID string, query any, opts ...RequestOption) (*fwtypes.APIKeysPage, error) {
+	if err := requirePathArgument("user_id", userID); err != nil {
+		return nil, err
+	}
 	path, err := typedAccountPath(r.client, "/users/"+pathEscape(userID)+"/apiKeys", opts)
 	if err != nil {
 		return nil, err
@@ -94,6 +106,9 @@ func (r *APIKeysResource) ListTyped(ctx context.Context, userID string, query an
 }
 
 func (r *APIKeysResource) DeleteTyped(ctx context.Context, userID string, body any, opts ...RequestOption) (*fwtypes.APIKey, error) {
+	if err := requirePathArgument("user_id", userID); err != nil {
+		return nil, err
+	}
 	path, err := typedAccountPath(r.client, "/users/"+pathEscape(userID)+"/apiKeys:delete", opts)
 	if err != nil {
 		return nil, err
