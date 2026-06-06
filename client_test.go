@@ -3448,6 +3448,262 @@ func TestSecretsTypedAndGenericAllParamsUsePythonAliases(t *testing.T) {
 	}
 }
 
+func TestSupervisedFineTuningJobsTypedAllParamsUsePythonAliases(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/accounts/acct/supervisedFineTuningJobs":
+			query := r.URL.Query()
+			if got := query.Get("supervisedFineTuningJobId"); got != "sft-1" {
+				t.Errorf("supervisedFineTuningJobId = %q", got)
+			}
+			if got := query.Get("supervised_fine_tuning_job_id"); got != "" {
+				t.Errorf("unexpected snake query = %q", got)
+			}
+
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("decode create body: %v", err)
+			}
+			for _, key := range []string{"account_id", "supervisedFineTuningJobId", "supervised_fine_tuning_job_id"} {
+				if _, ok := body[key]; ok {
+					t.Errorf("create body should not contain %q: %#v", key, body)
+				}
+			}
+			for _, key := range []string{
+				"dataset",
+				"awsS3Config",
+				"azureBlobStorageConfig",
+				"baseModel",
+				"batchSize",
+				"batchSizeSamples",
+				"displayName",
+				"earlyStop",
+				"epochs",
+				"evalAutoCarveout",
+				"evaluationDataset",
+				"gradientAccumulationSteps",
+				"isTurbo",
+				"jinjaTemplate",
+				"learningRate",
+				"learningRateWarmupSteps",
+				"loraRank",
+				"maxContextLength",
+				"metricsFileSignedUrl",
+				"mtpEnabled",
+				"mtpFreezeBaseModel",
+				"mtpNumDraftTokens",
+				"nodes",
+				"optimizerWeightDecay",
+				"outputModel",
+				"region",
+				"usePurpose",
+				"wandbConfig",
+				"warmStartFrom",
+			} {
+				if _, ok := body[key]; !ok {
+					t.Errorf("create body missing %q: %#v", key, body)
+				}
+			}
+			if body["dataset"] != "dataset-1" || body["baseModel"] != "accounts/fireworks/models/base" || body["region"] != "REGION_UNSPECIFIED" {
+				t.Errorf("create scalar body = %#v", body)
+			}
+			if body["batchSize"] != float64(0) || body["learningRate"] != float64(0) || body["nodes"] != float64(0) {
+				t.Errorf("zero-valued numeric params were not preserved: %#v", body)
+			}
+			if body["earlyStop"] != true || body["evalAutoCarveout"] != true || body["isTurbo"] != true || body["mtpEnabled"] != true || body["mtpFreezeBaseModel"] != true {
+				t.Errorf("boolean params = %#v", body)
+			}
+
+			aws, ok := body["awsS3Config"].(map[string]any)
+			if !ok || aws["credentialsSecret"] != "aws-secret" || aws["iamRoleArn"] != "arn:aws:iam::123:role/fireworks" {
+				t.Errorf("awsS3Config = %#v", body["awsS3Config"])
+			}
+			azure, ok := body["azureBlobStorageConfig"].(map[string]any)
+			if !ok || azure["credentialsSecret"] != "azure-secret" || azure["managedIdentityClientId"] != "client-id" || azure["tenantId"] != "tenant-id" {
+				t.Errorf("azureBlobStorageConfig = %#v", body["azureBlobStorageConfig"])
+			}
+			wandb, ok := body["wandbConfig"].(map[string]any)
+			if !ok || wandb["apiKey"] != "wandb-key" || wandb["enabled"] != true || wandb["runId"] != "run-1" {
+				t.Errorf("wandbConfig = %#v", body["wandbConfig"])
+			}
+
+			_ = json.NewEncoder(w).Encode(JSON{
+				"name":        "accounts/acct/supervisedFineTuningJobs/sft-1",
+				"dataset":     "dataset-1",
+				"displayName": "Display Name",
+				"state":       "JOB_STATE_RUNNING",
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/accounts/acct/supervisedFineTuningJobs":
+			query := r.URL.Query()
+			if got := query.Get("filter"); got != "state=running" {
+				t.Errorf("filter = %q", got)
+			}
+			if got := query.Get("orderBy"); got != "create_time desc" {
+				t.Errorf("orderBy = %q", got)
+			}
+			if got := query.Get("pageSize"); got != "0" {
+				t.Errorf("pageSize = %q", got)
+			}
+			if got := query.Get("pageToken"); got != "cursor-1" {
+				t.Errorf("pageToken = %q", got)
+			}
+			if got := query.Get("readMask"); got != "name,state" {
+				t.Errorf("readMask = %q", got)
+			}
+			if got := query.Get("account_id"); got != "" {
+				t.Errorf("account_id should not be query param, got %q", got)
+			}
+			_ = json.NewEncoder(w).Encode(JSON{
+				"supervisedFineTuningJobs": []JSON{
+					{"name": "accounts/acct/supervisedFineTuningJobs/sft-1", "dataset": "dataset-1", "state": "JOB_STATE_RUNNING"},
+				},
+				"nextPageToken": "cursor-2",
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/accounts/acct/supervisedFineTuningJobs/sft-1":
+			if got := r.URL.Query().Get("readMask"); got != "name,state" {
+				t.Errorf("readMask = %q", got)
+			}
+			_ = json.NewEncoder(w).Encode(JSON{
+				"name":    "accounts/acct/supervisedFineTuningJobs/sft-1",
+				"dataset": "dataset-1",
+				"state":   "JOB_STATE_RUNNING",
+			})
+
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/accounts/acct/supervisedFineTuningJobs/sft-1":
+			_ = json.NewEncoder(w).Encode(JSON{"deleted": true})
+
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/accounts/acct/supervisedFineTuningJobs/sft-1:resume":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("decode resume body: %v", err)
+			}
+			if _, ok := body["account_id"]; ok {
+				t.Errorf("resume body should not contain account_id: %#v", body)
+			}
+			if body["reason"] != "manual" {
+				t.Errorf("resume body = %#v", body)
+			}
+			_ = json.NewEncoder(w).Encode(JSON{
+				"name":    "accounts/acct/supervisedFineTuningJobs/sft-1",
+				"dataset": "dataset-1",
+				"state":   "JOB_STATE_RUNNING",
+			})
+
+		default:
+			t.Errorf("unexpected request %s %s?%s", r.Method, r.URL.Path, r.URL.RawQuery)
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client, err := NewClient(WithBaseURL(server.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := client.SupervisedFineTuningJobs.CreateTyped(context.Background(), fwtypes.SupervisedFineTuningJobCreateParams{
+		AccountID:                 "acct",
+		Dataset:                   "dataset-1",
+		SupervisedFineTuningJobID: "sft-1",
+		AwsS3Config: fwtypes.SupervisedFineTuningJobCreateParamsAwsS3Config{
+			CredentialsSecret: "aws-secret",
+			IamRoleArn:        "arn:aws:iam::123:role/fireworks",
+		},
+		AzureBlobStorageConfig: fwtypes.SupervisedFineTuningJobCreateParamsAzureBlobStorageConfig{
+			CredentialsSecret:       "azure-secret",
+			ManagedIdentityClientID: "client-id",
+			TenantID:                "tenant-id",
+		},
+		BaseModel:                 "accounts/fireworks/models/base",
+		BatchSize:                 0,
+		BatchSizeSamples:          0,
+		DisplayName:               "Display Name",
+		EarlyStop:                 true,
+		Epochs:                    0,
+		EvalAutoCarveout:          true,
+		EvaluationDataset:         "eval-dataset",
+		GradientAccumulationSteps: 0,
+		IsTurbo:                   true,
+		JinjaTemplate:             "template",
+		LearningRate:              0,
+		LearningRateWarmupSteps:   0,
+		LoraRank:                  0,
+		MaxContextLength:          0,
+		MetricsFileSignedURL:      "gs://metrics.jsonl",
+		MtpEnabled:                true,
+		MtpFreezeBaseModel:        true,
+		MtpNumDraftTokens:         0,
+		Nodes:                     0,
+		OptimizerWeightDecay:      0,
+		OutputModel:               "output-model",
+		Region:                    "REGION_UNSPECIFIED",
+		UsePurpose:                "pilot",
+		WandbConfig: fwtypes.SharedParamsWandbConfig{
+			APIKey:  "wandb-key",
+			Enabled: true,
+			Entity:  "entity",
+			Project: "project",
+			RunID:   "run-1",
+		},
+		WarmStartFrom: "accounts/acct/models/warm-start",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.Name == nil || *created.Name != "accounts/acct/supervisedFineTuningJobs/sft-1" {
+		t.Fatalf("created = %#v", created)
+	}
+
+	page, err := client.SupervisedFineTuningJobs.ListTyped(context.Background(), fwtypes.SupervisedFineTuningJobListParams{
+		AccountID: "acct",
+		Filter:    "state=running",
+		OrderBy:   "create_time desc",
+		PageSize:  0,
+		PageToken: "cursor-1",
+		ReadMask:  "name,state",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var _ *fwtypes.SupervisedFineTuningJobsPage = page
+	if len(page.SupervisedFineTuningJobs) != 1 || page.NextPageToken == nil || *page.NextPageToken != "cursor-2" {
+		t.Fatalf("page = %#v", page)
+	}
+
+	got, err := client.SupervisedFineTuningJobs.GetTyped(context.Background(), "sft-1", fwtypes.SupervisedFineTuningJobGetParams{
+		AccountID: "acct",
+		ReadMask:  "name,state",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Name == nil || *got.Name != "accounts/acct/supervisedFineTuningJobs/sft-1" {
+		t.Fatalf("got = %#v", got)
+	}
+
+	deleted, err := client.SupervisedFineTuningJobs.DeleteTyped(context.Background(), "sft-1", WithAccountID("acct"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deleted["deleted"] != true {
+		t.Fatalf("deleted = %#v", deleted)
+	}
+
+	resumed, err := client.SupervisedFineTuningJobs.ResumeTyped(context.Background(), "sft-1", JSON{
+		"account_id": "acct",
+		"reason":     "manual",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resumed.Name == nil || *resumed.Name != "accounts/acct/supervisedFineTuningJobs/sft-1" {
+		t.Fatalf("resumed = %#v", resumed)
+	}
+}
+
 func TestDatasetsUploadFileTypedUsesMultipart(t *testing.T) {
 	t.Setenv("FIREWORKS_API_KEY", "test-key")
 
