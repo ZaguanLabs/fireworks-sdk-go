@@ -206,6 +206,7 @@ func (r *DatasetsResource) GetUploadEndpointTyped(ctx context.Context, datasetID
 }
 
 func (r *DatasetsResource) UploadTyped(ctx context.Context, datasetID string, body any, opts ...RequestOption) (*fwtypes.DatasetUploadResponse, error) {
+	opts = withAccountFromBody(body, opts)
 	if file, ok := uploadFileFromBody(body); ok {
 		return r.UploadFileTyped(ctx, datasetID, file, opts...)
 	}
@@ -594,6 +595,13 @@ func accountIDFromBody(body any) string {
 			return accountID
 		}
 		return ""
+	case fwtypes.DatasetUploadParams:
+		return v.AccountID
+	case *fwtypes.DatasetUploadParams:
+		if v == nil {
+			return ""
+		}
+		return v.AccountID
 	default:
 		payload, err := json.Marshal(body)
 		if err != nil {

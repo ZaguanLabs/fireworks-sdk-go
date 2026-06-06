@@ -1986,7 +1986,8 @@ func TestDatasetsUploadFileTypedUsesMultipart(t *testing.T) {
 		context.Background(),
 		"ds-1",
 		fwtypes.DatasetUploadParams{
-			File: NewFileFromBytes("train.jsonl", []byte("{\"prompt\":\"hi\"}\n")),
+			AccountID: "acct",
+			File:      NewFileFromBytes("train.jsonl", []byte("{\"prompt\":\"hi\"}\n")),
 		},
 	)
 	if err != nil {
