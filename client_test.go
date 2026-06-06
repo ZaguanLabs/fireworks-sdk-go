@@ -1724,6 +1724,52 @@ func TestTypedCreateSplitsPythonQueryFields(t *testing.T) {
 	}
 }
 
+func TestTypedJSONBodyUsesPythonAliases(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Method; got != http.MethodPatch {
+			t.Errorf("method = %q", got)
+		}
+		if got := r.URL.Path; got != "/v1/accounts/acct-from-json/models/model-1" {
+			t.Errorf("path = %q", got)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode body: %v", err)
+		}
+		if got := body["displayName"]; got != "Model One" {
+			t.Errorf("displayName = %q", got)
+		}
+		if got := body["baseModel"]; got != "accounts/fireworks/models/base" {
+			t.Errorf("baseModel = %q", got)
+		}
+		for _, key := range []string{"account_id", "display_name", "base_model"} {
+			if _, ok := body[key]; ok {
+				t.Errorf("body should not contain %q: %#v", key, body)
+			}
+		}
+		_ = json.NewEncoder(w).Encode(JSON{"name": "accounts/acct-from-json/models/model-1"})
+	}))
+	defer server.Close()
+
+	client, err := NewClient(WithBaseURL(server.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := client.Models.UpdateTyped(context.Background(), "model-1", JSON{
+		"account_id":   "acct-from-json",
+		"display_name": "Model One",
+		"base_model":   "accounts/fireworks/models/base",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Name == nil || *out.Name != "accounts/acct-from-json/models/model-1" {
+		t.Fatalf("model = %#v", out)
+	}
+}
+
 func TestTypedDeleteUsesPythonQueryAliases(t *testing.T) {
 	t.Setenv("FIREWORKS_API_KEY", "test-key")
 

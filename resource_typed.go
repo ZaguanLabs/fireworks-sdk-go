@@ -609,9 +609,13 @@ func accountIDFromBody(body any) string {
 }
 
 func normalizeManagementBody(body any) any {
-	switch body.(type) {
-	case nil, map[string]any, JSON:
-		return body
+	switch v := body.(type) {
+	case nil:
+		return nil
+	case map[string]any:
+		return normalizeManagementValue(v)
+	case JSON:
+		return normalizeManagementValue(map[string]any(v))
 	default:
 		payload, err := json.Marshal(body)
 		if err != nil || string(payload) == "null" {
