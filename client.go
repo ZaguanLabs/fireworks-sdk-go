@@ -447,7 +447,7 @@ func (c *Client) NewRequest(ctx context.Context, method, path string, body any, 
 		}
 	}
 	if body != nil {
-		payload, err := json.Marshal(body)
+		payload, err := openapiMarshal(body)
 		if err != nil {
 			return nil, fmt.Errorf("fireworks: marshal request body: %w", err)
 		}

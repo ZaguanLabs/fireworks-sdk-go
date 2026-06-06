@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -1038,6 +1039,45 @@ func TestClientHTTPVerbHelpers(t *testing.T) {
 		if !seen[method] {
 			t.Fatalf("did not see %s", method)
 		}
+	}
+}
+
+func TestNewRequestUsesPythonOpenAPIDumpsJSONSemantics(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+
+	client, err := NewClient(WithBaseURL("https://example.test"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := client.NewRequest(context.Background(), http.MethodPost, "/json", JSON{
+		"text":    "<tag>&value",
+		"unicode": "åß∂",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(req.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(body), `{"text":"<tag>&value","unicode":"åß∂"}`; got != want {
+		t.Fatalf("body = %q, want %q", got, want)
+	}
+	if strings.Contains(string(body), `\u003c`) || strings.Contains(string(body), `\u0026`) || strings.Contains(string(body), `\u00e5`) {
+		t.Fatalf("body unexpectedly escaped like default json.Marshal: %q", body)
+	}
+}
+
+func TestNewRequestRejectsNaNLikePythonOpenAPIDumps(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+
+	client, err := NewClient(WithBaseURL("https://example.test"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.NewRequest(context.Background(), http.MethodPost, "/json", JSON{"nan": math.NaN()})
+	if err == nil || !strings.Contains(err.Error(), "unsupported value: NaN") {
+		t.Fatalf("err = %v", err)
 	}
 }
 
