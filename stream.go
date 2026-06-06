@@ -10,12 +10,16 @@ import (
 )
 
 type Stream struct {
-	response *http.Response
-	scanner  *bufio.Scanner
-	current  Response
-	raw      []byte
-	json     any
-	err      error
+	response       *http.Response
+	scanner        *bufio.Scanner
+	current        Response
+	raw            []byte
+	json           any
+	err            error
+	event          string
+	data           []string
+	hasLastEventID bool
+	hasRetry       bool
 }
 
 type TypedStream[T any] struct {
@@ -61,36 +65,86 @@ func newStream(ctx context.Context, client *Client, path string, body any, opts 
 
 func (s *Stream) Next() bool {
 	for s.scanner.Scan() {
-		line := strings.TrimSpace(s.scanner.Text())
-		if line == "" || strings.HasPrefix(line, ":") {
+		line := strings.TrimSuffix(s.scanner.Text(), "\r")
+		if line == "" {
+			yield, stop := s.dispatchEvent()
+			if yield {
+				return true
+			}
+			if stop {
+				_ = s.Close()
+				return false
+			}
 			continue
 		}
-		if !strings.HasPrefix(line, "data:") {
-			continue
-		}
-		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-		if data == "[DONE]" {
-			return false
-		}
-		raw := []byte(data)
-		var decoded any
-		if err := json.Unmarshal(raw, &decoded); err != nil {
-			s.err = err
-			return false
-		}
-		s.raw = append(s.raw[:0], raw...)
-		s.json = decoded
-		if object, ok := decoded.(map[string]any); ok {
-			s.current = Response(object)
-		} else {
-			s.current = nil
-		}
-		return true
+		s.decodeLine(line)
 	}
 	if err := s.scanner.Err(); err != nil {
 		s.err = err
 	}
+	_ = s.Close()
 	return false
+}
+
+func (s *Stream) decodeLine(line string) {
+	if strings.HasPrefix(line, ":") {
+		return
+	}
+
+	field, value, ok := strings.Cut(line, ":")
+	if !ok {
+		value = ""
+	}
+	if strings.HasPrefix(value, " ") {
+		value = value[1:]
+	}
+
+	switch field {
+	case "event":
+		s.event = value
+	case "data":
+		s.data = append(s.data, value)
+	case "id":
+		if !strings.Contains(value, "\x00") {
+			s.hasLastEventID = true
+		}
+	case "retry":
+		s.hasRetry = true
+	}
+}
+
+func (s *Stream) dispatchEvent() (yield bool, stop bool) {
+	if s.event == "" && len(s.data) == 0 && !s.hasLastEventID && !s.hasRetry {
+		return false, false
+	}
+
+	event := s.event
+	data := strings.Join(s.data, "\n")
+	s.event = ""
+	s.data = nil
+	s.hasRetry = false
+
+	if strings.HasPrefix(data, "[DONE]") || event == "message_stop" {
+		return false, true
+	}
+	if event == "ping" {
+		return false, false
+	}
+
+	raw := []byte(data)
+	var decoded any
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		s.err = err
+		return false, true
+	}
+	s.raw = append(s.raw[:0], raw...)
+	s.json = decoded
+	if object, ok := decoded.(map[string]any); ok {
+		s.current = Response(object)
+	} else {
+		s.current = nil
+	}
+	return true, false
 }
 
 func (s *Stream) Current() Response {

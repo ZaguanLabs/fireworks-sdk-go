@@ -1163,6 +1163,77 @@ func TestStreamReadsServerSentEvents(t *testing.T) {
 	}
 }
 
+func TestStreamHandlesPythonSSEDecoderSemantics(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(": keepalive\n"))
+		_, _ = w.Write([]byte("event: ping\n"))
+		_, _ = w.Write([]byte("data: {\"id\":\"skip\"}\n\n"))
+		_, _ = w.Write([]byte("event: completion\n"))
+		_, _ = w.Write([]byte("retry: 1000\n"))
+		_, _ = w.Write([]byte("data: {\"id\":\n"))
+		_, _ = w.Write([]byte("data: \"chunk-2\"}\n\n"))
+		_, _ = w.Write([]byte("data: [DONE] trailing metadata\n\n"))
+	}))
+	defer server.Close()
+
+	client, err := NewClient(WithBaseURL(server.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stream, err := client.Chat.Completions.CreateStream(context.Background(), JSON{"stream": true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Close()
+
+	if !stream.Next() {
+		t.Fatalf("expected completion chunk, err=%v", stream.Err())
+	}
+	if got := stream.Current()["id"]; got != "chunk-2" {
+		t.Fatalf("chunk id = %q", got)
+	}
+	if raw := string(stream.RawCurrent()); raw != "{\"id\":\n\"chunk-2\"}" {
+		t.Fatalf("raw chunk = %q", raw)
+	}
+	if stream.Next() {
+		t.Fatal("expected stream to stop at [DONE] prefix")
+	}
+	if err := stream.Err(); err != nil && !strings.Contains(err.Error(), "closed") {
+		t.Fatalf("stream err = %v", err)
+	}
+}
+
+func TestStreamStopsAtMessageStopEvent(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("event: message_stop\n\n"))
+		_, _ = w.Write([]byte("data: {\"id\":\"unexpected\"}\n\n"))
+	}))
+	defer server.Close()
+
+	client, err := NewClient(WithBaseURL(server.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stream, err := client.Completions.CreateStream(context.Background(), JSON{"stream": true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Close()
+
+	if stream.Next() {
+		t.Fatalf("unexpected chunk = %#v", stream.Current())
+	}
+	if err := stream.Err(); err != nil && !strings.Contains(err.Error(), "closed") {
+		t.Fatalf("stream err = %v", err)
+	}
+}
+
 func TestStreamExposesRawAndNonObjectJSONEvents(t *testing.T) {
 	t.Setenv("FIREWORKS_API_KEY", "test-key")
 

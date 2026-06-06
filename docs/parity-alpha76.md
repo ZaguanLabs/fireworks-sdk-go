@@ -40,7 +40,7 @@ Status values:
 | Area | Status | Notes |
 | --- | --- | --- |
 | Generated top-level resources/types | ported | Go has resource clients, typed aliases, generated types, version parity, smoke tests, and a checked-in alpha.76 resource/type report at `docs/resource-type-parity-alpha76.md`. |
-| Streaming/text/image/file primitives | partial | Core HTTP, file, stream, and typed resource helpers exist. Needs endpoint-by-endpoint parity audit outside `training/sdk`. |
+| Streaming/text/image/file primitives | partial | Core HTTP, file, stream, and typed resource helpers exist. Stream SSE framing now mirrors Python for comments, multi-line data, ping filtering, `[DONE]` prefixes, `message_stop`, and terminal response close. Needs endpoint-by-endpoint parity audit outside `training/sdk`. |
 
 ## Python-only behavior
 
