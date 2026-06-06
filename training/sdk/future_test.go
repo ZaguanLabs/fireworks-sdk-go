@@ -82,6 +82,44 @@ func TestFiretitanServiceClientCreateTrainingClientFuture(t *testing.T) {
 	}
 }
 
+func TestFiretitanServiceClientCreateTrainingClientFromStateFuture(t *testing.T) {
+	state := &fakeTrainingStateBackend{}
+	svc, err := NewFiretitanServiceClient(FiretitanServiceClientOptions{
+		Config: FiretitanProvisioningConfig{BaseModel: "accounts/acct/models/base"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	info := WeightsInfo{BaseModel: "accounts/acct/models/resumed"}
+	client, err := svc.CreateTrainingClientFromStateFuture(context.Background(), "state://step-1", CreateTrainingClientFromStateOptions{
+		StateBackend: state,
+		WeightsInfo:  &info,
+	}).Await()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.Config.BaseModel != "accounts/acct/models/resumed" || state.loadStatePath != "state://step-1" {
+		t.Fatalf("client=%#v state=%#v", client.Config, state)
+	}
+
+	state2 := &fakeTrainingStateBackend{}
+	svc2, err := NewFiretitanServiceClient(FiretitanServiceClientOptions{
+		Config: FiretitanProvisioningConfig{BaseModel: "accounts/acct/models/base-2"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err = svc2.CreateTrainingClientFromStateWithOptimizerFuture(context.Background(), "state://step-2", CreateTrainingClientFromStateOptions{
+		StateBackend: state2,
+	}).Await()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.Config.BaseModel != "accounts/acct/models/base-2" || state2.loadStateOptimizerPath != "state://step-2" {
+		t.Fatalf("client=%#v state=%#v", client.Config, state2)
+	}
+}
+
 func TestFiretitanTrainingClientWeightSyncerFutures(t *testing.T) {
 	saver := &fakeSamplerSaver{
 		results: []SaveSamplerResult{

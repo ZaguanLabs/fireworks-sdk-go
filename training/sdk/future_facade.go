@@ -8,6 +8,18 @@ func (c *FiretitanServiceClient) CreateTrainingClientFuture(ctx context.Context,
 	})
 }
 
+func (c *FiretitanServiceClient) CreateTrainingClientFromStateFuture(ctx context.Context, path string, opts ...CreateTrainingClientFromStateOptions) *Future[*FiretitanTrainingClient] {
+	return SubmitFuture(func() (*FiretitanTrainingClient, error) {
+		return c.CreateTrainingClientFromState(ctx, path, opts...)
+	})
+}
+
+func (c *FiretitanServiceClient) CreateTrainingClientFromStateWithOptimizerFuture(ctx context.Context, path string, opts ...CreateTrainingClientFromStateOptions) *Future[*FiretitanTrainingClient] {
+	return SubmitFuture(func() (*FiretitanTrainingClient, error) {
+		return c.CreateTrainingClientFromStateWithOptimizer(ctx, path, opts...)
+	})
+}
+
 func (c *FiretitanTrainingClient) SaveWeightsForSamplerFuture(ctx context.Context, name string, checkpointType ...string) *Future[SaveSamplerResult] {
 	return SubmitFuture(func() (SaveSamplerResult, error) {
 		return c.SaveWeightsForSampler(ctx, name, checkpointType...)
