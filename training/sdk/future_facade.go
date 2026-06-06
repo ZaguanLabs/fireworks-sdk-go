@@ -96,6 +96,18 @@ func (c *FiretitanTrainingClient) CreateBaseTrainingClientFuture(ctx context.Con
 	})
 }
 
+func (c *FiretitanTrainingClient) OptimStepFuture(ctx context.Context, adamParams any, gradAccumulationNormalization any) *Future[map[string]any] {
+	return SubmitFuture(func() (map[string]any, error) {
+		return c.OptimStep(ctx, adamParams, gradAccumulationNormalization)
+	})
+}
+
+func (c *FiretitanTrainingClient) ForwardBackwardFuture(ctx context.Context, data []TrainingDatum, lossFn string, lossFnConfig map[string]any) *Future[ForwardBackwardOutput] {
+	return SubmitFuture(func() (ForwardBackwardOutput, error) {
+		return c.ForwardBackward(ctx, data, lossFn, lossFnConfig)
+	})
+}
+
 func (c *FiretitanTrainingClient) SaveWeightsAndGetSamplingClientFuture(ctx context.Context, name string, tokenizer DeploymentTokenizer, checkpointType ...string) *Future[*FiretitanSamplingClient] {
 	return SubmitFuture(func() (*FiretitanSamplingClient, error) {
 		return c.SaveWeightsAndGetSamplingClient(ctx, name, tokenizer, checkpointType...)

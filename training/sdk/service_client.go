@@ -312,6 +312,7 @@ type CreateFiretitanTrainingClientOptions struct {
 	WeightSyncer               *WeightSyncer
 	StateBackend               TrainingStateBackend
 	AdapterLoader              TrainingAdapterLoader
+	ComputeBackend             TrainingComputeBackend
 	ModelID                    string
 	TrainerBaseURL             string
 	RequiresInitialSamplerSync bool
@@ -336,6 +337,26 @@ type TrainingStateBackend interface {
 
 type TrainingAdapterLoader interface {
 	LoadAdapter(context.Context, LoadAdapterOptions) (LoadAdapterResponse, error)
+}
+
+type OptimStepOptions struct {
+	ModelID                       string
+	SeqID                         int
+	AdamParams                    any
+	GradAccumulationNormalization string
+}
+
+type ForwardBackwardOptions struct {
+	ModelID      string
+	SeqID        int
+	Data         []TrainingDatum
+	LossFn       LossFn
+	LossFnConfig map[string]any
+}
+
+type TrainingComputeBackend interface {
+	OptimStep(context.Context, OptimStepOptions) (map[string]any, error)
+	ForwardBackward(context.Context, ForwardBackwardOptions) (ForwardBackwardOutput, error)
 }
 
 type WeightsInfoProvider func(context.Context, string) (WeightsInfo, error)
@@ -375,6 +396,7 @@ type FiretitanTrainingClient struct {
 	WeightSyncer    *WeightSyncer
 	StateBackend    TrainingStateBackend
 	AdapterLoader   TrainingAdapterLoader
+	ComputeBackend  TrainingComputeBackend
 	ModelID         string
 	TrainerBaseURL  string
 	RequestSeqID    int
@@ -444,6 +466,7 @@ func (c *FiretitanServiceClient) CreateTrainingClient(_ context.Context, opts ..
 		WeightSyncer:    opt.WeightSyncer,
 		StateBackend:    opt.StateBackend,
 		AdapterLoader:   opt.AdapterLoader,
+		ComputeBackend:  opt.ComputeBackend,
 		ModelID:         opt.ModelID,
 		TrainerBaseURL:  opt.TrainerBaseURL,
 		SavedStateNames: map[string]bool{},
@@ -657,6 +680,61 @@ func (c *FiretitanTrainingClient) CreateBaseTrainingClient(ctx context.Context, 
 		return nil, fmt.Errorf("FiretitanTrainingClient requires a service to create a base training client")
 	}
 	return c.Service.CreateBaseTrainingClient(ctx, baseModel, userMetadata)
+}
+
+func (c *FiretitanTrainingClient) AttachComputeBackend(backend TrainingComputeBackend) *FiretitanTrainingClient {
+	if c != nil {
+		c.ComputeBackend = backend
+	}
+	return c
+}
+
+func (c *FiretitanTrainingClient) OptimStep(ctx context.Context, adamParams any, gradAccumulationNormalization any) (map[string]any, error) {
+	if c == nil || c.ComputeBackend == nil {
+		return nil, fmt.Errorf("FiretitanTrainingClient requires a ComputeBackend to optim_step")
+	}
+	if strings.TrimSpace(c.ModelID) == "" {
+		return nil, fmt.Errorf("model_id must be a non-empty string")
+	}
+	normalization, err := NormalizeGradAccNormalization(gradAccumulationNormalization)
+	if err != nil {
+		return nil, err
+	}
+	c.RequestSeqID++
+	return c.ComputeBackend.OptimStep(ctx, OptimStepOptions{
+		ModelID:                       c.ModelID,
+		SeqID:                         c.RequestSeqID,
+		AdamParams:                    adamParams,
+		GradAccumulationNormalization: normalization,
+	})
+}
+
+func (c *FiretitanTrainingClient) ForwardBackward(ctx context.Context, data []TrainingDatum, lossFn string, lossFnConfig map[string]any) (ForwardBackwardOutput, error) {
+	if c == nil || c.ComputeBackend == nil {
+		return ForwardBackwardOutput{}, fmt.Errorf("FiretitanTrainingClient requires a ComputeBackend to forward_backward")
+	}
+	if strings.TrimSpace(c.ModelID) == "" {
+		return ForwardBackwardOutput{}, fmt.Errorf("model_id must be a non-empty string")
+	}
+	normalizedLossFn, err := NormalizeLossFn(lossFn)
+	if err != nil {
+		return ForwardBackwardOutput{}, err
+	}
+	c.RequestSeqID++
+	output, err := c.ComputeBackend.ForwardBackward(ctx, ForwardBackwardOptions{
+		ModelID:      c.ModelID,
+		SeqID:        c.RequestSeqID,
+		Data:         append([]TrainingDatum(nil), data...),
+		LossFn:       normalizedLossFn,
+		LossFnConfig: cloneAnyMap(lossFnConfig),
+	})
+	if err != nil {
+		return ForwardBackwardOutput{}, err
+	}
+	if normalizedLossFn == LossFnCrossEntropy {
+		output = AddCrossEntropyResponseTokens(output, data)
+	}
+	return output, nil
 }
 
 func (c *FiretitanTrainingClient) ListCheckpoints(ctx context.Context, pageSize int) ([]map[string]any, error) {

@@ -597,6 +597,26 @@ func (l *fakeTrainingAdapterLoader) LoadAdapter(_ context.Context, opts LoadAdap
 	return LoadAdapterResponse{ModelID: opts.ModelID, AdapterPath: opts.AdapterPath, Type: "load_adapter"}, nil
 }
 
+type fakeTrainingComputeBackend struct {
+	optimCalls            []OptimStepOptions
+	forwardBackwardCalls  []ForwardBackwardOptions
+	optimResult           map[string]any
+	forwardBackwardResult ForwardBackwardOutput
+}
+
+func (b *fakeTrainingComputeBackend) OptimStep(_ context.Context, opts OptimStepOptions) (map[string]any, error) {
+	b.optimCalls = append(b.optimCalls, opts)
+	if b.optimResult != nil {
+		return cloneAnyMap(b.optimResult), nil
+	}
+	return map[string]any{"ok": true}, nil
+}
+
+func (b *fakeTrainingComputeBackend) ForwardBackward(_ context.Context, opts ForwardBackwardOptions) (ForwardBackwardOutput, error) {
+	b.forwardBackwardCalls = append(b.forwardBackwardCalls, opts)
+	return b.forwardBackwardResult, nil
+}
+
 func TestFiretitanServiceClientCreateTrainingClientFromStateProvider(t *testing.T) {
 	state := &fakeTrainingStateBackend{}
 	rank := 8
@@ -786,6 +806,91 @@ func TestFiretitanTrainingClientLoadAdapterDelegates(t *testing.T) {
 	call := loader.calls[0]
 	if call.TrainerBaseURL != "https://trainer.example.com/" || call.ModelID != "model-1" || call.AdapterPath != "gs://bucket/adapter" || call.SeqID != 1 {
 		t.Fatalf("call = %#v", call)
+	}
+}
+
+func TestFiretitanTrainingClientOptimStepDelegates(t *testing.T) {
+	backend := &fakeTrainingComputeBackend{optimResult: map[string]any{"status": "ok"}}
+	svc, err := NewFiretitanServiceClient(FiretitanServiceClientOptions{
+		Config: FiretitanProvisioningConfig{BaseModel: "accounts/acct/models/base"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := svc.CreateTrainingClient(context.Background(), CreateFiretitanTrainingClientOptions{
+		ComputeBackend: backend,
+		ModelID:        "model-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := client.OptimStep(context.Background(), map[string]any{"learning_rate": 0.1}, GradAccNormalizationNumLossTokens)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result["status"] != "ok" || len(backend.optimCalls) != 1 {
+		t.Fatalf("result=%#v calls=%#v", result, backend.optimCalls)
+	}
+	call := backend.optimCalls[0]
+	if call.ModelID != "model-1" || call.SeqID != 1 || call.GradAccumulationNormalization != "num_loss_tokens" {
+		t.Fatalf("call = %#v", call)
+	}
+	if client.AttachComputeBackend(backend) != client {
+		t.Fatal("AttachComputeBackend should return client")
+	}
+}
+
+func TestFiretitanTrainingClientForwardBackwardDelegatesAndCountsTokens(t *testing.T) {
+	backend := &fakeTrainingComputeBackend{
+		forwardBackwardResult: ForwardBackwardOutput{Metrics: map[string]float64{"loss:sum": 3}},
+	}
+	svc, err := NewFiretitanServiceClient(FiretitanServiceClientOptions{
+		Config: FiretitanProvisioningConfig{BaseModel: "accounts/acct/models/base"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := svc.CreateTrainingClient(context.Background(), CreateFiretitanTrainingClientOptions{
+		ComputeBackend: backend,
+		ModelID:        "model-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := []TrainingDatum{{LossFnInputs: map[string]TensorData{"target_tokens": {Data: []int{1, 2, 3}}}}}
+	output, err := client.ForwardBackward(context.Background(), data, "cross_entropy", map[string]any{"temperature": 1.0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if output.Metrics[ResponseTokensMetric] != 3 {
+		t.Fatalf("metrics = %#v", output.Metrics)
+	}
+	if len(backend.forwardBackwardCalls) != 1 {
+		t.Fatalf("calls = %#v", backend.forwardBackwardCalls)
+	}
+	call := backend.forwardBackwardCalls[0]
+	if call.ModelID != "model-1" || call.SeqID != 1 || call.LossFn != LossFnCrossEntropy || call.LossFnConfig["temperature"] != 1.0 {
+		t.Fatalf("call = %#v", call)
+	}
+}
+
+func TestFiretitanTrainingClientComputeRequiresBackendAndModel(t *testing.T) {
+	svc, err := NewFiretitanServiceClient(FiretitanServiceClientOptions{
+		Config: FiretitanProvisioningConfig{BaseModel: "accounts/acct/models/base"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := svc.CreateTrainingClient(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.OptimStep(context.Background(), nil, nil); err == nil || !strings.Contains(err.Error(), "ComputeBackend") {
+		t.Fatalf("optim error = %v", err)
+	}
+	client.AttachComputeBackend(&fakeTrainingComputeBackend{})
+	if _, err := client.ForwardBackward(context.Background(), nil, "cross_entropy", nil); err == nil || !strings.Contains(err.Error(), "model_id") {
+		t.Fatalf("forward_backward error = %v", err)
 	}
 }
 

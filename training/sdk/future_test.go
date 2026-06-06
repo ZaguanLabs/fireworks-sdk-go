@@ -435,6 +435,42 @@ func TestFiretitanTrainingClientStateAndAdapterFutures(t *testing.T) {
 	}
 }
 
+func TestFiretitanTrainingClientComputeFutures(t *testing.T) {
+	backend := &fakeTrainingComputeBackend{
+		optimResult:           map[string]any{"status": "ok"},
+		forwardBackwardResult: ForwardBackwardOutput{Metrics: map[string]float64{}},
+	}
+	svc, err := NewFiretitanServiceClient(FiretitanServiceClientOptions{
+		Config: FiretitanProvisioningConfig{BaseModel: "accounts/acct/models/base"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := svc.CreateTrainingClient(context.Background(), CreateFiretitanTrainingClientOptions{
+		ComputeBackend: backend,
+		ModelID:        "model-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	optim, err := client.OptimStepFuture(context.Background(), map[string]any{"beta1": 0.9}, "none").Await()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if optim["status"] != "ok" || len(backend.optimCalls) != 1 || backend.optimCalls[0].GradAccumulationNormalization != "none" {
+		t.Fatalf("optim=%#v calls=%#v", optim, backend.optimCalls)
+	}
+	output, err := client.ForwardBackwardFuture(context.Background(), []TrainingDatum{
+		{LossFnInputs: map[string]TensorData{"target_tokens": {Data: []int{1, 2}}}},
+	}, "cross_entropy", nil).Await()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if output.Metrics[ResponseTokensMetric] != 2 || len(backend.forwardBackwardCalls) != 1 {
+		t.Fatalf("output=%#v calls=%#v", output, backend.forwardBackwardCalls)
+	}
+}
+
 func TestFiretitanSamplingClientFutures(t *testing.T) {
 	sampler := NewDeploymentSampler("https://api.example.com", "accounts/acct/deployments/dep", "key",
 		WithDeploymentSamplerRequester(func(_ context.Context, _ []int, opts CompletionRequestOptions) (map[string]any, ServerMetrics, error) {
