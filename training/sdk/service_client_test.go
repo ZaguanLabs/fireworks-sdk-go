@@ -276,6 +276,116 @@ func (l *fakeTrainingAdapterLoader) LoadAdapter(_ context.Context, opts LoadAdap
 	return LoadAdapterResponse{ModelID: opts.ModelID, AdapterPath: opts.AdapterPath, Type: "load_adapter"}, nil
 }
 
+func TestFiretitanServiceClientCreateTrainingClientFromStateProvider(t *testing.T) {
+	state := &fakeTrainingStateBackend{}
+	rank := 8
+	trainUnembed := false
+	trainMLP := true
+	trainAttn := false
+	var providerPath string
+	svc, err := NewFiretitanServiceClient(FiretitanServiceClientOptions{
+		Config: FiretitanProvisioningConfig{BaseModel: "accounts/acct/models/default"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := svc.CreateTrainingClientFromState(context.Background(), "state://step-1", CreateTrainingClientFromStateOptions{
+		UserMetadata: map[string]string{"run": "resume"},
+		StateBackend: state,
+		WeightsInfoProvider: func(_ context.Context, path string) (WeightsInfo, error) {
+			providerPath = path
+			return WeightsInfo{
+				BaseModel:    "accounts/acct/models/resumed",
+				IsLora:       true,
+				LoraRank:     &rank,
+				TrainUnembed: &trainUnembed,
+				TrainMLP:     &trainMLP,
+				TrainAttn:    &trainAttn,
+			}, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if providerPath != "state://step-1" || state.loadStatePath != "state://step-1" {
+		t.Fatalf("providerPath=%q state=%#v", providerPath, state)
+	}
+	if client.Config.BaseModel != "accounts/acct/models/resumed" || client.Config.LoraRank != 8 {
+		t.Fatalf("client config = %#v", client.Config)
+	}
+	if client.Config.TrainUnembed == nil || *client.Config.TrainUnembed || client.Config.TrainAttn == nil || *client.Config.TrainAttn {
+		t.Fatalf("train flags = %#v", client.Config)
+	}
+	if client.UserMetadata["run"] != "resume" {
+		t.Fatalf("metadata = %#v", client.UserMetadata)
+	}
+}
+
+func TestFiretitanServiceClientCreateTrainingClientFromStateWithOptimizer(t *testing.T) {
+	state := &fakeTrainingStateBackend{}
+	svc, err := NewFiretitanServiceClient(FiretitanServiceClientOptions{
+		Config: FiretitanProvisioningConfig{BaseModel: "accounts/acct/models/base"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	info := WeightsInfo{BaseModel: "accounts/acct/models/resumed"}
+	client, err := svc.CreateTrainingClientFromStateWithOptimizer(context.Background(), "state://step-2", CreateTrainingClientFromStateOptions{
+		StateBackend: state,
+		WeightsInfo:  &info,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.Config.BaseModel != "accounts/acct/models/resumed" || client.Config.LoraRank != 0 {
+		t.Fatalf("client config = %#v", client.Config)
+	}
+	if state.loadStateOptimizerPath != "state://step-2" || state.loadStatePath != "" {
+		t.Fatalf("state backend = %#v", state)
+	}
+}
+
+func TestFiretitanServiceClientCreateTrainingClientFromStateRejectsToken(t *testing.T) {
+	state := &fakeTrainingStateBackend{}
+	token := "token"
+	svc, err := NewFiretitanServiceClient(FiretitanServiceClientOptions{
+		Config: FiretitanProvisioningConfig{BaseModel: "accounts/acct/models/base"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = svc.CreateTrainingClientFromState(context.Background(), "state://step-1", CreateTrainingClientFromStateOptions{
+		StateBackend:       state,
+		WeightsAccessToken: &token,
+	})
+	if err == nil || !strings.Contains(err.Error(), "FiretitanServiceClient.create_training_client_from_state(weights_access_token=...)") {
+		t.Fatalf("token error = %v", err)
+	}
+}
+
+func TestFiretitanServiceClientCreateTrainingClientFromStateUsesManagedConfigFallback(t *testing.T) {
+	state := &fakeTrainingStateBackend{}
+	svc, err := NewFiretitanServiceClient(FiretitanServiceClientOptions{
+		Config: FiretitanProvisioningConfig{
+			BaseModel: "accounts/acct/models/base",
+			LoraRank:  4,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := svc.CreateTrainingClientFromState(context.Background(), "state://managed", CreateTrainingClientFromStateOptions{StateBackend: state})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.Config.BaseModel != "accounts/acct/models/base" || client.Config.LoraRank != 4 {
+		t.Fatalf("client config = %#v", client.Config)
+	}
+	if state.loadStatePath != "state://managed" {
+		t.Fatalf("state backend = %#v", state)
+	}
+}
+
 func TestFiretitanTrainingClientStateDelegationAndWarnings(t *testing.T) {
 	state := &fakeTrainingStateBackend{}
 	svc, err := NewFiretitanServiceClient(FiretitanServiceClientOptions{

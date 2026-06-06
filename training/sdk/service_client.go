@@ -129,6 +129,7 @@ func (c *FiretitanServiceClient) Close(ctx context.Context) error {
 }
 
 type CreateFiretitanTrainingClientOptions struct {
+	ConfigOverride             *FiretitanProvisioningConfig
 	BaseModel                  string
 	LoraRank                   *int
 	UserMetadata               map[string]string
@@ -162,6 +163,19 @@ type TrainingAdapterLoader interface {
 	LoadAdapter(context.Context, LoadAdapterOptions) (LoadAdapterResponse, error)
 }
 
+type WeightsInfoProvider func(context.Context, string) (WeightsInfo, error)
+
+type CreateTrainingClientFromStateOptions struct {
+	UserMetadata        map[string]string
+	WeightsAccessToken  *string
+	WeightsInfo         *WeightsInfo
+	WeightsInfoProvider WeightsInfoProvider
+	StateBackend        TrainingStateBackend
+	AdapterLoader       TrainingAdapterLoader
+	ModelID             string
+	TrainerBaseURL      string
+}
+
 type FiretitanTrainingClient struct {
 	Service         *FiretitanServiceClient
 	Config          FiretitanProvisioningConfig
@@ -190,18 +204,26 @@ func (c *FiretitanServiceClient) CreateTrainingClient(_ context.Context, opts ..
 	if c.Registry == nil {
 		c.Registry = NewTrainingClientConfigRegistry()
 	}
-	key := ManagedTrainingClientKey(c.Config)
+	config := c.Config
+	if opt.ConfigOverride != nil {
+		normalized, err := opt.ConfigOverride.Normalize()
+		if err != nil {
+			return nil, err
+		}
+		config = normalized
+	}
+	key := ManagedTrainingClientKey(config)
 	if err := c.Registry.Add(key); err != nil {
 		return nil, err
 	}
 	var warnings []string
 	if opt.BaseModel != "" {
-		if warning := DeprecatedManagedOverrideMessage("create_training_client", "base_model", opt.BaseModel, c.Config.BaseModel); warning != "" {
+		if warning := DeprecatedManagedOverrideMessage("create_training_client", "base_model", opt.BaseModel, config.BaseModel); warning != "" {
 			warnings = append(warnings, warning)
 		}
 	}
 	if opt.LoraRank != nil {
-		if warning := DeprecatedManagedOverrideMessage("create_training_client", "lora_rank", *opt.LoraRank, c.Config.LoraRank); warning != "" {
+		if warning := DeprecatedManagedOverrideMessage("create_training_client", "lora_rank", *opt.LoraRank, config.LoraRank); warning != "" {
 			warnings = append(warnings, warning)
 		}
 	}
@@ -223,7 +245,7 @@ func (c *FiretitanServiceClient) CreateTrainingClient(_ context.Context, opts ..
 	}
 	return &FiretitanTrainingClient{
 		Service:         c,
-		Config:          c.Config,
+		Config:          config,
 		UserMetadata:    ResolveUserMetadata(c.DefaultUserMetadata, opt.UserMetadata),
 		Warnings:        warnings,
 		HandleMetadata:  handle,
@@ -236,6 +258,97 @@ func (c *FiretitanServiceClient) CreateTrainingClient(_ context.Context, opts ..
 		SavedStateNames: map[string]bool{},
 		SyncState:       state,
 	}, nil
+}
+
+func (c *FiretitanServiceClient) CreateTrainingClientFromWeightsInfo(ctx context.Context, info WeightsInfo, opts ...CreateTrainingClientFromStateOptions) (*FiretitanTrainingClient, error) {
+	plan, err := TrainingClientPlanFromWeightsInfo(info)
+	if err != nil {
+		return nil, err
+	}
+	config := c.Config
+	config.BaseModel = plan.BaseModel
+	config.LoraRank = plan.LoraRank
+	config.TrainUnembed = boolPointer(plan.TrainUnembed)
+	config.TrainMLP = boolPointer(plan.TrainMLP)
+	config.TrainAttn = boolPointer(plan.TrainAttn)
+
+	var opt CreateTrainingClientFromStateOptions
+	if len(opts) > 0 {
+		opt = opts[0]
+	}
+	return c.CreateTrainingClient(ctx, CreateFiretitanTrainingClientOptions{
+		ConfigOverride: &config,
+		UserMetadata:   opt.UserMetadata,
+		StateBackend:   opt.StateBackend,
+		AdapterLoader:  opt.AdapterLoader,
+		ModelID:        opt.ModelID,
+		TrainerBaseURL: opt.TrainerBaseURL,
+	})
+}
+
+func (c *FiretitanServiceClient) CreateTrainingClientFromState(ctx context.Context, path string, opts ...CreateTrainingClientFromStateOptions) (*FiretitanTrainingClient, error) {
+	return c.createTrainingClientFromState(ctx, path, false, opts...)
+}
+
+func (c *FiretitanServiceClient) CreateTrainingClientFromStateWithOptimizer(ctx context.Context, path string, opts ...CreateTrainingClientFromStateOptions) (*FiretitanTrainingClient, error) {
+	return c.createTrainingClientFromState(ctx, path, true, opts...)
+}
+
+func (c *FiretitanServiceClient) createTrainingClientFromState(ctx context.Context, path string, withOptimizer bool, opts ...CreateTrainingClientFromStateOptions) (*FiretitanTrainingClient, error) {
+	if c == nil {
+		return nil, fmt.Errorf("FiretitanServiceClient is nil")
+	}
+	var opt CreateTrainingClientFromStateOptions
+	if len(opts) > 0 {
+		opt = opts[0]
+	}
+	method := "create_training_client_from_state"
+	if withOptimizer {
+		method = "create_training_client_from_state_with_optimizer"
+	}
+	if err := RejectServiceWeightsAccessToken(method, opt.WeightsAccessToken); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(path) == "" {
+		return nil, fmt.Errorf("path must be a non-empty string")
+	}
+	stateBackend := opt.StateBackend
+	if stateBackend == nil {
+		return nil, fmt.Errorf("CreateTrainingClientFromState requires a StateBackend")
+	}
+
+	var info WeightsInfo
+	if opt.WeightsInfo != nil {
+		info = *opt.WeightsInfo
+	} else if opt.WeightsInfoProvider != nil {
+		var err error
+		info, err = opt.WeightsInfoProvider(ctx, path)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		info = WeightsInfoFromManagedConfig(c.Config)
+	}
+
+	client, err := c.CreateTrainingClientFromWeightsInfo(ctx, info, CreateTrainingClientFromStateOptions{
+		UserMetadata:   opt.UserMetadata,
+		StateBackend:   stateBackend,
+		AdapterLoader:  opt.AdapterLoader,
+		ModelID:        opt.ModelID,
+		TrainerBaseURL: opt.TrainerBaseURL,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if withOptimizer {
+		err = client.LoadStateWithOptimizer(ctx, path, nil)
+	} else {
+		err = client.LoadState(ctx, path, nil)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return client, nil
 }
 
 func (c *FiretitanTrainingClient) ResolvedMetadata() ManagedResolvedMetadata {
