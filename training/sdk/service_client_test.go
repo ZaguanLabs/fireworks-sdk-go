@@ -157,6 +157,95 @@ func TestFiretitanServiceClientReferenceIDsAndRelease(t *testing.T) {
 	}
 }
 
+func TestFiretitanServiceClientCreateBaseTrainingClientSkipsDuplicateRegistry(t *testing.T) {
+	svc, err := NewFiretitanServiceClient(FiretitanServiceClientOptions{
+		Config: FiretitanProvisioningConfig{BaseModel: "accounts/acct/models/base"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.CreateTrainingClient(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	baseClient, err := svc.CreateBaseTrainingClient(context.Background(), "accounts/acct/models/base", map[string]string{"purpose": "reference"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if baseClient.Config.BaseModel != "accounts/acct/models/base" || baseClient.Config.LoraRank != 0 || !baseClient.Config.ForwardOnly {
+		t.Fatalf("base client config = %#v", baseClient.Config)
+	}
+	if baseClient.Config.CreateDeployment == nil || *baseClient.Config.CreateDeployment {
+		t.Fatalf("base client should not create deployment: %#v", baseClient.Config.CreateDeployment)
+	}
+	if baseClient.UserMetadata["purpose"] != "reference" {
+		t.Fatalf("metadata = %#v", baseClient.UserMetadata)
+	}
+}
+
+func TestFiretitanServiceClientCreateReferenceClientSharedBase(t *testing.T) {
+	svc, err := NewFiretitanServiceClient(FiretitanServiceClientOptions{
+		Config: FiretitanProvisioningConfig{
+			BaseModel: "accounts/acct/models/base",
+			LoraRank:  8,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := svc.CreateReferenceClient(context.Background(), "accounts/acct/models/base", CreateReferenceClientOptions{LoraRank: 8})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.Config.LoraRank != 0 || !client.Config.ForwardOnly {
+		t.Fatalf("reference config = %#v", client.Config)
+	}
+	if svc.ReferenceHandle != nil {
+		t.Fatalf("shared reference should not require separate handle: %#v", svc.ReferenceHandle)
+	}
+}
+
+func TestFiretitanServiceClientCreateReferenceClientSeparateHandle(t *testing.T) {
+	trainer := &fakeManagedTrainer{}
+	deployment := &fakeManagedDeployment{existing: map[string]DeploymentInfo{}}
+	svc, err := NewFiretitanServiceClient(FiretitanServiceClientOptions{
+		Config: FiretitanProvisioningConfig{
+			BaseModel:                "accounts/acct/models/base",
+			CreateDeployment:         boolPointer(false),
+			ReferenceRequired:        true,
+			ReferenceTrainingShapeID: "accounts/acct/trainingShapes/ref",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = svc.ProvisionManagedHandle(context.Background(), ManagedProvisionOptions{
+		ProfileResolver: fakeProfileResolver{profiles: map[string]TrainingShapeProfile{
+			"accounts/acct/trainingShapes/ref": {
+				TrainingShapeVersion: "accounts/acct/trainingShapes/ref/versions/4",
+				TrainerMode:          ForwardOnlyMode,
+			},
+		}},
+		Trainer:    trainer,
+		Deployment: deployment,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := svc.CreateReferenceClient(context.Background(), "accounts/acct/models/base", CreateReferenceClientOptions{UserMetadata: map[string]string{"purpose": "reference"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.Config.TrainerJobID != "job-new-2" || !client.Config.ForwardOnly {
+		t.Fatalf("reference config = %#v", client.Config)
+	}
+	if client.HandleMetadata.TrainerJobID != "job-new-2" {
+		t.Fatalf("handle metadata = %#v", client.HandleMetadata)
+	}
+	if client.UserMetadata["purpose"] != "reference" {
+		t.Fatalf("metadata = %#v", client.UserMetadata)
+	}
+}
+
 func TestFiretitanTrainingClientUsesDefaultAndCallMetadata(t *testing.T) {
 	svc, err := NewFiretitanServiceClient(FiretitanServiceClientOptions{
 		Config:              FiretitanProvisioningConfig{BaseModel: "accounts/acct/models/base"},

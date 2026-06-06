@@ -141,6 +141,7 @@ type CreateFiretitanTrainingClientOptions struct {
 	ModelID                    string
 	TrainerBaseURL             string
 	RequiresInitialSamplerSync bool
+	SkipRegistry               bool
 }
 
 type SaveStateOptions struct {
@@ -174,6 +175,11 @@ type CreateTrainingClientFromStateOptions struct {
 	AdapterLoader       TrainingAdapterLoader
 	ModelID             string
 	TrainerBaseURL      string
+}
+
+type CreateReferenceClientOptions struct {
+	LoraRank     int
+	UserMetadata map[string]string
 }
 
 type FiretitanTrainingClient struct {
@@ -212,9 +218,11 @@ func (c *FiretitanServiceClient) CreateTrainingClient(_ context.Context, opts ..
 		}
 		config = normalized
 	}
-	key := ManagedTrainingClientKey(config)
-	if err := c.Registry.Add(key); err != nil {
-		return nil, err
+	if !opt.SkipRegistry {
+		key := ManagedTrainingClientKey(config)
+		if err := c.Registry.Add(key); err != nil {
+			return nil, err
+		}
 	}
 	var warnings []string
 	if opt.BaseModel != "" {
@@ -258,6 +266,62 @@ func (c *FiretitanServiceClient) CreateTrainingClient(_ context.Context, opts ..
 		SavedStateNames: map[string]bool{},
 		SyncState:       state,
 	}, nil
+}
+
+func (c *FiretitanServiceClient) CreateBaseTrainingClient(ctx context.Context, baseModel string, userMetadata map[string]string) (*FiretitanTrainingClient, error) {
+	if c == nil {
+		return nil, fmt.Errorf("FiretitanServiceClient is nil")
+	}
+	config := c.Config
+	config.BaseModel = strings.TrimSpace(baseModel)
+	config.LoraRank = 0
+	config.ForwardOnly = true
+	config.CreateDeployment = boolPointer(false)
+	if config.BaseModel == "" {
+		return nil, fmt.Errorf("base_model must be a non-empty string")
+	}
+	return c.CreateTrainingClient(ctx, CreateFiretitanTrainingClientOptions{
+		ConfigOverride: &config,
+		BaseModel:      baseModel,
+		UserMetadata:   userMetadata,
+		SkipRegistry:   true,
+	})
+}
+
+func (c *FiretitanServiceClient) CreateReferenceClient(ctx context.Context, baseModel string, opts ...CreateReferenceClientOptions) (*FiretitanTrainingClient, error) {
+	if c == nil {
+		return nil, fmt.Errorf("FiretitanServiceClient is nil")
+	}
+	var opt CreateReferenceClientOptions
+	if len(opts) > 0 {
+		opt = opts[0]
+	}
+	policyLoraRank := opt.LoraRank
+	if policyLoraRank == 0 {
+		policyLoraRank = c.Config.LoraRank
+	}
+	if UseSharedBaseReference(c.Config, policyLoraRank) {
+		return c.CreateBaseTrainingClient(ctx, baseModel, opt.UserMetadata)
+	}
+	if c.ReferenceHandle == nil {
+		return nil, fmt.Errorf("create_reference_client requires a provisioned separate reference trainer or a shared LoRA base reference")
+	}
+	config := c.ReferenceHandle.Config
+	if strings.TrimSpace(baseModel) != "" {
+		config.BaseModel = strings.TrimSpace(baseModel)
+	}
+	if config.TrainerJobID == "" {
+		config.TrainerJobID = c.ReferenceHandle.TrainerEndpoint.JobID
+	}
+	return c.CreateTrainingClient(ctx, CreateFiretitanTrainingClientOptions{
+		ConfigOverride: &config,
+		BaseModel:      baseModel,
+		UserMetadata:   opt.UserMetadata,
+		HandleMetadata: &c.ReferenceHandle.Metadata,
+		SamplerBackend: c.ReferenceHandle.SamplerBackend,
+		WeightSyncer:   c.ReferenceHandle.WeightSyncer,
+		SkipRegistry:   true,
+	})
 }
 
 func (c *FiretitanServiceClient) CreateTrainingClientFromWeightsInfo(ctx context.Context, info WeightsInfo, opts ...CreateTrainingClientFromStateOptions) (*FiretitanTrainingClient, error) {
