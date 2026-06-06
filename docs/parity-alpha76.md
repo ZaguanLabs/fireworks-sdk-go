@@ -32,8 +32,8 @@ Status values:
 | `patches/_builtin_loss_fn_patch.py` | `forward_backward.go` | go-native | Python mutates Pydantic literals; Go exposes `LossFnDAPO`, `LossFnGSPO`, and normalization helpers. |
 | `patches/_discriminator_patch.py` | n/a | go-native | Pydantic serialization patch is Python-only. Go uses maps/typed request helpers and does not need discriminator patching. |
 | `patches/_tinker_r3_patch.py` | `forward_backward.go` | go-native | Go exposes `ModelInputFromInts` and routing matrix helpers. |
-| `scripts/setup_trainer.py` | none | missing | CLI equivalent has not been added. |
-| `scripts/setup_deployment.py` | none | missing | CLI equivalent has not been added. |
+| `scripts/setup_trainer.py` | `training/sdk/setup_cli.go`, `cmd/fireworks-training` | ported | Go helper and CLI subcommand mirror trainer creation, polling, defaults, env fallback, and JSON output. |
+| `scripts/setup_deployment.py` | `training/sdk/setup_cli.go`, `cmd/fireworks-training` | ported | Go helper and CLI subcommand mirror deployment creation, readiness polling, defaults, env fallback, and JSON output. |
 
 ## Broader SDK resources
 
@@ -55,6 +55,5 @@ The Go port should instead provide explicit constructors, context-aware methods,
 
 ## Priority backlog
 
-1. Add CLI equivalents for setup trainer/deployment scripts.
-2. Generate a broader SDK resource/type parity report for non-training endpoints.
-3. Add live/contract tests for trainer, deployment, save/hotload/sample, checkpoint promote, and reconnect flows.
+1. Generate a broader SDK resource/type parity report for non-training endpoints.
+2. Add live/contract tests for trainer, deployment, save/hotload/sample, checkpoint promote, and reconnect flows.

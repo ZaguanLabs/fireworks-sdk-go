@@ -39,3 +39,17 @@ tree:
 ```sh
 FIREWORKS_PY_TYPES_ROOT=/path/to/python-sdk-1.2.0-alpha.76/src/fireworks/types go generate ./types
 ```
+
+Training setup helpers equivalent to the Python SDK scripts are available
+through the `fireworks-training` command:
+
+```sh
+go run ./cmd/fireworks-training setup-trainer \
+  --display-name ablation-eager \
+  --extra-args "--forward-only --no-compile" \
+  --custom-image-tag your-image-tag
+
+go run ./cmd/fireworks-training setup-deployment \
+  --deployment-id verify-ablation \
+  --deployment-shape accounts/ACCOUNT/deploymentShapes/YOUR-SHAPE
+```
