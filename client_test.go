@@ -3269,6 +3269,185 @@ func TestAPIKeysTypedAndGenericAllParamsUsePythonAliases(t *testing.T) {
 	}
 }
 
+func TestSecretsTypedAndGenericAllParamsUsePythonAliases(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/accounts/acct/secrets":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("decode create body: %v", err)
+			}
+			if _, ok := body["account_id"]; ok {
+				t.Errorf("create body should not contain account_id: %#v", body)
+			}
+			if _, ok := body["key_name"]; ok {
+				t.Errorf("unexpected key_name body key: %#v", body)
+			}
+			if body["keyName"] != "api-key" || body["name"] != "secret-1" || body["value"] != "sk-1234567890abcdef" {
+				t.Errorf("create body = %#v", body)
+			}
+			_ = json.NewEncoder(w).Encode(JSON{
+				"keyName": "api-key",
+				"name":    "accounts/acct/secrets/secret-1",
+				"value":   "sk-1234567890abcdef",
+			})
+
+		case r.Method == http.MethodPatch && r.URL.Path == "/v1/accounts/acct/secrets/secret-1":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("decode update body: %v", err)
+			}
+			if _, ok := body["account_id"]; ok {
+				t.Errorf("update body should not contain account_id: %#v", body)
+			}
+			if _, ok := body["key_name"]; ok {
+				t.Errorf("unexpected key_name body key: %#v", body)
+			}
+			if body["keyName"] != "api-key" || body["value"] != "sk-updated" {
+				t.Errorf("update body = %#v", body)
+			}
+			_ = json.NewEncoder(w).Encode(JSON{
+				"keyName": "api-key",
+				"name":    "accounts/acct/secrets/secret-1",
+				"value":   "sk-updated",
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/accounts/acct/secrets":
+			query := r.URL.Query()
+			if got := query.Get("filter"); got != "name=secret-1" {
+				t.Errorf("filter = %q", got)
+			}
+			if got := query.Get("orderBy"); got != "create_time desc" {
+				t.Errorf("orderBy = %q", got)
+			}
+			if got := query.Get("pageSize"); got != "0" {
+				t.Errorf("pageSize = %q", got)
+			}
+			if got := query.Get("pageToken"); got != "cursor-1" {
+				t.Errorf("pageToken = %q", got)
+			}
+			if got := query.Get("readMask"); got != "name,keyName" {
+				t.Errorf("readMask = %q", got)
+			}
+			if got := query.Get("account_id"); got != "" {
+				t.Errorf("account_id should not be query param, got %q", got)
+			}
+			_ = json.NewEncoder(w).Encode(JSON{
+				"secrets":       []JSON{{"name": "accounts/acct/secrets/secret-1", "keyName": "api-key"}},
+				"nextPageToken": "cursor-2",
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/accounts/acct/secrets/secret-1":
+			if got := r.URL.Query().Get("readMask"); got != "name,keyName" {
+				t.Errorf("readMask = %q", got)
+			}
+			_ = json.NewEncoder(w).Encode(JSON{
+				"keyName": "api-key",
+				"name":    "accounts/acct/secrets/secret-1",
+			})
+
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/accounts/acct/secrets/secret-1":
+			_ = json.NewEncoder(w).Encode(JSON{"deleted": true})
+
+		default:
+			t.Errorf("unexpected request %s %s?%s", r.Method, r.URL.Path, r.URL.RawQuery)
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client, err := NewClient(WithBaseURL(server.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := client.Secrets.CreateTyped(context.Background(), fwtypes.SecretCreateParams{
+		AccountID: "acct",
+		KeyName:   "api-key",
+		Name:      "secret-1",
+		Value:     "sk-1234567890abcdef",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.Name != "accounts/acct/secrets/secret-1" || created.KeyName != "api-key" {
+		t.Fatalf("created = %#v", created)
+	}
+
+	genericCreated, err := client.Secrets.Create(context.Background(), JSON{
+		"account_id": "acct",
+		"key_name":   "api-key",
+		"name":       "secret-1",
+		"value":      "sk-1234567890abcdef",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if genericCreated["name"] != "accounts/acct/secrets/secret-1" {
+		t.Fatalf("genericCreated = %#v", genericCreated)
+	}
+
+	updated, err := client.Secrets.UpdateTyped(context.Background(), "secret-1", fwtypes.SecretUpdateParams{
+		AccountID: "acct",
+		KeyName:   "api-key",
+		Value:     "sk-updated",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Name != "accounts/acct/secrets/secret-1" {
+		t.Fatalf("updated = %#v", updated)
+	}
+
+	genericUpdated, err := client.Secrets.Update(context.Background(), "secret-1", JSON{
+		"account_id": "acct",
+		"key_name":   "api-key",
+		"value":      "sk-updated",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if genericUpdated["name"] != "accounts/acct/secrets/secret-1" {
+		t.Fatalf("genericUpdated = %#v", genericUpdated)
+	}
+
+	page, err := client.Secrets.ListTyped(context.Background(), fwtypes.SecretListParams{
+		AccountID: "acct",
+		Filter:    "name=secret-1",
+		OrderBy:   "create_time desc",
+		PageSize:  0,
+		PageToken: "cursor-1",
+		ReadMask:  "name,keyName",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var _ *fwtypes.SecretsPage = page
+	if len(page.Secrets) != 1 || page.NextPageToken == nil || *page.NextPageToken != "cursor-2" {
+		t.Fatalf("page = %#v", page)
+	}
+
+	got, err := client.Secrets.GetTyped(context.Background(), "secret-1", fwtypes.SecretGetParams{
+		AccountID: "acct",
+		ReadMask:  "name,keyName",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Name != "accounts/acct/secrets/secret-1" {
+		t.Fatalf("got = %#v", got)
+	}
+
+	deleted, err := client.Secrets.DeleteTyped(context.Background(), "secret-1", WithAccountID("acct"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deleted["deleted"] != true {
+		t.Fatalf("deleted = %#v", deleted)
+	}
+}
+
 func TestDatasetsUploadFileTypedUsesMultipart(t *testing.T) {
 	t.Setenv("FIREWORKS_API_KEY", "test-key")
 
