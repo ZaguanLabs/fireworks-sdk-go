@@ -65,9 +65,14 @@ type APITimeoutError struct {
 }
 
 type APIResponseValidationError struct {
-	Message string
-	Body    []byte
-	Err     error
+	Message    string
+	Request    *http.Request
+	Response   *APIResponse
+	StatusCode int
+	Status     string
+	Header     http.Header
+	Body       []byte
+	Err        error
 }
 
 func (e *APIResponseValidationError) Error() string {
@@ -79,6 +84,22 @@ func (e *APIResponseValidationError) Error() string {
 
 func (e *APIResponseValidationError) Unwrap() error {
 	return e.Err
+}
+
+func responseValidationError(resp *APIResponse, body []byte, err error) *APIResponseValidationError {
+	out := &APIResponseValidationError{
+		Message: "fireworks: response validation error",
+		Body:    append([]byte(nil), body...),
+		Err:     err,
+	}
+	if resp != nil {
+		out.Request = resp.Request
+		out.Response = resp
+		out.StatusCode = resp.StatusCode
+		out.Status = resp.Status
+		out.Header = resp.Header.Clone()
+	}
+	return out
 }
 
 type BadRequestError struct{ *APIStatusError }

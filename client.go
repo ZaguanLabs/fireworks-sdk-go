@@ -513,19 +513,16 @@ func (c *Client) Do(req *http.Request, out any) error {
 }
 
 func (c *Client) do(req *http.Request, out any, maxRetries int) error {
-	body, err := c.doBytes(req, maxRetries)
+	resp, err := c.doResponse(req, maxRetries)
 	if err != nil {
 		return err
 	}
+	body := resp.Body
 	if out == nil || len(strings.TrimSpace(string(body))) == 0 {
 		return nil
 	}
 	if err := json.Unmarshal(body, out); err != nil {
-		return &APIResponseValidationError{
-			Message: "fireworks: response validation error",
-			Body:    append([]byte(nil), body...),
-			Err:     err,
-		}
+		return responseValidationError(resp, body, err)
 	}
 	return nil
 }

@@ -875,6 +875,7 @@ func TestAPIResponseValidationErrorForInvalidSuccessBody(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Request-ID", "req_invalid")
 		_, _ = w.Write([]byte("{invalid"))
 	}))
 	defer server.Close()
@@ -894,10 +895,33 @@ func TestAPIResponseValidationErrorForInvalidSuccessBody(t *testing.T) {
 	if string(validationErr.Body) != "{invalid" {
 		t.Fatalf("body = %q", validationErr.Body)
 	}
+	if validationErr.StatusCode != http.StatusOK {
+		t.Fatalf("status code = %d", validationErr.StatusCode)
+	}
+	if validationErr.Request == nil || validationErr.Request.URL.Path != "/invalid" {
+		t.Fatalf("request = %#v", validationErr.Request)
+	}
+	if validationErr.Response == nil || validationErr.Response.RequestID != "req_invalid" {
+		t.Fatalf("response = %#v", validationErr.Response)
+	}
+	if got := validationErr.Header.Get("X-Request-ID"); got != "req_invalid" {
+		t.Fatalf("header X-Request-ID = %q", got)
+	}
 }
 
 func TestAPIResponseParsingUsesValidationError(t *testing.T) {
-	resp := &APIResponse{Body: []byte("{invalid")}
+	req, err := http.NewRequest(http.MethodGet, "https://example.test/invalid", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp := &APIResponse{
+		Request:    req,
+		StatusCode: http.StatusOK,
+		Status:     "200 OK",
+		Header:     http.Header{"X-Request-ID": []string{"req_parse"}},
+		Body:       []byte("{invalid"),
+		RequestID:  "req_parse",
+	}
 
 	if _, err := resp.JSON(); err == nil {
 		t.Fatal("expected JSON error")
@@ -906,10 +930,13 @@ func TestAPIResponseParsingUsesValidationError(t *testing.T) {
 		if !errors.As(err, &validationErr) {
 			t.Fatalf("JSON error type = %T", err)
 		}
+		if validationErr.Response != resp || validationErr.Request != req {
+			t.Fatalf("validation response/request = %#v / %#v", validationErr.Response, validationErr.Request)
+		}
 	}
 
 	var out map[string]any
-	err := resp.ParseJSON(&out)
+	err = resp.ParseJSON(&out)
 	if err == nil {
 		t.Fatal("expected ParseJSON error")
 	}
