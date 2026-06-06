@@ -2,14 +2,20 @@ package fireworks
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
+	"io"
 	"reflect"
 	"strings"
 	"time"
 )
 
 func openapiMarshal(value any) ([]byte, error) {
-	value = transformOpenAPIJSONValue(value)
+	value, err := transformOpenAPIJSONValue(value)
+	if err != nil {
+		return nil, err
+	}
 	var buf bytes.Buffer
 	encoder := json.NewEncoder(&buf)
 	encoder.SetEscapeHTML(false)
@@ -23,57 +29,80 @@ func openapiMarshal(value any) ([]byte, error) {
 	return append([]byte(nil), out...), nil
 }
 
-func transformOpenAPIJSONValue(value any) any {
+func transformOpenAPIJSONValue(value any) (any, error) {
 	return transformOpenAPIJSONReflect(reflect.ValueOf(value))
 }
 
-func transformOpenAPIJSONReflect(value reflect.Value) any {
+func transformOpenAPIJSONReflect(value reflect.Value) (any, error) {
 	if !value.IsValid() {
-		return nil
+		return nil, nil
 	}
 	if value.Kind() == reflect.Interface {
 		if value.IsNil() {
-			return nil
+			return nil, nil
 		}
 		return transformOpenAPIJSONReflect(value.Elem())
 	}
 	if value.Kind() == reflect.Pointer {
 		if value.IsNil() {
-			return nil
+			return nil, nil
 		}
 		return transformOpenAPIJSONReflect(value.Elem())
 	}
 	if value.Type() == timeType {
-		return formatPythonISOTime(value.Interface().(time.Time))
+		return formatPythonISOTime(value.Interface().(time.Time)), nil
 	}
 	if value.CanInterface() && value.Type().Implements(jsonMarshalerType) {
-		return value.Interface()
+		return value.Interface(), nil
 	}
 	switch value.Kind() {
 	case reflect.Map:
 		if value.IsNil() {
-			return nil
+			return nil, nil
 		}
+		base64Source := hasStringMapField(value, "type", "base64")
 		out := make(map[string]any, value.Len())
 		iter := value.MapRange()
 		for iter.Next() {
 			key := iter.Key()
 			if key.Kind() != reflect.String {
-				return value.Interface()
+				return value.Interface(), nil
 			}
-			out[key.String()] = transformOpenAPIJSONReflect(iter.Value())
+			if base64Source && key.String() == "data" {
+				encoded, ok, err := base64FileInput(iter.Value())
+				if err != nil {
+					return nil, err
+				}
+				if ok {
+					out[key.String()] = encoded
+					continue
+				}
+			}
+			item, err := transformOpenAPIJSONReflect(iter.Value())
+			if err != nil {
+				return nil, err
+			}
+			out[key.String()] = item
 		}
-		return out
+		return out, nil
 	case reflect.Slice, reflect.Array:
 		if value.Kind() == reflect.Slice && value.IsNil() {
-			return nil
+			return nil, nil
+		}
+		if value.Type().Elem().Kind() == reflect.Uint8 {
+			return value.Interface(), nil
 		}
 		out := make([]any, value.Len())
 		for i := 0; i < value.Len(); i++ {
-			out[i] = transformOpenAPIJSONReflect(value.Index(i))
+			item, err := transformOpenAPIJSONReflect(value.Index(i))
+			if err != nil {
+				return nil, err
+			}
+			out[i] = item
 		}
-		return out
+		return out, nil
 	case reflect.Struct:
+		base64Source := hasStringStructField(value, "type", "base64")
 		out := make(map[string]any)
 		for i := 0; i < value.NumField(); i++ {
 			field := value.Type().Field(i)
@@ -88,12 +117,118 @@ func transformOpenAPIJSONReflect(value reflect.Value) any {
 			if omitEmpty && isJSONEmptyValue(fieldValue) {
 				continue
 			}
-			out[name] = transformOpenAPIJSONReflect(fieldValue)
+			if base64Source && name == "data" {
+				encoded, ok, err := base64FileInput(fieldValue)
+				if err != nil {
+					return nil, err
+				}
+				if ok {
+					out[name] = encoded
+					continue
+				}
+			}
+			item, err := transformOpenAPIJSONReflect(fieldValue)
+			if err != nil {
+				return nil, err
+			}
+			out[name] = item
 		}
-		return out
+		return out, nil
 	default:
-		return value.Interface()
+		return value.Interface(), nil
 	}
+}
+
+func base64FileInput(value reflect.Value) (string, bool, error) {
+	if !value.IsValid() {
+		return "", false, nil
+	}
+	if value.Kind() == reflect.Interface {
+		if value.IsNil() {
+			return "", false, nil
+		}
+		return base64FileInput(value.Elem())
+	}
+	if value.CanInterface() {
+		switch v := value.Interface().(type) {
+		case File:
+			return base64Reader(v.Content)
+		case *File:
+			if v == nil {
+				return "", false, nil
+			}
+			return base64Reader(v.Content)
+		case io.Reader:
+			return base64Reader(v)
+		}
+	}
+	if value.Kind() == reflect.Pointer {
+		if value.IsNil() {
+			return "", false, nil
+		}
+		return base64FileInput(value.Elem())
+	}
+	if value.Kind() == reflect.String {
+		return "", false, nil
+	}
+	if value.Kind() == reflect.Slice && value.Type().Elem().Kind() == reflect.Uint8 {
+		return base64.StdEncoding.EncodeToString(value.Bytes()), true, nil
+	}
+	return "", false, nil
+}
+
+func base64Reader(reader io.Reader) (string, bool, error) {
+	if reader == nil {
+		return "", true, fmt.Errorf("fireworks: base64 file input has nil content")
+	}
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		return "", true, fmt.Errorf("fireworks: read base64 file input: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString(data), true, nil
+}
+
+func hasStringMapField(value reflect.Value, key, want string) bool {
+	if value.Kind() != reflect.Map || value.Type().Key().Kind() != reflect.String {
+		return false
+	}
+	mapKey := reflect.New(value.Type().Key()).Elem()
+	mapKey.SetString(key)
+	item := value.MapIndex(mapKey)
+	return stringReflectValue(item) == want
+}
+
+func hasStringStructField(value reflect.Value, key, want string) bool {
+	if value.Kind() != reflect.Struct {
+		return false
+	}
+	for i := 0; i < value.NumField(); i++ {
+		field := value.Type().Field(i)
+		if !field.IsExported() {
+			continue
+		}
+		name, _ := jsonFieldName(field)
+		if name == key && stringReflectValue(value.Field(i)) == want {
+			return true
+		}
+	}
+	return false
+}
+
+func stringReflectValue(value reflect.Value) string {
+	if !value.IsValid() {
+		return ""
+	}
+	if value.Kind() == reflect.Interface || value.Kind() == reflect.Pointer {
+		if value.IsNil() {
+			return ""
+		}
+		return stringReflectValue(value.Elem())
+	}
+	if value.Kind() == reflect.String {
+		return value.String()
+	}
+	return ""
 }
 
 func jsonFieldName(field reflect.StructField) (string, bool) {

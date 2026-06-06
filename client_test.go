@@ -1086,6 +1086,81 @@ func TestNewRequestRejectsNaNLikePythonOpenAPIDumps(t *testing.T) {
 	}
 }
 
+func TestNewRequestEncodesBase64SourceFileInputs(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+
+	client, err := NewClient(WithBaseURL("https://example.test"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := client.NewRequest(context.Background(), http.MethodPost, "/json", fwtypes.RequestImageBlockParam{
+		Type: "image",
+		Source: fwtypes.RequestImageBlockParamSourceAnthropicBase64ImageSource{
+			Type:      "base64",
+			MediaType: "image/png",
+			Data:      NewFileFromBytes("image.png", []byte("Hello, world!")),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var typed map[string]any
+	if err := json.NewDecoder(req.Body).Decode(&typed); err != nil {
+		t.Fatal(err)
+	}
+	source, ok := typed["source"].(map[string]any)
+	if !ok {
+		t.Fatalf("source = %#v", typed["source"])
+	}
+	if source["data"] != "SGVsbG8sIHdvcmxkIQ==" {
+		t.Fatalf("typed source data = %#v", source["data"])
+	}
+
+	req, err = client.NewRequest(context.Background(), http.MethodPost, "/json", JSON{
+		"source": JSON{
+			"type":       "base64",
+			"media_type": "image/png",
+			"data":       strings.NewReader("Hello, world!"),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var generic map[string]any
+	if err := json.NewDecoder(req.Body).Decode(&generic); err != nil {
+		t.Fatal(err)
+	}
+	source, ok = generic["source"].(map[string]any)
+	if !ok {
+		t.Fatalf("source = %#v", generic["source"])
+	}
+	if source["data"] != "SGVsbG8sIHdvcmxkIQ==" {
+		t.Fatalf("generic source data = %#v", source["data"])
+	}
+
+	req, err = client.NewRequest(context.Background(), http.MethodPost, "/json", JSON{
+		"source": JSON{
+			"type":       "base64",
+			"media_type": "image/png",
+			"data":       "already-encoded",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stringData map[string]any
+	if err := json.NewDecoder(req.Body).Decode(&stringData); err != nil {
+		t.Fatal(err)
+	}
+	source, ok = stringData["source"].(map[string]any)
+	if !ok {
+		t.Fatalf("source = %#v", stringData["source"])
+	}
+	if source["data"] != "already-encoded" {
+		t.Fatalf("string source data = %#v", source["data"])
+	}
+}
+
 func TestGetRequestDropsBodyAndContentType(t *testing.T) {
 	t.Setenv("FIREWORKS_API_KEY", "test-key")
 
