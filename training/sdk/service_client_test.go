@@ -244,6 +244,120 @@ func TestFiretitanTrainingClientCheckpointOpsRequireTrainer(t *testing.T) {
 	}
 }
 
+type fakeTrainingStateBackend struct {
+	saveCalls              []string
+	saveOptions            []SaveStateOptions
+	loadStatePath          string
+	loadStateOptimizerPath string
+}
+
+func (b *fakeTrainingStateBackend) SaveState(_ context.Context, name string, opts SaveStateOptions) (SaveStateResult, error) {
+	b.saveCalls = append(b.saveCalls, name)
+	b.saveOptions = append(b.saveOptions, opts)
+	return SaveStateResult{Name: name, Path: "state://" + name}, nil
+}
+
+func (b *fakeTrainingStateBackend) LoadState(_ context.Context, path string) error {
+	b.loadStatePath = path
+	return nil
+}
+
+func (b *fakeTrainingStateBackend) LoadStateWithOptimizer(_ context.Context, path string) error {
+	b.loadStateOptimizerPath = path
+	return nil
+}
+
+type fakeTrainingAdapterLoader struct {
+	calls []LoadAdapterOptions
+}
+
+func (l *fakeTrainingAdapterLoader) LoadAdapter(_ context.Context, opts LoadAdapterOptions) (LoadAdapterResponse, error) {
+	l.calls = append(l.calls, opts)
+	return LoadAdapterResponse{ModelID: opts.ModelID, AdapterPath: opts.AdapterPath, Type: "load_adapter"}, nil
+}
+
+func TestFiretitanTrainingClientStateDelegationAndWarnings(t *testing.T) {
+	state := &fakeTrainingStateBackend{}
+	svc, err := NewFiretitanServiceClient(FiretitanServiceClientOptions{
+		Config: FiretitanProvisioningConfig{BaseModel: "accounts/acct/models/base"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := svc.CreateTrainingClient(context.Background(), CreateFiretitanTrainingClientOptions{StateBackend: state})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ttl := 60
+	result, err := client.SaveState(context.Background(), " step-1 ", SaveStateOptions{TTLSeconds: &ttl})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Path != "state://step-1" || len(state.saveCalls) != 1 || state.saveCalls[0] != "step-1" {
+		t.Fatalf("save result=%#v calls=%#v", result, state.saveCalls)
+	}
+	if state.saveOptions[0].TTLSeconds == nil || *state.saveOptions[0].TTLSeconds != 60 {
+		t.Fatalf("save options = %#v", state.saveOptions[0])
+	}
+	if _, err := client.SaveState(context.Background(), "step-1"); err != nil {
+		t.Fatal(err)
+	}
+	if len(client.Warnings) != 1 || !strings.Contains(client.Warnings[0], "DCP checkpoint name") {
+		t.Fatalf("warnings = %#v", client.Warnings)
+	}
+	if _, err := client.SaveState(context.Background(), "bad", SaveStateOptions{Overwrite: true}); err == nil || !strings.Contains(err.Error(), "overwrite=True") {
+		t.Fatalf("overwrite error = %v", err)
+	}
+	if err := client.LoadState(context.Background(), "state://step-1", nil); err != nil {
+		t.Fatal(err)
+	}
+	if state.loadStatePath != "state://step-1" {
+		t.Fatalf("load path = %q", state.loadStatePath)
+	}
+	if err := client.LoadStateWithOptimizer(context.Background(), "state://step-2", nil); err != nil {
+		t.Fatal(err)
+	}
+	if state.loadStateOptimizerPath != "state://step-2" {
+		t.Fatalf("optimizer load path = %q", state.loadStateOptimizerPath)
+	}
+	token := "token"
+	if err := client.LoadState(context.Background(), "state://step-1", &token); err == nil || !strings.Contains(err.Error(), "weights_access_token") {
+		t.Fatalf("token error = %v", err)
+	}
+}
+
+func TestFiretitanTrainingClientLoadAdapterDelegates(t *testing.T) {
+	loader := &fakeTrainingAdapterLoader{}
+	svc, err := NewFiretitanServiceClient(FiretitanServiceClientOptions{
+		Config: FiretitanProvisioningConfig{BaseModel: "accounts/acct/models/base"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := svc.CreateTrainingClient(context.Background(), CreateFiretitanTrainingClientOptions{
+		AdapterLoader:  loader,
+		ModelID:        "model-1",
+		TrainerBaseURL: "https://trainer.example.com/",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := client.LoadAdapter(context.Background(), " gs://bucket/adapter ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.ModelID != "model-1" || resp.AdapterPath != "gs://bucket/adapter" || resp.Type != "load_adapter" {
+		t.Fatalf("response = %#v", resp)
+	}
+	if len(loader.calls) != 1 {
+		t.Fatalf("calls = %#v", loader.calls)
+	}
+	call := loader.calls[0]
+	if call.TrainerBaseURL != "https://trainer.example.com/" || call.ModelID != "model-1" || call.AdapterPath != "gs://bucket/adapter" || call.SeqID != 1 {
+		t.Fatalf("call = %#v", call)
+	}
+}
+
 func TestFiretitanTrainingClientSamplerSyncAndHotload(t *testing.T) {
 	var calls []string
 	backend := &TinkerSamplerBackend{

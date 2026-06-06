@@ -3,6 +3,7 @@ package sdk
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -134,18 +135,48 @@ type CreateFiretitanTrainingClientOptions struct {
 	HandleMetadata             *ManagedHandleMetadata
 	SamplerBackend             *TinkerSamplerBackend
 	WeightSyncer               *WeightSyncer
+	StateBackend               TrainingStateBackend
+	AdapterLoader              TrainingAdapterLoader
+	ModelID                    string
+	TrainerBaseURL             string
 	RequiresInitialSamplerSync bool
 }
 
+type SaveStateOptions struct {
+	TTLSeconds *int
+	Overwrite  bool
+}
+
+type SaveStateResult struct {
+	Name string
+	Path string
+}
+
+type TrainingStateBackend interface {
+	SaveState(context.Context, string, SaveStateOptions) (SaveStateResult, error)
+	LoadState(context.Context, string) error
+	LoadStateWithOptimizer(context.Context, string) error
+}
+
+type TrainingAdapterLoader interface {
+	LoadAdapter(context.Context, LoadAdapterOptions) (LoadAdapterResponse, error)
+}
+
 type FiretitanTrainingClient struct {
-	Service        *FiretitanServiceClient
-	Config         FiretitanProvisioningConfig
-	UserMetadata   map[string]string
-	Warnings       []string
-	HandleMetadata ManagedHandleMetadata
-	SamplerBackend *TinkerSamplerBackend
-	WeightSyncer   *WeightSyncer
-	SyncState      ManagedSamplerSyncState
+	Service         *FiretitanServiceClient
+	Config          FiretitanProvisioningConfig
+	UserMetadata    map[string]string
+	Warnings        []string
+	HandleMetadata  ManagedHandleMetadata
+	SamplerBackend  *TinkerSamplerBackend
+	WeightSyncer    *WeightSyncer
+	StateBackend    TrainingStateBackend
+	AdapterLoader   TrainingAdapterLoader
+	ModelID         string
+	TrainerBaseURL  string
+	RequestSeqID    int
+	SavedStateNames map[string]bool
+	SyncState       ManagedSamplerSyncState
 }
 
 func (c *FiretitanServiceClient) CreateTrainingClient(_ context.Context, opts ...CreateFiretitanTrainingClientOptions) (*FiretitanTrainingClient, error) {
@@ -191,14 +222,19 @@ func (c *FiretitanServiceClient) CreateTrainingClient(_ context.Context, opts ..
 		state = c.SyncState
 	}
 	return &FiretitanTrainingClient{
-		Service:        c,
-		Config:         c.Config,
-		UserMetadata:   ResolveUserMetadata(c.DefaultUserMetadata, opt.UserMetadata),
-		Warnings:       warnings,
-		HandleMetadata: handle,
-		SamplerBackend: backend,
-		WeightSyncer:   opt.WeightSyncer,
-		SyncState:      state,
+		Service:         c,
+		Config:          c.Config,
+		UserMetadata:    ResolveUserMetadata(c.DefaultUserMetadata, opt.UserMetadata),
+		Warnings:        warnings,
+		HandleMetadata:  handle,
+		SamplerBackend:  backend,
+		WeightSyncer:    opt.WeightSyncer,
+		StateBackend:    opt.StateBackend,
+		AdapterLoader:   opt.AdapterLoader,
+		ModelID:         opt.ModelID,
+		TrainerBaseURL:  opt.TrainerBaseURL,
+		SavedStateNames: map[string]bool{},
+		SyncState:       state,
 	}, nil
 }
 
@@ -243,6 +279,83 @@ func (c *FiretitanTrainingClient) PromoteCheckpoint(ctx context.Context, opts Pr
 		return nil, fmt.Errorf("FiretitanTrainingClient requires a service checkpoint client")
 	}
 	return c.Service.PromoteCheckpointFunc(ctx, opts)
+}
+
+func (c *FiretitanTrainingClient) SaveState(ctx context.Context, name string, opts ...SaveStateOptions) (SaveStateResult, error) {
+	if c == nil {
+		return SaveStateResult{}, fmt.Errorf("FiretitanTrainingClient is nil")
+	}
+	var opt SaveStateOptions
+	if len(opts) > 0 {
+		opt = opts[0]
+	}
+	if err := ValidateSaveStateOptions(opt.Overwrite); err != nil {
+		return SaveStateResult{}, err
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return SaveStateResult{}, fmt.Errorf("name must be a non-empty string")
+	}
+	if c.SavedStateNames == nil {
+		c.SavedStateNames = map[string]bool{}
+	}
+	if c.SavedStateNames[name] {
+		c.Warnings = append(c.Warnings, fmt.Sprintf("DCP checkpoint name %q already used in this session; overwriting", name))
+	}
+	c.SavedStateNames[name] = true
+	if c.StateBackend == nil {
+		return SaveStateResult{}, fmt.Errorf("FiretitanTrainingClient requires a StateBackend to save_state")
+	}
+	return c.StateBackend.SaveState(ctx, name, opt)
+}
+
+func (c *FiretitanTrainingClient) LoadState(ctx context.Context, path string, weightsAccessToken *string) error {
+	if err := RejectTrainingLoadWeightsAccessToken("load_state", weightsAccessToken); err != nil {
+		return err
+	}
+	if c == nil || c.StateBackend == nil {
+		return fmt.Errorf("FiretitanTrainingClient requires a StateBackend to load_state")
+	}
+	return c.StateBackend.LoadState(ctx, path)
+}
+
+func (c *FiretitanTrainingClient) LoadStateWithOptimizer(ctx context.Context, path string, weightsAccessToken *string) error {
+	if err := RejectTrainingLoadWeightsAccessToken("load_state_with_optimizer", weightsAccessToken); err != nil {
+		return err
+	}
+	if c == nil || c.StateBackend == nil {
+		return fmt.Errorf("FiretitanTrainingClient requires a StateBackend to load_state_with_optimizer")
+	}
+	return c.StateBackend.LoadStateWithOptimizer(ctx, path)
+}
+
+func (c *FiretitanTrainingClient) LoadAdapter(ctx context.Context, adapterPath string) (LoadAdapterResponse, error) {
+	adapterPath = strings.TrimSpace(adapterPath)
+	if adapterPath == "" {
+		return LoadAdapterResponse{}, fmt.Errorf("adapter_path must be a non-empty string")
+	}
+	if c == nil || c.AdapterLoader == nil {
+		return LoadAdapterResponse{}, fmt.Errorf("FiretitanTrainingClient requires an AdapterLoader to load_adapter")
+	}
+	if strings.TrimSpace(c.ModelID) == "" {
+		return LoadAdapterResponse{}, fmt.Errorf("model_id must be a non-empty string")
+	}
+	trainerBaseURL := strings.TrimSpace(c.TrainerBaseURL)
+	if trainerBaseURL == "" {
+		if c.Service != nil && c.Service.ProvisionedHandle != nil {
+			trainerBaseURL = c.Service.ProvisionedHandle.TrainerEndpoint.BaseURL
+		}
+	}
+	if trainerBaseURL == "" {
+		return LoadAdapterResponse{}, fmt.Errorf("trainer_base_url must be a non-empty string")
+	}
+	c.RequestSeqID++
+	return c.AdapterLoader.LoadAdapter(ctx, LoadAdapterOptions{
+		TrainerBaseURL: trainerBaseURL,
+		ModelID:        c.ModelID,
+		AdapterPath:    adapterPath,
+		SeqID:          c.RequestSeqID,
+	})
 }
 
 func (c *FiretitanTrainingClient) AttachSamplerBackend(backend *TinkerSamplerBackend) *FiretitanTrainingClient {
