@@ -1402,6 +1402,24 @@ func TestRetryAfterHeaderIgnoresUnreasonableDelay(t *testing.T) {
 	}
 }
 
+func TestRetryAfterHeaderAcceptsHTTPDate(t *testing.T) {
+	retryAt := time.Now().Add(5 * time.Second).UTC()
+	delay, ok := parseRetryAfter(http.Header{"Retry-After": {retryAt.Format(http.TimeFormat)}})
+	if !ok {
+		t.Fatal("expected retry-after date to be accepted")
+	}
+	if delay < 3*time.Second || delay > 5*time.Second {
+		t.Fatalf("delay = %s", delay)
+	}
+}
+
+func TestRetryAfterHeaderIgnoresPastHTTPDate(t *testing.T) {
+	retryAt := time.Now().Add(-time.Second).UTC()
+	if delay, ok := parseRetryAfter(http.Header{"Retry-After": {retryAt.Format(http.TimeFormat)}}); ok || delay != 0 {
+		t.Fatalf("parseRetryAfter = %s, %t", delay, ok)
+	}
+}
+
 func TestRequestsFollowRedirectsByDefault(t *testing.T) {
 	t.Setenv("FIREWORKS_API_KEY", "test-key")
 
