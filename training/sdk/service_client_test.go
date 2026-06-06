@@ -666,6 +666,101 @@ func TestFiretitanTrainingClientSamplerSyncAndHotload(t *testing.T) {
 	}
 }
 
+func TestFiretitanServiceClientSamplerFacade(t *testing.T) {
+	mgr := NewDeploymentManager("fw-key", "https://api.example.com", WithDeploymentInferenceURL("https://inference.example.com"))
+	mgr.SetAccountID("acct")
+	backend := &TinkerSamplerBackend{
+		DeployMgr:    mgr,
+		DeploymentID: "dep-1",
+		BaseModel:    "accounts/acct/models/base",
+	}
+	svc, err := NewFiretitanServiceClient(FiretitanServiceClientOptions{
+		Config: FiretitanProvisioningConfig{BaseModel: "accounts/acct/models/base"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if svc.AttachSamplerBackend(backend) != svc {
+		t.Fatal("AttachSamplerBackend should return the service")
+	}
+	tokenizer := &fakeDeploymentTokenizer{tokens: []int{1, 2}}
+	controller := NewFixedConcurrencyController(2)
+	client, err := svc.CreateSamplingClient(context.Background(), "", tokenizer, controller)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.DeploymentSampler.Model != "accounts/acct/deployments/dep-1" {
+		t.Fatalf("model = %q", client.DeploymentSampler.Model)
+	}
+	if client.DeploymentSampler.Tokenizer != tokenizer || client.DeploymentSampler.ConcurrencyController != controller {
+		t.Fatalf("sampler wiring = %#v", client.DeploymentSampler)
+	}
+	sampler, err := svc.CreateDeploymentSampler(context.Background(), "", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sampler.Model != "accounts/acct/deployments/dep-1" {
+		t.Fatalf("deployment sampler model = %q", sampler.Model)
+	}
+}
+
+func TestFiretitanServiceClientSamplerFacadeHotloadsSnapshot(t *testing.T) {
+	mgr := NewDeploymentManager("fw-key", "https://api.example.com")
+	mgr.SetAccountID("acct")
+	var calls []string
+	backend := &TinkerSamplerBackend{
+		DeployMgr:    mgr,
+		DeploymentID: "dep-1",
+		BaseModel:    "accounts/acct/models/base",
+		HotloadAndWait: func(_ context.Context, deploymentID, baseModel, snapshotIdentity string, _ ...HotloadAndWaitOptions) (bool, error) {
+			calls = append(calls, deploymentID+"|"+baseModel+"|"+snapshotIdentity)
+			return true, nil
+		},
+	}
+	svc, err := NewFiretitanServiceClient(FiretitanServiceClientOptions{
+		Config: FiretitanProvisioningConfig{BaseModel: "accounts/acct/models/base"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc.AttachSamplerBackend(backend)
+	svc.SyncState = ManagedSamplerSyncState{RequiresInitialSamplerSync: true}
+	if !svc.RequiresInitialSamplerSync() {
+		t.Fatal("expected initial sync")
+	}
+	if _, err := svc.CreateSamplingClient(context.Background(), "snap-1", nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(calls, []string{"dep-1|accounts/acct/models/base|snap-1"}) {
+		t.Fatalf("calls = %#v", calls)
+	}
+	if svc.RequiresInitialSamplerSync() {
+		t.Fatal("hotload should clear initial sync")
+	}
+}
+
+func TestFiretitanServiceClientCreateSamplingClientWrapsExplicitSampler(t *testing.T) {
+	svc, err := NewFiretitanServiceClient(FiretitanServiceClientOptions{
+		Config: FiretitanProvisioningConfig{BaseModel: "accounts/acct/models/base"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tokenizer := &fakeDeploymentTokenizer{tokens: []int{1, 2}}
+	controller := NewFixedConcurrencyController(1)
+	sampler := NewDeploymentSampler("https://inference.example.com", "accounts/acct/deployments/dep-1", "key")
+	client, err := svc.CreateSamplingClient(context.Background(), "", tokenizer, controller, sampler)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.DeploymentSampler != sampler {
+		t.Fatalf("wrapped sampler = %#v", client.DeploymentSampler)
+	}
+	if sampler.Tokenizer != tokenizer || sampler.ConcurrencyController != controller {
+		t.Fatalf("sampler wiring = %#v", sampler)
+	}
+}
+
 func TestFiretitanTrainingClientWeightSyncerSaveWeightsForSampler(t *testing.T) {
 	saver := &fakeSamplerSaver{
 		results: []SaveSamplerResult{{Path: "raw/path", SnapshotName: "step-1-session"}},

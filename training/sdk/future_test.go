@@ -168,6 +168,36 @@ func TestFiretitanServiceClientCreateReferenceClientFuture(t *testing.T) {
 	}
 }
 
+func TestFiretitanServiceClientSamplerFutures(t *testing.T) {
+	mgr := NewDeploymentManager("fw-key", "https://api.example.com", WithDeploymentInferenceURL("https://inference.example.com"))
+	mgr.SetAccountID("acct")
+	svc, err := NewFiretitanServiceClient(FiretitanServiceClientOptions{
+		Config: FiretitanProvisioningConfig{BaseModel: "accounts/acct/models/base"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc.AttachSamplerBackend(&TinkerSamplerBackend{
+		DeployMgr:    mgr,
+		DeploymentID: "dep-1",
+		BaseModel:    "accounts/acct/models/base",
+	})
+	client, err := svc.CreateSamplingClientFuture(context.Background(), "", nil, nil).Await()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.DeploymentSampler.Model != "accounts/acct/deployments/dep-1" {
+		t.Fatalf("client sampler = %#v", client.DeploymentSampler)
+	}
+	sampler, err := svc.CreateDeploymentSamplerFuture(context.Background(), "", nil, nil).Await()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sampler.Model != "accounts/acct/deployments/dep-1" {
+		t.Fatalf("deployment sampler = %#v", sampler)
+	}
+}
+
 func TestFiretitanServiceClientCreateTrainingClientFromStateFuture(t *testing.T) {
 	state := &fakeTrainingStateBackend{}
 	svc, err := NewFiretitanServiceClient(FiretitanServiceClientOptions{

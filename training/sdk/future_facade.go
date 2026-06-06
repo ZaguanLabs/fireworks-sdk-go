@@ -20,6 +20,18 @@ func (c *FiretitanServiceClient) CreateReferenceClientFuture(ctx context.Context
 	})
 }
 
+func (c *FiretitanServiceClient) CreateSamplingClientFuture(ctx context.Context, modelPath string, tokenizer DeploymentTokenizer, controller SamplingConcurrencyController, deploymentSampler ...*DeploymentSampler) *Future[*FiretitanSamplingClient] {
+	return SubmitFuture(func() (*FiretitanSamplingClient, error) {
+		return c.CreateSamplingClient(ctx, modelPath, tokenizer, controller, deploymentSampler...)
+	})
+}
+
+func (c *FiretitanServiceClient) CreateDeploymentSamplerFuture(ctx context.Context, modelPath string, tokenizer DeploymentTokenizer, controller SamplingConcurrencyController) *Future[*DeploymentSampler] {
+	return SubmitFuture(func() (*DeploymentSampler, error) {
+		return c.CreateDeploymentSampler(ctx, modelPath, tokenizer, controller)
+	})
+}
+
 func (c *FiretitanServiceClient) CreateTrainingClientFromStateFuture(ctx context.Context, path string, opts ...CreateTrainingClientFromStateOptions) *Future[*FiretitanTrainingClient] {
 	return SubmitFuture(func() (*FiretitanTrainingClient, error) {
 		return c.CreateTrainingClientFromState(ctx, path, opts...)

@@ -172,6 +172,87 @@ func (c *FiretitanServiceClient) Close(ctx context.Context) error {
 	return nil
 }
 
+func (c *FiretitanServiceClient) AttachSamplerBackend(backend *TinkerSamplerBackend) *FiretitanServiceClient {
+	if c != nil {
+		c.SamplerBackend = backend
+	}
+	return c
+}
+
+func (c *FiretitanServiceClient) RequiresInitialSamplerSync() bool {
+	if c == nil {
+		return false
+	}
+	if c.SyncState.RequiresInitialSync() {
+		return true
+	}
+	return c.ProvisionedHandle != nil && c.ProvisionedHandle.RequiresInitialSamplerSync
+}
+
+func (c *FiretitanServiceClient) requireSamplerBackend() (*TinkerSamplerBackend, error) {
+	if c == nil {
+		return nil, CreateSamplingClientUnsupportedError()
+	}
+	if c.SamplerBackend != nil {
+		return c.SamplerBackend, nil
+	}
+	if c.ProvisionedHandle != nil && c.ProvisionedHandle.SamplerBackend != nil {
+		c.SamplerBackend = c.ProvisionedHandle.SamplerBackend
+		return c.SamplerBackend, nil
+	}
+	return nil, CreateSamplingClientUnsupportedError()
+}
+
+func (c *FiretitanServiceClient) HotloadSamplerSnapshot(ctx context.Context, modelPath string) error {
+	backend, err := c.requireSamplerBackend()
+	if err != nil {
+		return err
+	}
+	ok, err := backend.HotloadSavedSnapshot(ctx, modelPath)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("hotload sampler snapshot %q did not complete", modelPath)
+	}
+	c.SyncState.MarkSamplerHotloaded()
+	if c.ProvisionedHandle != nil {
+		c.ProvisionedHandle.RequiresInitialSamplerSync = false
+	}
+	return nil
+}
+
+func (c *FiretitanServiceClient) CreateSamplingClient(ctx context.Context, modelPath string, tokenizer DeploymentTokenizer, controller SamplingConcurrencyController, deploymentSampler ...*DeploymentSampler) (*FiretitanSamplingClient, error) {
+	if len(deploymentSampler) > 0 && deploymentSampler[0] != nil {
+		sampler := deploymentSampler[0]
+		if tokenizer != nil {
+			sampler.Tokenizer = tokenizer
+		}
+		if controller != nil {
+			sampler.ConcurrencyController = controller
+		}
+		return NewFiretitanSamplingClient(sampler), nil
+	}
+	backend, err := c.requireSamplerBackend()
+	if err != nil {
+		return nil, err
+	}
+	if modelPath != "" {
+		if err := c.HotloadSamplerSnapshot(ctx, modelPath); err != nil {
+			return nil, err
+		}
+	}
+	return backend.GetSamplingClient(ctx, tokenizer, controller)
+}
+
+func (c *FiretitanServiceClient) CreateDeploymentSampler(ctx context.Context, modelPath string, tokenizer DeploymentTokenizer, controller SamplingConcurrencyController) (*DeploymentSampler, error) {
+	client, err := c.CreateSamplingClient(ctx, modelPath, tokenizer, controller)
+	if err != nil {
+		return nil, err
+	}
+	return client.DeploymentSampler, nil
+}
+
 type CreateFiretitanTrainingClientOptions struct {
 	ConfigOverride             *FiretitanProvisioningConfig
 	BaseModel                  string
