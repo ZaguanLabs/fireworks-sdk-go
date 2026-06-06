@@ -1050,8 +1050,13 @@ func TestNewRequestUsesPythonOpenAPIDumpsJSONSemantics(t *testing.T) {
 		t.Fatal(err)
 	}
 	req, err := client.NewRequest(context.Background(), http.MethodPost, "/json", JSON{
-		"text":    "<tag>&value",
-		"unicode": "åß∂",
+		"text":       "<tag>&value",
+		"unicode":    "åß∂",
+		"datetime":   time.Date(2023, 2, 23, 14, 16, 36, 337692000, time.UTC),
+		"offsetTime": time.Date(2023, 2, 23, 14, 16, 36, 400000000, time.FixedZone("+02:30", 150*60)),
+		"nested": []any{
+			JSON{"createdAt": time.Date(2022, 1, 15, 6, 34, 23, 0, time.UTC)},
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1060,7 +1065,7 @@ func TestNewRequestUsesPythonOpenAPIDumpsJSONSemantics(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := string(body), `{"text":"<tag>&value","unicode":"åß∂"}`; got != want {
+	if got, want := string(body), `{"datetime":"2023-02-23T14:16:36.337692+00:00","nested":[{"createdAt":"2022-01-15T06:34:23+00:00"}],"offsetTime":"2023-02-23T14:16:36.4+02:30","text":"<tag>&value","unicode":"åß∂"}`; got != want {
 		t.Fatalf("body = %q, want %q", got, want)
 	}
 	if strings.Contains(string(body), `\u003c`) || strings.Contains(string(body), `\u0026`) || strings.Contains(string(body), `\u00e5`) {
@@ -4705,8 +4710,12 @@ func TestAPIKeysTypedAndGenericAllParamsUsePythonAliases(t *testing.T) {
 			if _, ok := apiKey["display_name"]; ok {
 				t.Errorf("unexpected display_name body key: %#v", apiKey)
 			}
-			if _, ok := apiKey["expireTime"]; !ok {
-				t.Errorf("expireTime missing: %#v", apiKey)
+			wantExpireTime := "2019-12-27T18:11:19.117Z"
+			if displayName == "Typed Key" {
+				wantExpireTime = "2019-12-27T18:11:19.117+00:00"
+			}
+			if apiKey["expireTime"] != wantExpireTime {
+				t.Errorf("expireTime = %#v, want %#v", apiKey["expireTime"], wantExpireTime)
 			}
 			_ = json.NewEncoder(w).Encode(JSON{
 				"keyId":       "key-1",
@@ -4765,7 +4774,7 @@ func TestAPIKeysTypedAndGenericAllParamsUsePythonAliases(t *testing.T) {
 		AccountID: "acct",
 		APIKey: fwtypes.APIKeyParam{
 			DisplayName: "Typed Key",
-			ExpireTime:  "2019-12-27T18:11:19.117Z",
+			ExpireTime:  time.Date(2019, 12, 27, 18, 11, 19, 117000000, time.UTC),
 		},
 	})
 	if err != nil {

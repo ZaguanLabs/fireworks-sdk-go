@@ -1134,7 +1134,7 @@ func cloneValues(values url.Values) url.Values {
 func mergeExtraBody(body any, extra map[string]any) (map[string]any, error) {
 	merged := make(map[string]any)
 	if body != nil {
-		payload, err := json.Marshal(body)
+		payload, err := openapiMarshal(body)
 		if err != nil {
 			return nil, fmt.Errorf("fireworks: marshal request body: %w", err)
 		}

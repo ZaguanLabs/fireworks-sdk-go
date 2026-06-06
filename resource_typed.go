@@ -608,7 +608,7 @@ func accountIDFromBody(body any) string {
 		}
 		return v.AccountID
 	default:
-		payload, err := json.Marshal(body)
+		payload, err := openapiMarshal(body)
 		if err != nil {
 			return ""
 		}
@@ -630,7 +630,7 @@ func normalizeManagementBody(body any) any {
 	case JSON:
 		return normalizeManagementValue(map[string]any(v))
 	default:
-		payload, err := json.Marshal(body)
+		payload, err := openapiMarshal(body)
 		if err != nil || string(payload) == "null" {
 			return body
 		}
