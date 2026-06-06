@@ -11,6 +11,25 @@ type ChatCompletionCreateParamsStreaming = ChatCompletionCreateParamsCompletionC
 type ChatCompletionChunkChoice = ChatChatCompletionChunkChoice
 type ChatCompletionChunkChoiceDelta = ChatChatCompletionChunkChoiceDelta
 
+type Choice = SharedChoice
+type Status = SharedStatus
+type LogProbs = SharedLogProbs
+type RawOutput = SharedRawOutput
+type UsageInfo = SharedUsageInfo
+type ChatMessage = SharedChatMessage
+type NewLogProbs = SharedNewLogProbs
+type WandbConfig = SharedWandbConfig
+type DeployedModel = SharedDeployedModel
+type TrainingConfig = SharedTrainingConfig
+type DeployedModelRef = SharedDeployedModelRef
+type ChatCompletionTool = SharedChatCompletionTool
+type NewLogProbsContent = SharedNewLogProbsContent
+type PromptTokensDetails = SharedPromptTokensDetails
+type ChatCompletionMessageToolCall = SharedChatCompletionMessageToolCall
+type NewLogProbsContentTopLogProbs = SharedNewLogProbsContentTopLogProbs
+type ReinforcementLearningLossConfig = SharedReinforcementLearningLossConfig
+type ChatCompletionMessageToolCallFunction = SharedChatCompletionMessageToolCallFunction
+
 type SharedParamsDeployedModelRef struct{}
 
 type DPOJob = DPOJobDpoJob

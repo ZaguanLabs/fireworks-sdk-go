@@ -19,6 +19,27 @@ func TestGeneratedCatalogIncludesCoreTypes(t *testing.T) {
 	_ = ModelsPage{}
 }
 
+func TestPythonTopLevelSharedAliases(t *testing.T) {
+	_ = Choice{}
+	_ = Status{}
+	_ = LogProbs{}
+	_ = RawOutput{}
+	_ = UsageInfo{}
+	_ = ChatMessage{}
+	_ = NewLogProbs{}
+	_ = WandbConfig{}
+	_ = DeployedModel{}
+	_ = TrainingConfig{}
+	_ = DeployedModelRef{}
+	_ = ChatCompletionTool{}
+	_ = NewLogProbsContent{}
+	_ = PromptTokensDetails{}
+	_ = ChatCompletionMessageToolCall{}
+	_ = NewLogProbsContentTopLogProbs{}
+	_ = ReinforcementLearningLossConfig{}
+	_ = ChatCompletionMessageToolCallFunction{}
+}
+
 func TestDPOAliasesUsePublicNames(t *testing.T) {
 	job := DPOJob{Name: strPtr("accounts/acct/dpoJobs/job-1")}
 	var _ DpoJob = job

@@ -29,7 +29,7 @@ Python SDK source: `/home/stig/dev/ai/zaguan/labs/fireworks-sdk-go/docs/firework
 
 ## Type Catalog
 
-- Python classes and exported aliases expected by generator: 318
-- Go generated/alias type names: 356
+- Python classes, exported aliases, and top-level type exports expected: 343
+- Go generated/alias type names: 374
 - Missing expected Go names: none
 - Extra Go names are helper aliases and pagination wrappers.

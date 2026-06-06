@@ -87,7 +87,19 @@ def expected_type_names() -> set[str]:
     sys.modules["generate_types"] = module
     spec.loader.exec_module(module)
     refs = module.collect_type_refs()
-    return {ref.go_name for ref in refs.values()}
+    return {ref.go_name for ref in refs.values()} | top_level_type_exports()
+
+
+def top_level_type_exports() -> set[str]:
+    init_file = FIREWORKS_ROOT / "types" / "__init__.py"
+    tree = ast.parse(init_file.read_text())
+    out: set[str] = set()
+    for node in tree.body:
+        if not isinstance(node, ast.ImportFrom) or node.module == "__future__":
+            continue
+        for alias in node.names:
+            out.add(alias.asname or alias.name)
+    return out
 
 
 def go_type_names() -> set[str]:
@@ -120,7 +132,7 @@ def main() -> None:
 
     missing_types = sorted(expected_types - actual_types)
     print("\n## Type Catalog\n")
-    print(f"- Python classes and exported aliases expected by generator: {len(expected_types)}")
+    print(f"- Python classes, exported aliases, and top-level type exports expected: {len(expected_types)}")
     print(f"- Go generated/alias type names: {len(actual_types)}")
     print(f"- Missing expected Go names: {', '.join(missing_types) if missing_types else 'none'}")
     print("- Extra Go names are helper aliases and pagination wrappers.")
