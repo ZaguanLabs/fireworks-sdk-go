@@ -17,6 +17,7 @@ func (e *Error) Error() string {
 }
 
 type APIError struct {
+	Request    *http.Request
 	StatusCode int
 	Status     string
 	Body       []byte
@@ -161,6 +162,7 @@ func asAPIStatusError(err *APIStatusError, target any) bool {
 
 func statusError(resp *http.Response, body []byte) error {
 	apiErr := &APIError{
+		Request:    resp.Request,
 		StatusCode: resp.StatusCode,
 		Status:     resp.Status,
 		Body:       body,

@@ -1081,6 +1081,9 @@ func TestStatusErrorMapping(t *testing.T) {
 	if !errors.As(err, &baseErr) {
 		t.Fatalf("error type = %T, want APIError", err)
 	}
+	if baseErr.Request == nil || baseErr.Request.URL.Path != "/v1/completions" {
+		t.Fatalf("request = %#v", baseErr.Request)
+	}
 	body, ok := rateLimit.BodyJSON.(map[string]any)
 	if !ok || body["error"] != "limited" {
 		t.Fatalf("BodyJSON = %#v", rateLimit.BodyJSON)
@@ -1116,6 +1119,9 @@ func TestGenericStatusErrorMapsToAPIStatusError(t *testing.T) {
 	}
 	if !apiErr.IsStatus(http.StatusTeapot) {
 		t.Fatalf("IsStatus(%d) = false", http.StatusTeapot)
+	}
+	if apiErr.Request == nil || apiErr.Request.URL.Path != "/teapot" {
+		t.Fatalf("request = %#v", apiErr.Request)
 	}
 }
 
