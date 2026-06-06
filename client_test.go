@@ -193,7 +193,7 @@ func TestResourceMethodsRejectMissingPathArguments(t *testing.T) {
 			return err
 		}},
 		{"accounts get typed", func() error {
-			_, err := client.Accounts.GetTyped(context.Background(), "")
+			_, err := client.Accounts.GetTyped(context.Background(), "", nil)
 			return err
 		}},
 		{"models get", func() error {
@@ -201,7 +201,7 @@ func TestResourceMethodsRejectMissingPathArguments(t *testing.T) {
 			return err
 		}},
 		{"models get typed", func() error {
-			_, err := client.Models.GetTyped(context.Background(), "")
+			_, err := client.Models.GetTyped(context.Background(), "", nil)
 			return err
 		}},
 		{"models prepare typed", func() error {
@@ -213,7 +213,7 @@ func TestResourceMethodsRejectMissingPathArguments(t *testing.T) {
 			return err
 		}},
 		{"deployment shape versions get typed", func() error {
-			_, err := client.DeploymentShapeVersions.GetTyped(context.Background(), "shape-1", "")
+			_, err := client.DeploymentShapeVersions.GetTyped(context.Background(), "shape-1", "", nil)
 			return err
 		}},
 	}
@@ -1591,6 +1591,40 @@ func TestGenericListMapUsesPythonQueryAliases(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestTypedGetUsesPythonQueryAliases(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Path; got != "/v1/accounts/acct-from-get/models/model-1" {
+			t.Errorf("path = %q", got)
+		}
+		query := r.URL.Query()
+		if got := query.Get("readMask"); got != "displayName" {
+			t.Errorf("readMask = %q", got)
+		}
+		if got := query.Get("account_id"); got != "" {
+			t.Errorf("account_id should not be query param, got %q", got)
+		}
+		_ = json.NewEncoder(w).Encode(JSON{"name": "accounts/acct-from-get/models/model-1"})
+	}))
+	defer server.Close()
+
+	client, err := NewClient(WithBaseURL(server.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := client.Models.GetTyped(context.Background(), "model-1", fwtypes.ModelGetParams{
+		AccountID: "acct-from-get",
+		ReadMask:  "displayName",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Name == nil || *out.Name != "accounts/acct-from-get/models/model-1" {
+		t.Fatalf("model = %#v", out)
 	}
 }
 

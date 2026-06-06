@@ -41,11 +41,11 @@ func (r *AccountsResource) ListTyped(ctx context.Context, query any, opts ...Req
 	return typedGet[fwtypes.AccountsPage](ctx, r.client, r.client.managementPath("/v1/accounts"), withQuery(query, opts)...)
 }
 
-func (r *AccountsResource) GetTyped(ctx context.Context, accountID string, opts ...RequestOption) (*fwtypes.Account, error) {
+func (r *AccountsResource) GetTyped(ctx context.Context, accountID string, query any, opts ...RequestOption) (*fwtypes.Account, error) {
 	if err := requirePathArgument("account_id", accountID); err != nil {
 		return nil, err
 	}
-	return typedGet[fwtypes.Account](ctx, r.client, r.client.managementPath("/v1/accounts/"+pathEscape(accountID)), opts...)
+	return typedGet[fwtypes.Account](ctx, r.client, r.client.managementPath("/v1/accounts/"+pathEscape(accountID)), withQuery(query, opts)...)
 }
 
 func (r *UsersResource) CreateTyped(ctx context.Context, body any, opts ...RequestOption) (*fwtypes.User, error) {
@@ -72,7 +72,8 @@ func (r *UsersResource) ListTyped(ctx context.Context, query any, opts ...Reques
 	return typedGet[fwtypes.UsersPage](ctx, r.client, path, withQuery(query, opts)...)
 }
 
-func (r *UsersResource) GetTyped(ctx context.Context, userID string, opts ...RequestOption) (*fwtypes.User, error) {
+func (r *UsersResource) GetTyped(ctx context.Context, userID string, query any, opts ...RequestOption) (*fwtypes.User, error) {
+	opts = withQuery(query, opts)
 	path, err := typedAccountPath(r.client, "/users/"+pathEscape(userID), opts)
 	if err != nil {
 		return nil, err
@@ -116,8 +117,8 @@ func (r *ModelsResource) ListTyped(ctx context.Context, query any, opts ...Reque
 	return typedListInAccount[fwtypes.ModelsPage](ctx, r.client, "/models", query, opts...)
 }
 
-func (r *ModelsResource) GetTyped(ctx context.Context, modelID string, opts ...RequestOption) (*fwtypes.Model, error) {
-	return typedGetInAccount[fwtypes.Model](ctx, r.client, "/models/"+pathEscape(modelID), opts...)
+func (r *ModelsResource) GetTyped(ctx context.Context, modelID string, query any, opts ...RequestOption) (*fwtypes.Model, error) {
+	return typedGetInAccount[fwtypes.Model](ctx, r.client, "/models/"+pathEscape(modelID), withQuery(query, opts)...)
 }
 
 func (r *ModelsResource) DeleteTyped(ctx context.Context, modelID string, opts ...RequestOption) (*fwtypes.Model, error) {
@@ -159,8 +160,8 @@ func (r *DatasetsResource) ListTyped(ctx context.Context, query any, opts ...Req
 	return typedListInAccount[fwtypes.DatasetsPage](ctx, r.client, "/datasets", query, opts...)
 }
 
-func (r *DatasetsResource) GetTyped(ctx context.Context, datasetID string, opts ...RequestOption) (*fwtypes.Dataset, error) {
-	return typedGetInAccount[fwtypes.Dataset](ctx, r.client, "/datasets/"+pathEscape(datasetID), opts...)
+func (r *DatasetsResource) GetTyped(ctx context.Context, datasetID string, query any, opts ...RequestOption) (*fwtypes.Dataset, error) {
+	return typedGetInAccount[fwtypes.Dataset](ctx, r.client, "/datasets/"+pathEscape(datasetID), withQuery(query, opts)...)
 }
 
 func (r *DatasetsResource) DeleteTyped(ctx context.Context, datasetID string, opts ...RequestOption) (*fwtypes.Dataset, error) {
@@ -215,8 +216,8 @@ func (r *DeploymentsResource) ListTyped(ctx context.Context, query any, opts ...
 	return typedListInAccount[fwtypes.DeploymentsPage](ctx, r.client, "/deployments", query, opts...)
 }
 
-func (r *DeploymentsResource) GetTyped(ctx context.Context, deploymentID string, opts ...RequestOption) (*fwtypes.Deployment, error) {
-	return typedGetInAccount[fwtypes.Deployment](ctx, r.client, "/deployments/"+pathEscape(deploymentID), opts...)
+func (r *DeploymentsResource) GetTyped(ctx context.Context, deploymentID string, query any, opts ...RequestOption) (*fwtypes.Deployment, error) {
+	return typedGetInAccount[fwtypes.Deployment](ctx, r.client, "/deployments/"+pathEscape(deploymentID), withQuery(query, opts)...)
 }
 
 func (r *DeploymentsResource) DeleteTyped(ctx context.Context, deploymentID string, opts ...RequestOption) (*fwtypes.Deployment, error) {
@@ -235,16 +236,16 @@ func (r *DeploymentShapesResource) ListTyped(ctx context.Context, query any, opt
 	return typedListInAccount[fwtypes.DeploymentShapesPage](ctx, r.client, "/deploymentShapes", query, opts...)
 }
 
-func (r *DeploymentShapesResource) GetTyped(ctx context.Context, shapeID string, opts ...RequestOption) (*fwtypes.DeploymentShape, error) {
-	return typedGetInAccount[fwtypes.DeploymentShape](ctx, r.client, "/deploymentShapes/"+pathEscape(shapeID), opts...)
+func (r *DeploymentShapesResource) GetTyped(ctx context.Context, shapeID string, query any, opts ...RequestOption) (*fwtypes.DeploymentShape, error) {
+	return typedGetInAccount[fwtypes.DeploymentShape](ctx, r.client, "/deploymentShapes/"+pathEscape(shapeID), withQuery(query, opts)...)
 }
 
 func (r *DeploymentShapeVersionsResource) ListTyped(ctx context.Context, shapeID string, query any, opts ...RequestOption) (*fwtypes.DeploymentShapeVersionsPage, error) {
 	return typedListInAccount[fwtypes.DeploymentShapeVersionsPage](ctx, r.client, "/deploymentShapes/"+pathEscape(shapeID)+"/versions", query, opts...)
 }
 
-func (r *DeploymentShapeVersionsResource) GetTyped(ctx context.Context, shapeID, versionID string, opts ...RequestOption) (*fwtypes.DeploymentShapeVersion, error) {
-	return typedGetInAccount[fwtypes.DeploymentShapeVersion](ctx, r.client, "/deploymentShapes/"+pathEscape(shapeID)+"/versions/"+pathEscape(versionID), opts...)
+func (r *DeploymentShapeVersionsResource) GetTyped(ctx context.Context, shapeID, versionID string, query any, opts ...RequestOption) (*fwtypes.DeploymentShapeVersion, error) {
+	return typedGetInAccount[fwtypes.DeploymentShapeVersion](ctx, r.client, "/deploymentShapes/"+pathEscape(shapeID)+"/versions/"+pathEscape(versionID), withQuery(query, opts)...)
 }
 
 func (r *LoraResource) UpdateTyped(ctx context.Context, deployedModelID string, body any, opts ...RequestOption) (*fwtypes.SharedDeployedModel, error) {
@@ -255,8 +256,8 @@ func (r *LoraResource) ListTyped(ctx context.Context, query any, opts ...Request
 	return typedListInAccount[fwtypes.LoraPage](ctx, r.client, "/deployedModels", query, opts...)
 }
 
-func (r *LoraResource) GetTyped(ctx context.Context, deployedModelID string, opts ...RequestOption) (*fwtypes.SharedDeployedModel, error) {
-	return typedGetInAccount[fwtypes.SharedDeployedModel](ctx, r.client, "/deployedModels/"+pathEscape(deployedModelID), opts...)
+func (r *LoraResource) GetTyped(ctx context.Context, deployedModelID string, query any, opts ...RequestOption) (*fwtypes.SharedDeployedModel, error) {
+	return typedGetInAccount[fwtypes.SharedDeployedModel](ctx, r.client, "/deployedModels/"+pathEscape(deployedModelID), withQuery(query, opts)...)
 }
 
 func (r *LoraResource) LoadTyped(ctx context.Context, body any, opts ...RequestOption) (*fwtypes.SharedDeployedModel, error) {
@@ -275,8 +276,8 @@ func (r *BatchInferenceJobsResource) ListTyped(ctx context.Context, query any, o
 	return typedListInAccount[fwtypes.BatchInferenceJobsPage](ctx, r.client, "/batchInferenceJobs", query, opts...)
 }
 
-func (r *BatchInferenceJobsResource) GetTyped(ctx context.Context, jobID string, opts ...RequestOption) (*fwtypes.BatchInferenceJob, error) {
-	return typedGetInAccount[fwtypes.BatchInferenceJob](ctx, r.client, "/batchInferenceJobs/"+pathEscape(jobID), opts...)
+func (r *BatchInferenceJobsResource) GetTyped(ctx context.Context, jobID string, query any, opts ...RequestOption) (*fwtypes.BatchInferenceJob, error) {
+	return typedGetInAccount[fwtypes.BatchInferenceJob](ctx, r.client, "/batchInferenceJobs/"+pathEscape(jobID), withQuery(query, opts)...)
 }
 
 func (r *BatchInferenceJobsResource) DeleteTyped(ctx context.Context, jobID string, opts ...RequestOption) (*fwtypes.BatchInferenceJob, error) {
@@ -295,8 +296,8 @@ func (r *SecretsResource) ListTyped(ctx context.Context, query any, opts ...Requ
 	return typedListInAccount[fwtypes.SecretsPage](ctx, r.client, "/secrets", query, opts...)
 }
 
-func (r *SecretsResource) GetTyped(ctx context.Context, secretID string, opts ...RequestOption) (*fwtypes.Secret, error) {
-	return typedGetInAccount[fwtypes.Secret](ctx, r.client, "/secrets/"+pathEscape(secretID), opts...)
+func (r *SecretsResource) GetTyped(ctx context.Context, secretID string, query any, opts ...RequestOption) (*fwtypes.Secret, error) {
+	return typedGetInAccount[fwtypes.Secret](ctx, r.client, "/secrets/"+pathEscape(secretID), withQuery(query, opts)...)
 }
 
 func (r *SecretsResource) DeleteTyped(ctx context.Context, secretID string, opts ...RequestOption) (*fwtypes.Secret, error) {
@@ -311,8 +312,8 @@ func (r *SupervisedFineTuningJobsResource) ListTyped(ctx context.Context, query 
 	return typedListInAccount[fwtypes.SupervisedFineTuningJobsPage](ctx, r.client, "/supervisedFineTuningJobs", query, opts...)
 }
 
-func (r *SupervisedFineTuningJobsResource) GetTyped(ctx context.Context, jobID string, opts ...RequestOption) (*fwtypes.SupervisedFineTuningJob, error) {
-	return typedGetInAccount[fwtypes.SupervisedFineTuningJob](ctx, r.client, "/supervisedFineTuningJobs/"+pathEscape(jobID), opts...)
+func (r *SupervisedFineTuningJobsResource) GetTyped(ctx context.Context, jobID string, query any, opts ...RequestOption) (*fwtypes.SupervisedFineTuningJob, error) {
+	return typedGetInAccount[fwtypes.SupervisedFineTuningJob](ctx, r.client, "/supervisedFineTuningJobs/"+pathEscape(jobID), withQuery(query, opts)...)
 }
 
 func (r *SupervisedFineTuningJobsResource) DeleteTyped(ctx context.Context, jobID string, opts ...RequestOption) (*fwtypes.SupervisedFineTuningJob, error) {
@@ -331,8 +332,8 @@ func (r *ReinforcementFineTuningJobsResource) ListTyped(ctx context.Context, que
 	return typedListInAccount[fwtypes.ReinforcementFineTuningJobsPage](ctx, r.client, "/reinforcementFineTuningJobs", query, opts...)
 }
 
-func (r *ReinforcementFineTuningJobsResource) GetTyped(ctx context.Context, jobID string, opts ...RequestOption) (*fwtypes.ReinforcementFineTuningJob, error) {
-	return typedGetInAccount[fwtypes.ReinforcementFineTuningJob](ctx, r.client, "/reinforcementFineTuningJobs/"+pathEscape(jobID), opts...)
+func (r *ReinforcementFineTuningJobsResource) GetTyped(ctx context.Context, jobID string, query any, opts ...RequestOption) (*fwtypes.ReinforcementFineTuningJob, error) {
+	return typedGetInAccount[fwtypes.ReinforcementFineTuningJob](ctx, r.client, "/reinforcementFineTuningJobs/"+pathEscape(jobID), withQuery(query, opts)...)
 }
 
 func (r *ReinforcementFineTuningJobsResource) DeleteTyped(ctx context.Context, jobID string, opts ...RequestOption) (*fwtypes.ReinforcementFineTuningJob, error) {
@@ -355,8 +356,8 @@ func (r *ReinforcementFineTuningStepsResource) ListTyped(ctx context.Context, qu
 	return typedListInAccount[fwtypes.ReinforcementFineTuningStepsPage](ctx, r.client, "/rlorTrainerJobs", query, opts...)
 }
 
-func (r *ReinforcementFineTuningStepsResource) GetTyped(ctx context.Context, trainerJobID string, opts ...RequestOption) (*fwtypes.ReinforcementFineTuningStep, error) {
-	return typedGetInAccount[fwtypes.ReinforcementFineTuningStep](ctx, r.client, "/rlorTrainerJobs/"+pathEscape(trainerJobID), opts...)
+func (r *ReinforcementFineTuningStepsResource) GetTyped(ctx context.Context, trainerJobID string, query any, opts ...RequestOption) (*fwtypes.ReinforcementFineTuningStep, error) {
+	return typedGetInAccount[fwtypes.ReinforcementFineTuningStep](ctx, r.client, "/rlorTrainerJobs/"+pathEscape(trainerJobID), withQuery(query, opts)...)
 }
 
 func (r *ReinforcementFineTuningStepsResource) DeleteTyped(ctx context.Context, trainerJobID string, opts ...RequestOption) (*fwtypes.ReinforcementFineTuningStep, error) {
@@ -379,8 +380,8 @@ func (r *DPOJobsResource) ListTyped(ctx context.Context, query any, opts ...Requ
 	return typedListInAccount[fwtypes.DPOJobsPage](ctx, r.client, "/dpoJobs", query, opts...)
 }
 
-func (r *DPOJobsResource) GetTyped(ctx context.Context, jobID string, opts ...RequestOption) (*fwtypes.DpoJob, error) {
-	return typedGetInAccount[fwtypes.DpoJob](ctx, r.client, "/dpoJobs/"+pathEscape(jobID), opts...)
+func (r *DPOJobsResource) GetTyped(ctx context.Context, jobID string, query any, opts ...RequestOption) (*fwtypes.DpoJob, error) {
+	return typedGetInAccount[fwtypes.DpoJob](ctx, r.client, "/dpoJobs/"+pathEscape(jobID), withQuery(query, opts)...)
 }
 
 func (r *DPOJobsResource) DeleteTyped(ctx context.Context, jobID string, opts ...RequestOption) (*fwtypes.DpoJob, error) {
@@ -403,8 +404,8 @@ func (r *EvaluationJobsResource) ListTyped(ctx context.Context, query any, opts 
 	return typedListInAccount[fwtypes.EvaluationJobsPage](ctx, r.client, "/evaluationJobs", query, opts...)
 }
 
-func (r *EvaluationJobsResource) GetTyped(ctx context.Context, jobID string, opts ...RequestOption) (*fwtypes.EvaluationJobGetResponse, error) {
-	return typedGetInAccount[fwtypes.EvaluationJobGetResponse](ctx, r.client, "/evaluationJobs/"+pathEscape(jobID), opts...)
+func (r *EvaluationJobsResource) GetTyped(ctx context.Context, jobID string, query any, opts ...RequestOption) (*fwtypes.EvaluationJobGetResponse, error) {
+	return typedGetInAccount[fwtypes.EvaluationJobGetResponse](ctx, r.client, "/evaluationJobs/"+pathEscape(jobID), withQuery(query, opts)...)
 }
 
 func (r *EvaluationJobsResource) DeleteTyped(ctx context.Context, jobID string, opts ...RequestOption) (*fwtypes.EvaluationJobGetResponse, error) {
@@ -427,8 +428,8 @@ func (r *EvaluatorsResource) ListTyped(ctx context.Context, query any, opts ...R
 	return typedListInAccount[fwtypes.EvaluatorsPage](ctx, r.client, "/evaluators", query, opts...)
 }
 
-func (r *EvaluatorsResource) GetTyped(ctx context.Context, evaluatorID string, opts ...RequestOption) (*fwtypes.EvaluatorGetResponse, error) {
-	return typedGetInAccount[fwtypes.EvaluatorGetResponse](ctx, r.client, "/evaluators/"+pathEscape(evaluatorID), opts...)
+func (r *EvaluatorsResource) GetTyped(ctx context.Context, evaluatorID string, query any, opts ...RequestOption) (*fwtypes.EvaluatorGetResponse, error) {
+	return typedGetInAccount[fwtypes.EvaluatorGetResponse](ctx, r.client, "/evaluators/"+pathEscape(evaluatorID), withQuery(query, opts)...)
 }
 
 func (r *EvaluatorsResource) DeleteTyped(ctx context.Context, evaluatorID string, opts ...RequestOption) (*fwtypes.EvaluatorGetResponse, error) {
