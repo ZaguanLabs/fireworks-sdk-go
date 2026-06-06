@@ -92,8 +92,11 @@ type clientConfig struct {
 	httpClient        *http.Client
 	httpClientOwned   bool
 	defaultHeaders    http.Header
+	defaultHeadersAdd bool
 	defaultHeadersSet bool
 	defaultQuery      url.Values
+	defaultQueryAdd   bool
+	defaultQuerySet   bool
 	timeout           time.Duration
 	timeoutSet        bool
 	maxRetries        int
@@ -134,6 +137,7 @@ func WithDefaultTimeout(timeout time.Duration) ClientOption {
 
 func WithDefaultHeader(key, value string) ClientOption {
 	return func(c *clientConfig) {
+		c.defaultHeadersAdd = true
 		if c.defaultHeaders == nil {
 			c.defaultHeaders = make(http.Header)
 		}
@@ -143,6 +147,7 @@ func WithDefaultHeader(key, value string) ClientOption {
 
 func WithDefaultOmitHeader(key string) ClientOption {
 	return func(c *clientConfig) {
+		c.defaultHeadersAdd = true
 		if c.defaultHeaders == nil {
 			c.defaultHeaders = make(http.Header)
 		}
@@ -152,6 +157,7 @@ func WithDefaultOmitHeader(key string) ClientOption {
 
 func WithDefaultHeaders(headers map[string]string) ClientOption {
 	return func(c *clientConfig) {
+		c.defaultHeadersAdd = true
 		if c.defaultHeaders == nil {
 			c.defaultHeaders = make(http.Header)
 		}
@@ -173,6 +179,7 @@ func WithSetDefaultHeaders(headers map[string]string) ClientOption {
 
 func WithDefaultQuery(query map[string]any) ClientOption {
 	return func(c *clientConfig) {
+		c.defaultQueryAdd = true
 		if c.defaultQuery == nil {
 			c.defaultQuery = make(url.Values)
 		}
@@ -185,6 +192,7 @@ func WithDefaultQuery(query map[string]any) ClientOption {
 func WithSetDefaultQuery(query map[string]any) ClientOption {
 	return func(c *clientConfig) {
 		c.defaultQuery = make(url.Values)
+		c.defaultQuerySet = true
 		for key, value := range query {
 			addQueryValue(c.defaultQuery, key, value)
 		}
@@ -203,6 +211,9 @@ func NewClient(opts ...ClientOption) (*Client, error) {
 		if opt != nil {
 			opt(&cfg)
 		}
+	}
+	if err := validateDefaultOptionModes(cfg); err != nil {
+		return nil, err
 	}
 
 	if cfg.apiKey == "" {
@@ -301,6 +312,9 @@ func (c *Client) WithOptions(opts ...ClientOption) (*Client, error) {
 			opt(&cfg)
 		}
 	}
+	if err := validateDefaultOptionModes(cfg); err != nil {
+		return nil, err
+	}
 	if cfg.apiKey == "" {
 		return nil, &Error{Message: "the api_key client option must be set either by passing WithAPIKey to NewClient or by setting the FIREWORKS_API_KEY environment variable"}
 	}
@@ -350,6 +364,16 @@ func (c *Client) MustWithOptions(opts ...ClientOption) *Client {
 		panic(err)
 	}
 	return client
+}
+
+func validateDefaultOptionModes(cfg clientConfig) error {
+	if cfg.defaultHeadersSet && cfg.defaultHeadersAdd {
+		return &Error{Message: "`default_headers` and `set_default_headers` arguments are mutually exclusive"}
+	}
+	if cfg.defaultQuerySet && cfg.defaultQueryAdd {
+		return &Error{Message: "`default_query` and `set_default_query` arguments are mutually exclusive"}
+	}
+	return nil
 }
 
 func (c *Client) APIKey() string {

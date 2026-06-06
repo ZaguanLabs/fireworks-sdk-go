@@ -714,6 +714,74 @@ func TestWithOptionsCanReplaceDefaultHeadersAndQuery(t *testing.T) {
 	}
 }
 
+func TestDefaultHeaderAndQueryReplaceModesAreMutuallyExclusive(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+
+	conflictCases := []struct {
+		name string
+		opts []ClientOption
+		want string
+	}{
+		{
+			name: "headers set then merge",
+			opts: []ClientOption{
+				WithSetDefaultHeaders(map[string]string{"X-Replaced": "yes"}),
+				WithDefaultHeader("X-Other", "yes"),
+			},
+			want: "`default_headers` and `set_default_headers` arguments are mutually exclusive",
+		},
+		{
+			name: "headers merge then set",
+			opts: []ClientOption{
+				WithDefaultHeaders(map[string]string{"X-Other": "yes"}),
+				WithSetDefaultHeaders(map[string]string{"X-Replaced": "yes"}),
+			},
+			want: "`default_headers` and `set_default_headers` arguments are mutually exclusive",
+		},
+		{
+			name: "query set then merge",
+			opts: []ClientOption{
+				WithSetDefaultQuery(map[string]any{"replaced": "yes"}),
+				WithDefaultQuery(map[string]any{"other": "yes"}),
+			},
+			want: "`default_query` and `set_default_query` arguments are mutually exclusive",
+		},
+		{
+			name: "query merge then set",
+			opts: []ClientOption{
+				WithDefaultQuery(map[string]any{"other": "yes"}),
+				WithSetDefaultQuery(map[string]any{"replaced": "yes"}),
+			},
+			want: "`default_query` and `set_default_query` arguments are mutually exclusive",
+		},
+	}
+
+	for _, tc := range conflictCases {
+		t.Run("new "+tc.name, func(t *testing.T) {
+			_, err := NewClient(tc.opts...)
+			if err == nil || err.Error() != tc.want {
+				t.Fatalf("err = %v, want %q", err, tc.want)
+			}
+		})
+	}
+
+	client, err := NewClient(
+		WithDefaultHeader("X-Original", "yes"),
+		WithDefaultQuery(map[string]any{"original": "yes"}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range conflictCases {
+		t.Run("copy "+tc.name, func(t *testing.T) {
+			_, err := client.WithOptions(tc.opts...)
+			if err == nil || err.Error() != tc.want {
+				t.Fatalf("err = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestWithOptionsCanReplaceDefaultTimeout(t *testing.T) {
 	t.Setenv("FIREWORKS_API_KEY", "test-key")
 
