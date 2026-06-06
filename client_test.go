@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -458,6 +459,64 @@ func TestQueryEncodingUsesCommaForArbitrarySlicesAndArrays(t *testing.T) {
 	if out["ok"] != true {
 		t.Fatalf("response = %#v", out)
 	}
+}
+
+func TestStringifyQueryMatchesPythonQS(t *testing.T) {
+	cases := []struct {
+		name         string
+		params       JSON
+		arrayFormat  string
+		nestedFormat string
+		want         string
+	}{
+		{name: "empty", params: JSON{}, want: ""},
+		{name: "empty nested", params: JSON{"a": JSON{}}, want: ""},
+		{name: "basic int", params: JSON{"a": 1}, want: "a=1"},
+		{name: "basic string", params: JSON{"a": "b"}, want: "a=b"},
+		{name: "basic true", params: JSON{"a": true}, want: "a=true"},
+		{name: "basic false", params: JSON{"a": false}, want: "a=false"},
+		{name: "basic float", params: JSON{"a": 1.23456}, want: "a=1.23456"},
+		{name: "basic nil", params: JSON{"a": nil}, want: ""},
+		{name: "nested dotted", params: JSON{"a": JSON{"b": JSON{"c": JSON{"d": "e"}}}}, nestedFormat: "dots", want: "a.b.c.d=e"},
+		{name: "nested brackets", params: JSON{"a": JSON{"b": JSON{"c": JSON{"d": "e"}}}}, want: "a[b][c][d]=e"},
+		{name: "nested bool", params: JSON{"a": JSON{"b": true}}, want: "a[b]=true"},
+		{name: "array comma", params: JSON{"in": []any{"foo", "bar"}}, arrayFormat: "comma", want: "in=foo,bar"},
+		{name: "array comma nested", params: JSON{"a": JSON{"b": []any{true, false, nil, true}}}, arrayFormat: "comma", want: "a[b]=true,false,true"},
+		{name: "array repeat", params: JSON{"in": []any{"foo", "bar"}}, want: "in=foo&in=bar"},
+		{name: "array repeat nested", params: JSON{"a": JSON{"b": []any{true, false, nil, true}}}, want: "a[b]=true&a[b]=false&a[b]=true"},
+		{name: "array repeat object", params: JSON{"in": []any{"foo", JSON{"b": JSON{"c": []any{"d", "e"}}}}}, want: "in=foo&in[b][c]=d&in[b][c]=e"},
+		{name: "array brackets", params: JSON{"in": []any{"foo", "bar"}}, arrayFormat: "brackets", want: "in[]=foo&in[]=bar"},
+		{name: "array brackets nested", params: JSON{"a": JSON{"b": []any{true, false, nil, true}}}, arrayFormat: "brackets", want: "a[b][]=true&a[b][]=false&a[b][]=true"},
+		{name: "array indices", params: JSON{"in": []any{"foo", "bar"}}, arrayFormat: "indices", want: "in[0]=foo&in[1]=bar"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := stringifyQuery(tc.params, tc.arrayFormat, tc.nestedFormat)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got = queryUnescape(t, got); got != tc.want {
+				t.Fatalf("query = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestStringifyQueryRejectsUnknownArrayFormat(t *testing.T) {
+	_, err := stringifyQuery(JSON{"a": []any{"foo", "bar"}}, "foo", "")
+	if err == nil || !strings.Contains(err.Error(), "unknown array_format value: foo") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func queryUnescape(t *testing.T, value string) string {
+	t.Helper()
+	out, err := url.QueryUnescape(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
 }
 
 func TestWithOptionsClonesClientAndPreservesDefaultInferenceBaseURLMode(t *testing.T) {
