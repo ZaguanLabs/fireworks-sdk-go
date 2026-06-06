@@ -125,6 +125,49 @@ func TestFiretitanTrainingClientWeightSyncerFutures(t *testing.T) {
 	}
 }
 
+func TestFiretitanTrainingClientStateAndAdapterFutures(t *testing.T) {
+	state := &fakeTrainingStateBackend{}
+	loader := &fakeTrainingAdapterLoader{}
+	svc, err := NewFiretitanServiceClient(FiretitanServiceClientOptions{
+		Config: FiretitanProvisioningConfig{BaseModel: "accounts/acct/models/base"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := svc.CreateTrainingClient(context.Background(), CreateFiretitanTrainingClientOptions{
+		StateBackend:   state,
+		AdapterLoader:  loader,
+		ModelID:        "model-1",
+		TrainerBaseURL: "https://trainer.example.com",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved, err := client.SaveStateFuture(context.Background(), "step-1").Await()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.Path != "state://step-1" {
+		t.Fatalf("saved = %#v", saved)
+	}
+	if _, err := client.LoadStateFuture(context.Background(), "state://step-1", nil).Await(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.LoadStateWithOptimizerFuture(context.Background(), "state://step-2", nil).Await(); err != nil {
+		t.Fatal(err)
+	}
+	if state.loadStatePath != "state://step-1" || state.loadStateOptimizerPath != "state://step-2" {
+		t.Fatalf("state backend = %#v", state)
+	}
+	loaded, err := client.LoadAdapterFuture(context.Background(), "gs://bucket/adapter").Await()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.ModelID != "model-1" || len(loader.calls) != 1 {
+		t.Fatalf("loaded = %#v calls=%#v", loaded, loader.calls)
+	}
+}
+
 func TestFiretitanSamplingClientFutures(t *testing.T) {
 	sampler := NewDeploymentSampler("https://api.example.com", "accounts/acct/deployments/dep", "key",
 		WithDeploymentSamplerRequester(func(_ context.Context, _ []int, opts CompletionRequestOptions) (map[string]any, ServerMetrics, error) {
