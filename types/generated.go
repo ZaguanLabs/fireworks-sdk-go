@@ -113,14 +113,14 @@ type BaseModelDetails struct {
 
 // BaseModelDetailsParam mirrors fireworks.types.base_model_details_param.BaseModelDetailsParam.
 type BaseModelDetailsParam struct {
-	CheckpointFormat      any  `json:"checkpoint_format,omitempty"`
-	ModelType             any  `json:"model_type,omitempty"`
-	Moe                   bool `json:"moe,omitempty"`
-	ParameterCount        any  `json:"parameter_count,omitempty"`
-	SupportsFireattention any  `json:"supports_fireattention,omitempty"`
-	SupportsMtp           any  `json:"supports_mtp,omitempty"`
-	Tunable               bool `json:"tunable,omitempty"`
-	WorldSize             any  `json:"world_size,omitempty"`
+	CheckpointFormat      any `json:"checkpoint_format,omitempty"`
+	ModelType             any `json:"model_type,omitempty"`
+	Moe                   any `json:"moe,omitempty"`
+	ParameterCount        any `json:"parameter_count,omitempty"`
+	SupportsFireattention any `json:"supports_fireattention,omitempty"`
+	SupportsMtp           any `json:"supports_mtp,omitempty"`
+	Tunable               any `json:"tunable,omitempty"`
+	WorldSize             any `json:"world_size,omitempty"`
 }
 
 // BatchInferenceJobInferenceParameters mirrors fireworks.types.batch_inference_job.InferenceParameters.
@@ -180,12 +180,12 @@ type BatchInferenceJobCreateParams struct {
 
 // BatchInferenceJobCreateParamsInferenceParameters mirrors fireworks.types.batch_inference_job_create_params.InferenceParameters.
 type BatchInferenceJobCreateParamsInferenceParameters struct {
-	ExtraBody   any     `json:"extra_body,omitempty"`
-	MaxTokens   any     `json:"max_tokens,omitempty"`
-	N           int     `json:"n,omitempty"`
-	Temperature float64 `json:"temperature,omitempty"`
-	TopK        any     `json:"top_k,omitempty"`
-	TopP        any     `json:"top_p,omitempty"`
+	ExtraBody   any `json:"extra_body,omitempty"`
+	MaxTokens   any `json:"max_tokens,omitempty"`
+	N           any `json:"n,omitempty"`
+	Temperature any `json:"temperature,omitempty"`
+	TopK        any `json:"top_k,omitempty"`
+	TopP        any `json:"top_p,omitempty"`
 }
 
 // BatchInferenceJobGetParams mirrors fireworks.types.batch_inference_job_get_params.BatchInferenceJobGetParams.
@@ -251,7 +251,7 @@ type ChatCompletionCreateParamsCompletionCreateParamsBase struct {
 	FrequencyPenalty              *float64                                  `json:"frequency_penalty,omitempty"`
 	FunctionCall                  any                                       `json:"function_call,omitempty"`
 	Functions                     []ChatCompletionCreateParamsFunction      `json:"functions,omitempty"`
-	IgnoreEos                     bool                                      `json:"ignore_eos,omitempty"`
+	IgnoreEos                     any                                       `json:"ignore_eos,omitempty"`
 	LogitBias                     map[string]float64                        `json:"logit_bias,omitempty"`
 	Logprobs                      any                                       `json:"logprobs,omitempty"`
 	MaxCompletionTokens           *int                                      `json:"max_completion_tokens,omitempty"`
@@ -260,7 +260,7 @@ type ChatCompletionCreateParamsCompletionCreateParamsBase struct {
 	MinP                          *float64                                  `json:"min_p,omitempty"`
 	MirostatLr                    *float64                                  `json:"mirostat_lr,omitempty"`
 	MirostatTarget                *float64                                  `json:"mirostat_target,omitempty"`
-	N                             int                                       `json:"n,omitempty"`
+	N                             any                                       `json:"n,omitempty"`
 	ParallelToolCalls             *bool                                     `json:"parallel_tool_calls,omitempty"`
 	PerfMetricsInResponse         *bool                                     `json:"perf_metrics_in_response,omitempty"`
 	Prediction                    any                                       `json:"prediction,omitempty"`
@@ -424,7 +424,7 @@ type CompletionCreateParamsCompletionCreateParamsBase struct {
 	Echo                          *bool                                 `json:"echo,omitempty"`
 	EchoLast                      *int                                  `json:"echo_last,omitempty"`
 	FrequencyPenalty              *float64                              `json:"frequency_penalty,omitempty"`
-	IgnoreEos                     bool                                  `json:"ignore_eos,omitempty"`
+	IgnoreEos                     any                                   `json:"ignore_eos,omitempty"`
 	Images                        any                                   `json:"images,omitempty"`
 	LogitBias                     map[string]float64                    `json:"logit_bias,omitempty"`
 	Logprobs                      any                                   `json:"logprobs,omitempty"`
@@ -434,7 +434,7 @@ type CompletionCreateParamsCompletionCreateParamsBase struct {
 	MinP                          *float64                              `json:"min_p,omitempty"`
 	MirostatLr                    *float64                              `json:"mirostat_lr,omitempty"`
 	MirostatTarget                *float64                              `json:"mirostat_target,omitempty"`
-	N                             int                                   `json:"n,omitempty"`
+	N                             any                                   `json:"n,omitempty"`
 	PerfMetricsInResponse         *bool                                 `json:"perf_metrics_in_response,omitempty"`
 	Prediction                    any                                   `json:"prediction,omitempty"`
 	PresencePenalty               *float64                              `json:"presence_penalty,omitempty"`
@@ -768,7 +768,7 @@ type DeploymentCreateParams struct {
 // DeploymentDeleteParams mirrors fireworks.types.deployment_delete_params.DeploymentDeleteParams.
 type DeploymentDeleteParams struct {
 	AccountID    string `json:"account_id,omitempty"`
-	Hard         bool   `json:"hard,omitempty"`
+	Hard         any    `json:"hard,omitempty"`
 	IgnoreChecks any    `json:"ignore_checks,omitempty"`
 }
 
@@ -1406,44 +1406,44 @@ type LoraListParams struct {
 type LoraLoadParams struct {
 	AccountID          string `json:"account_id,omitempty"`
 	ReplaceMergedAddon any    `json:"replace_merged_addon,omitempty"`
-	Default            bool   `json:"default,omitempty"`
+	Default            any    `json:"default,omitempty"`
 	Deployment         string `json:"deployment,omitempty"`
 	Description        string `json:"description,omitempty"`
 	DisplayName        any    `json:"display_name,omitempty"`
 	Model              string `json:"model,omitempty"`
-	Public             bool   `json:"public,omitempty"`
-	Serverless         bool   `json:"serverless,omitempty"`
+	Public             any    `json:"public,omitempty"`
+	Serverless         any    `json:"serverless,omitempty"`
 }
 
 // LoraUpdateParams mirrors fireworks.types.lora_update_params.LoraUpdateParams.
 type LoraUpdateParams struct {
 	AccountID   string `json:"account_id,omitempty"`
-	Default     bool   `json:"default,omitempty"`
+	Default     any    `json:"default,omitempty"`
 	Deployment  string `json:"deployment,omitempty"`
 	Description string `json:"description,omitempty"`
 	DisplayName any    `json:"display_name,omitempty"`
 	Model       string `json:"model,omitempty"`
-	Public      bool   `json:"public,omitempty"`
-	Serverless  bool   `json:"serverless,omitempty"`
+	Public      any    `json:"public,omitempty"`
+	Serverless  any    `json:"serverless,omitempty"`
 }
 
 // MessageCreateParams mirrors fireworks.types.message_create_params.MessageCreateParams.
 type MessageCreateParams struct {
 	Messages      []MessageCreateParamsMessage    `json:"messages"`
 	Model         string                          `json:"model"`
-	MaxTokens     int                             `json:"max_tokens,omitempty"`
+	MaxTokens     any                             `json:"max_tokens,omitempty"`
 	Metadata      MessageCreateParamsMetadata     `json:"metadata,omitempty"`
 	OutputConfig  MessageCreateParamsOutputConfig `json:"output_config,omitempty"`
 	RawOutput     *bool                           `json:"raw_output,omitempty"`
 	StopSequences []string                        `json:"stop_sequences,omitempty"`
-	Stream        bool                            `json:"stream,omitempty"`
+	Stream        any                             `json:"stream,omitempty"`
 	System        any                             `json:"system,omitempty"`
-	Temperature   float64                         `json:"temperature,omitempty"`
+	Temperature   any                             `json:"temperature,omitempty"`
 	Thinking      any                             `json:"thinking,omitempty"`
 	ToolChoice    any                             `json:"tool_choice,omitempty"`
 	Tools         []MessageCreateParamsTool       `json:"tools,omitempty"`
-	TopK          int                             `json:"top_k,omitempty"`
-	TopP          float64                         `json:"top_p,omitempty"`
+	TopK          any                             `json:"top_k,omitempty"`
+	TopP          any                             `json:"top_p,omitempty"`
 }
 
 // MessageCreateParamsMessageContentUnionMember1AnthropicRequestDocumentBlockSourceAnthropicBase64PdfSource mirrors fireworks.types.message_create_params.MessageContentUnionMember1AnthropicRequestDocumentBlockSourceAnthropicBase64PdfSource.
@@ -1474,7 +1474,7 @@ type MessageCreateParamsMessageContentUnionMember1AnthropicRequestDocumentBlockS
 
 // MessageCreateParamsMessageContentUnionMember1AnthropicRequestDocumentBlockCitations mirrors fireworks.types.message_create_params.MessageContentUnionMember1AnthropicRequestDocumentBlockCitations.
 type MessageCreateParamsMessageContentUnionMember1AnthropicRequestDocumentBlockCitations struct {
-	Enabled bool `json:"enabled,omitempty"`
+	Enabled any `json:"enabled,omitempty"`
 }
 
 // MessageCreateParamsMessageContentUnionMember1AnthropicRequestDocumentBlock mirrors fireworks.types.message_create_params.MessageContentUnionMember1AnthropicRequestDocumentBlock.
@@ -1537,7 +1537,7 @@ type MessageCreateParamsContentAnthropicRequestDocumentBlockSourceAnthropicUrlpd
 
 // MessageCreateParamsContentAnthropicRequestDocumentBlockCitations mirrors fireworks.types.message_create_params.ContentAnthropicRequestDocumentBlockCitations.
 type MessageCreateParamsContentAnthropicRequestDocumentBlockCitations struct {
-	Enabled bool `json:"enabled,omitempty"`
+	Enabled any `json:"enabled,omitempty"`
 }
 
 // MessageCreateParamsContentAnthropicRequestDocumentBlock mirrors fireworks.types.message_create_params.ContentAnthropicRequestDocumentBlock.
@@ -1556,7 +1556,7 @@ type MessageCreateParamsMessageContentUnionMember1AnthropicRequestToolResultBloc
 	Type         string                      `json:"type"`
 	CacheControl *CacheControlEphemeralParam `json:"cache_control,omitempty"`
 	Content      any                         `json:"content,omitempty"`
-	IsError      bool                        `json:"is_error,omitempty"`
+	IsError      any                         `json:"is_error,omitempty"`
 }
 
 // MessageCreateParamsMessage mirrors fireworks.types.message_create_params.Message.
@@ -1601,20 +1601,20 @@ type MessageCreateParamsThinkingAnthropicThinkingConfigAdaptive struct {
 // MessageCreateParamsToolChoiceAnthropicToolChoiceAuto mirrors fireworks.types.message_create_params.ToolChoiceAnthropicToolChoiceAuto.
 type MessageCreateParamsToolChoiceAnthropicToolChoiceAuto struct {
 	Type                   string `json:"type"`
-	DisableParallelToolUse bool   `json:"disable_parallel_tool_use,omitempty"`
+	DisableParallelToolUse any    `json:"disable_parallel_tool_use,omitempty"`
 }
 
 // MessageCreateParamsToolChoiceAnthropicToolChoiceAny mirrors fireworks.types.message_create_params.ToolChoiceAnthropicToolChoiceAny.
 type MessageCreateParamsToolChoiceAnthropicToolChoiceAny struct {
 	Type                   string `json:"type"`
-	DisableParallelToolUse bool   `json:"disable_parallel_tool_use,omitempty"`
+	DisableParallelToolUse any    `json:"disable_parallel_tool_use,omitempty"`
 }
 
 // MessageCreateParamsToolChoiceAnthropicToolChoiceTool mirrors fireworks.types.message_create_params.ToolChoiceAnthropicToolChoiceTool.
 type MessageCreateParamsToolChoiceAnthropicToolChoiceTool struct {
 	Name                   string `json:"name"`
 	Type                   string `json:"type"`
-	DisableParallelToolUse bool   `json:"disable_parallel_tool_use,omitempty"`
+	DisableParallelToolUse any    `json:"disable_parallel_tool_use,omitempty"`
 }
 
 // MessageCreateParamsToolChoiceAnthropicToolChoiceNone mirrors fireworks.types.message_create_params.ToolChoiceAnthropicToolChoiceNone.
@@ -1634,7 +1634,7 @@ type MessageCreateParamsTool struct {
 	InputSchema MessageCreateParamsToolInputSchema `json:"input_schema"`
 	Name        string                             `json:"name"`
 	Description string                             `json:"description,omitempty"`
-	Strict      bool                               `json:"strict,omitempty"`
+	Strict      any                                `json:"strict,omitempty"`
 	Type        *string                            `json:"type,omitempty"`
 }
 
@@ -1763,7 +1763,7 @@ type ModelParam struct {
 	HuggingFaceURL         any    `json:"hugging_face_url,omitempty"`
 	Kind                   string `json:"kind,omitempty"`
 	PeftDetails            any    `json:"peft_details,omitempty"`
-	Public                 bool   `json:"public,omitempty"`
+	Public                 any    `json:"public,omitempty"`
 	SnapshotType           any    `json:"snapshot_type,omitempty"`
 	SupportsImageInput     any    `json:"supports_image_input,omitempty"`
 	SupportsLora           any    `json:"supports_lora,omitempty"`
@@ -1795,7 +1795,7 @@ type ModelUpdateParams struct {
 	HuggingFaceURL         any    `json:"hugging_face_url,omitempty"`
 	Kind                   string `json:"kind,omitempty"`
 	PeftDetails            any    `json:"peft_details,omitempty"`
-	Public                 bool   `json:"public,omitempty"`
+	Public                 any    `json:"public,omitempty"`
 	SnapshotType           any    `json:"snapshot_type,omitempty"`
 	SupportsImageInput     any    `json:"supports_image_input,omitempty"`
 	SupportsLora           any    `json:"supports_lora,omitempty"`
@@ -1962,12 +1962,12 @@ type ReinforcementFineTuningJobCreateParamsAzureBlobStorageConfig struct {
 
 // ReinforcementFineTuningJobCreateParamsInferenceParameters mirrors fireworks.types.reinforcement_fine_tuning_job_create_params.InferenceParameters.
 type ReinforcementFineTuningJobCreateParamsInferenceParameters struct {
-	ExtraBody               any     `json:"extra_body,omitempty"`
-	MaxOutputTokens         any     `json:"max_output_tokens,omitempty"`
-	ResponseCandidatesCount any     `json:"response_candidates_count,omitempty"`
-	Temperature             float64 `json:"temperature,omitempty"`
-	TopK                    any     `json:"top_k,omitempty"`
-	TopP                    any     `json:"top_p,omitempty"`
+	ExtraBody               any `json:"extra_body,omitempty"`
+	MaxOutputTokens         any `json:"max_output_tokens,omitempty"`
+	ResponseCandidatesCount any `json:"response_candidates_count,omitempty"`
+	Temperature             any `json:"temperature,omitempty"`
+	TopK                    any `json:"top_k,omitempty"`
+	TopP                    any `json:"top_p,omitempty"`
 }
 
 // ReinforcementFineTuningJobGetParams mirrors fireworks.types.reinforcement_fine_tuning_job_get_params.ReinforcementFineTuningJobGetParams.
@@ -2582,7 +2582,7 @@ type SharedParamsTrainingConfig struct {
 	BaseModel                 any    `json:"base_model,omitempty"`
 	BatchSize                 any    `json:"batch_size,omitempty"`
 	BatchSizeSamples          any    `json:"batch_size_samples,omitempty"`
-	Epochs                    int    `json:"epochs,omitempty"`
+	Epochs                    any    `json:"epochs,omitempty"`
 	GradientAccumulationSteps any    `json:"gradient_accumulation_steps,omitempty"`
 	JinjaTemplate             any    `json:"jinja_template,omitempty"`
 	LearningRate              any    `json:"learning_rate,omitempty"`
@@ -2598,7 +2598,7 @@ type SharedParamsTrainingConfig struct {
 // SharedParamsWandbConfig mirrors fireworks.types.shared_params.wandb_config.WandbConfig.
 type SharedParamsWandbConfig struct {
 	APIKey  any    `json:"api_key,omitempty"`
-	Enabled bool   `json:"enabled,omitempty"`
+	Enabled any    `json:"enabled,omitempty"`
 	Entity  string `json:"entity,omitempty"`
 	Project string `json:"project,omitempty"`
 	RunID   any    `json:"run_id,omitempty"`
@@ -2703,7 +2703,7 @@ type SupervisedFineTuningJobCreateParams struct {
 	BatchSizeSamples          any    `json:"batch_size_samples,omitempty"`
 	DisplayName               any    `json:"display_name,omitempty"`
 	EarlyStop                 any    `json:"early_stop,omitempty"`
-	Epochs                    int    `json:"epochs,omitempty"`
+	Epochs                    any    `json:"epochs,omitempty"`
 	EvalAutoCarveout          any    `json:"eval_auto_carveout,omitempty"`
 	EvaluationDataset         any    `json:"evaluation_dataset,omitempty"`
 	GradientAccumulationSteps any    `json:"gradient_accumulation_steps,omitempty"`
@@ -2717,7 +2717,7 @@ type SupervisedFineTuningJobCreateParams struct {
 	MtpEnabled                any    `json:"mtp_enabled,omitempty"`
 	MtpFreezeBaseModel        any    `json:"mtp_freeze_base_model,omitempty"`
 	MtpNumDraftTokens         any    `json:"mtp_num_draft_tokens,omitempty"`
-	Nodes                     int    `json:"nodes,omitempty"`
+	Nodes                     any    `json:"nodes,omitempty"`
 	OptimizerWeightDecay      any    `json:"optimizer_weight_decay,omitempty"`
 	OutputModel               any    `json:"output_model,omitempty"`
 	Region                    string `json:"region,omitempty"`
@@ -2784,9 +2784,9 @@ type TypeDate struct {
 
 // TypeDateParam mirrors fireworks.types.type_date_param.TypeDateParam.
 type TypeDateParam struct {
-	Day   int `json:"day,omitempty"`
-	Month int `json:"month,omitempty"`
-	Year  int `json:"year,omitempty"`
+	Day   any `json:"day,omitempty"`
+	Month any `json:"month,omitempty"`
+	Year  any `json:"year,omitempty"`
 }
 
 // User mirrors fireworks.types.user.User.

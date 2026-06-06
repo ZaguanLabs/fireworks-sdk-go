@@ -107,6 +107,63 @@ func TestGeneratedOptionalParamsOmitEmpty(t *testing.T) {
 	}
 }
 
+func TestGeneratedOptionalPrimitiveParamsPreserveZeroValues(t *testing.T) {
+	messagePayload := marshalObject(t, MessageCreateParams{
+		Messages: []MessageCreateParamsMessage{
+			{Role: "user", Content: "hello"},
+		},
+		Model:       "accounts/fireworks/models/test",
+		MaxTokens:   0,
+		Stream:      false,
+		Temperature: 0.0,
+		TopK:        0,
+		TopP:        0.0,
+	})
+	assertJSONField(t, messagePayload, "max_tokens", float64(0))
+	assertJSONField(t, messagePayload, "stream", false)
+	assertJSONField(t, messagePayload, "temperature", float64(0))
+	assertJSONField(t, messagePayload, "top_k", float64(0))
+	assertJSONField(t, messagePayload, "top_p", float64(0))
+
+	loraPayload := marshalObject(t, LoraLoadParams{
+		Default:    false,
+		Public:     false,
+		Serverless: false,
+	})
+	assertJSONField(t, loraPayload, "default", false)
+	assertJSONField(t, loraPayload, "public", false)
+	assertJSONField(t, loraPayload, "serverless", false)
+
+	deletePayload := marshalObject(t, DeploymentDeleteParams{Hard: false})
+	assertJSONField(t, deletePayload, "hard", false)
+}
+
 func strPtr(value string) *string {
 	return &value
+}
+
+func marshalObject(t *testing.T, value any) map[string]any {
+	t.Helper()
+
+	payload, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out map[string]any
+	if err := json.Unmarshal(payload, &out); err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+func assertJSONField(t *testing.T, payload map[string]any, key string, want any) {
+	t.Helper()
+
+	got, ok := payload[key]
+	if !ok {
+		t.Fatalf("%q missing from payload %#v", key, payload)
+	}
+	if got != want {
+		t.Fatalf("%q = %#v, want %#v", key, got, want)
+	}
 }

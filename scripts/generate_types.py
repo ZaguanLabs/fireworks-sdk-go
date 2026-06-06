@@ -246,6 +246,12 @@ def deref(typ: str) -> str:
     return typ[1:] if typ.startswith("*") else typ
 
 
+def optional_primitive_param_type(typ: str, omit: bool) -> str:
+    if omit and typ in {"bool", "int", "float64"}:
+        return "any"
+    return typ
+
+
 def name_to_module_guess(name: str) -> str:
     words = re.findall(r"[A-Z]+(?=[A-Z][a-z]|$)|[A-Z]?[a-z]+|\d+", name)
     return "_".join(w.lower() for w in words)
@@ -295,6 +301,7 @@ def build_file(refs: dict[tuple[str, str], ClassRef]) -> str:
                 typ, optional = go_type(stmt.annotation, current_module=module, imports=imports, refs=refs)
                 tag_name = json_alias(stmt.value) or py_name
                 omit = optional or stmt.value is not None or (total_false and not is_required_annotation(stmt.annotation))
+                typ = optional_primitive_param_type(typ, omit)
                 tag = tag_name + (",omitempty" if omit else "")
                 fields.append(f"\t{field_name(py_name)} {typ} `json:\"{tag}\"`")
             if not fields:
