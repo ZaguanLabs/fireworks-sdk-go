@@ -24,6 +24,10 @@ profile.cov
 go.work
 go.work.sum
 
+# Python helper script cache
+__pycache__/
+*.py[cod]
+
 # env file
 .env
 

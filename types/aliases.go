@@ -11,6 +11,8 @@ type ChatCompletionCreateParamsStreaming = ChatCompletionCreateParamsCompletionC
 type ChatCompletionChunkChoice = ChatChatCompletionChunkChoice
 type ChatCompletionChunkChoiceDelta = ChatChatCompletionChunkChoiceDelta
 
+type SharedParamsDeployedModelRef struct{}
+
 type DPOJob = DPOJobDpoJob
 type DpoJob = DPOJobDpoJob
 type DPOJobCreateParams = DPOJobCreateParamsDpoJobCreateParams

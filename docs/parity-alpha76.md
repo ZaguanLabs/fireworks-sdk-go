@@ -39,7 +39,7 @@ Status values:
 
 | Area | Status | Notes |
 | --- | --- | --- |
-| Generated top-level resources/types | partial | Go has resource clients, typed aliases, generated types, version parity, and smoke tests. Needs a generated resource/type diff against the alpha.76 OpenAPI-derived Python package. |
+| Generated top-level resources/types | ported | Go has resource clients, typed aliases, generated types, version parity, smoke tests, and a checked-in alpha.76 resource/type report at `docs/resource-type-parity-alpha76.md`. |
 | Streaming/text/image/file primitives | partial | Core HTTP, file, stream, and typed resource helpers exist. Needs endpoint-by-endpoint parity audit outside `training/sdk`. |
 
 ## Python-only behavior
@@ -55,5 +55,4 @@ The Go port should instead provide explicit constructors, context-aware methods,
 
 ## Priority backlog
 
-1. Generate a broader SDK resource/type parity report for non-training endpoints.
-2. Add live/contract tests for trainer, deployment, save/hotload/sample, checkpoint promote, and reconnect flows.
+1. Add live/contract tests for trainer, deployment, save/hotload/sample, checkpoint promote, and reconnect flows.

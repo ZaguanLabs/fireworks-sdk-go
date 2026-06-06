@@ -14,6 +14,7 @@ func TestGeneratedCatalogIncludesCoreTypes(t *testing.T) {
 	_ = MessageCreateParams{}
 	_ = EvaluatorGetBuildLogEndpointResponse{}
 	_ = SharedStatus{}
+	_ = SharedParamsDeployedModelRef{}
 	_ = DpoJob{}
 	_ = ModelsPage{}
 }
