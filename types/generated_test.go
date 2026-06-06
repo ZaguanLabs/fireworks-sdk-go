@@ -92,7 +92,7 @@ func TestGeneratedJSONAliases(t *testing.T) {
 	if !ok {
 		t.Fatal("AccountListParams.PageToken missing")
 	}
-	if got, want := paramsField.Tag.Get("json"), "page_token,omitempty"; got != want {
+	if got, want := paramsField.Tag.Get("json"), "pageToken,omitempty"; got != want {
 		t.Fatalf("AccountListParams.PageToken json tag = %q, want %q", got, want)
 	}
 }

@@ -1584,7 +1584,7 @@ func TestTypedListParamsUsePythonQueryAliases(t *testing.T) {
 		PageToken: "cursor-1",
 		PageSize:  25,
 		OrderBy:   "name desc",
-		ReadMask:  []string{"name", "displayName"},
+		ReadMask:  "name,displayName",
 	})
 	if err != nil {
 		t.Fatal(err)

@@ -163,6 +163,28 @@ def json_alias(value: ast.AST | None) -> str | None:
     return None
 
 
+def annotation_alias(annotation: ast.AST) -> str | None:
+    if not isinstance(annotation, ast.Subscript):
+        return None
+    args = subscript_args(annotation)
+    name = get_name(annotation)
+    if name in {"Required", "Optional"} and args:
+        return annotation_alias(args[0])
+    if name == "Union":
+        for arg in args:
+            alias = annotation_alias(arg)
+            if alias:
+                return alias
+        return None
+    if name != "Annotated":
+        return None
+    for arg in args[1:]:
+        alias = json_alias(arg)
+        if alias:
+            return alias
+    return None
+
+
 def is_required_annotation(annotation: ast.AST) -> bool:
     return isinstance(annotation, ast.Subscript) and get_name(annotation) == "Required"
 
@@ -188,6 +210,8 @@ def go_type(
 
     if isinstance(annotation, ast.Subscript):
         args = subscript_args(annotation)
+        if name in {"Annotated"} and args:
+            return go_type(args[0], current_module=current_module, imports=imports, refs=refs)
         if name in {"Optional"} and args:
             typ, _ = go_type(args[0], current_module=current_module, imports=imports, refs=refs)
             if typ.startswith("[]") or typ.startswith("map[") or typ == "any":
@@ -299,7 +323,7 @@ def build_file(refs: dict[tuple[str, str], ClassRef]) -> str:
                 if py_name.startswith("_"):
                     continue
                 typ, optional = go_type(stmt.annotation, current_module=module, imports=imports, refs=refs)
-                tag_name = json_alias(stmt.value) or py_name
+                tag_name = json_alias(stmt.value) or annotation_alias(stmt.annotation) or py_name
                 omit = optional or stmt.value is not None or (total_false and not is_required_annotation(stmt.annotation))
                 typ = optional_primitive_param_type(typ, omit)
                 tag = tag_name + (",omitempty" if omit else "")

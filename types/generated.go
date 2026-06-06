@@ -20,16 +20,16 @@ type Account struct {
 // AccountGetParams mirrors fireworks.types.account_get_params.AccountGetParams.
 type AccountGetParams struct {
 	AccountID string `json:"account_id,omitempty"`
-	ReadMask  any    `json:"read_mask,omitempty"`
+	ReadMask  string `json:"readMask,omitempty"`
 }
 
 // AccountListParams mirrors fireworks.types.account_list_params.AccountListParams.
 type AccountListParams struct {
 	Filter    string `json:"filter,omitempty"`
-	OrderBy   any    `json:"order_by,omitempty"`
-	PageSize  any    `json:"page_size,omitempty"`
-	PageToken any    `json:"page_token,omitempty"`
-	ReadMask  any    `json:"read_mask,omitempty"`
+	OrderBy   string `json:"orderBy,omitempty"`
+	PageSize  any    `json:"pageSize,omitempty"`
+	PageToken string `json:"pageToken,omitempty"`
+	ReadMask  string `json:"readMask,omitempty"`
 }
 
 // APIKey mirrors fireworks.types.api_key.APIKey.
@@ -46,30 +46,30 @@ type APIKey struct {
 
 // APIKeyCreateParams mirrors fireworks.types.api_key_create_params.APIKeyCreateParams.
 type APIKeyCreateParams struct {
-	AccountID string `json:"account_id,omitempty"`
-	APIKey    any    `json:"api_key"`
+	AccountID string      `json:"account_id,omitempty"`
+	APIKey    APIKeyParam `json:"apiKey"`
 }
 
 // APIKeyDeleteParams mirrors fireworks.types.api_key_delete_params.APIKeyDeleteParams.
 type APIKeyDeleteParams struct {
 	AccountID string `json:"account_id,omitempty"`
-	KeyID     any    `json:"key_id"`
+	KeyID     string `json:"keyId"`
 }
 
 // APIKeyListParams mirrors fireworks.types.api_key_list_params.APIKeyListParams.
 type APIKeyListParams struct {
 	AccountID string `json:"account_id,omitempty"`
 	Filter    string `json:"filter,omitempty"`
-	OrderBy   any    `json:"order_by,omitempty"`
-	PageSize  any    `json:"page_size,omitempty"`
-	PageToken any    `json:"page_token,omitempty"`
-	ReadMask  any    `json:"read_mask,omitempty"`
+	OrderBy   string `json:"orderBy,omitempty"`
+	PageSize  any    `json:"pageSize,omitempty"`
+	PageToken string `json:"pageToken,omitempty"`
+	ReadMask  string `json:"readMask,omitempty"`
 }
 
 // APIKeyParam mirrors fireworks.types.api_key_param.APIKeyParam.
 type APIKeyParam struct {
-	DisplayName any `json:"display_name,omitempty"`
-	ExpireTime  any `json:"expire_time,omitempty"`
+	DisplayName string `json:"displayName,omitempty"`
+	ExpireTime  any    `json:"expireTime,omitempty"`
 }
 
 // AutoTune mirrors fireworks.types.auto_tune.AutoTune.
@@ -79,7 +79,7 @@ type AutoTune struct {
 
 // AutoTuneParam mirrors fireworks.types.auto_tune_param.AutoTuneParam.
 type AutoTuneParam struct {
-	LongPrompt any `json:"long_prompt,omitempty"`
+	LongPrompt any `json:"longPrompt,omitempty"`
 }
 
 // AutoscalingPolicy mirrors fireworks.types.autoscaling_policy.AutoscalingPolicy.
@@ -92,10 +92,10 @@ type AutoscalingPolicy struct {
 
 // AutoscalingPolicyParam mirrors fireworks.types.autoscaling_policy_param.AutoscalingPolicyParam.
 type AutoscalingPolicyParam struct {
-	LoadTargets       any `json:"load_targets,omitempty"`
-	ScaleDownWindow   any `json:"scale_down_window,omitempty"`
-	ScaleToZeroWindow any `json:"scale_to_zero_window,omitempty"`
-	ScaleUpWindow     any `json:"scale_up_window,omitempty"`
+	LoadTargets       map[string]float64 `json:"loadTargets,omitempty"`
+	ScaleDownWindow   string             `json:"scaleDownWindow,omitempty"`
+	ScaleToZeroWindow string             `json:"scaleToZeroWindow,omitempty"`
+	ScaleUpWindow     string             `json:"scaleUpWindow,omitempty"`
 }
 
 // BaseModelDetails mirrors fireworks.types.base_model_details.BaseModelDetails.
@@ -113,14 +113,14 @@ type BaseModelDetails struct {
 
 // BaseModelDetailsParam mirrors fireworks.types.base_model_details_param.BaseModelDetailsParam.
 type BaseModelDetailsParam struct {
-	CheckpointFormat      any `json:"checkpoint_format,omitempty"`
-	ModelType             any `json:"model_type,omitempty"`
-	Moe                   any `json:"moe,omitempty"`
-	ParameterCount        any `json:"parameter_count,omitempty"`
-	SupportsFireattention any `json:"supports_fireattention,omitempty"`
-	SupportsMtp           any `json:"supports_mtp,omitempty"`
-	Tunable               any `json:"tunable,omitempty"`
-	WorldSize             any `json:"world_size,omitempty"`
+	CheckpointFormat      string `json:"checkpointFormat,omitempty"`
+	ModelType             string `json:"modelType,omitempty"`
+	Moe                   any    `json:"moe,omitempty"`
+	ParameterCount        string `json:"parameterCount,omitempty"`
+	SupportsFireattention any    `json:"supportsFireattention,omitempty"`
+	SupportsMtp           any    `json:"supportsMtp,omitempty"`
+	Tunable               any    `json:"tunable,omitempty"`
+	WorldSize             any    `json:"worldSize,omitempty"`
 }
 
 // BatchInferenceJobInferenceParameters mirrors fireworks.types.batch_inference_job.InferenceParameters.
@@ -167,41 +167,41 @@ type BatchInferenceJob struct {
 
 // BatchInferenceJobCreateParams mirrors fireworks.types.batch_inference_job_create_params.BatchInferenceJobCreateParams.
 type BatchInferenceJobCreateParams struct {
-	AccountID            string `json:"account_id,omitempty"`
-	BatchInferenceJobID  any    `json:"batch_inference_job_id,omitempty"`
-	ContinuedFromJobName any    `json:"continued_from_job_name,omitempty"`
-	DisplayName          any    `json:"display_name,omitempty"`
-	InferenceParameters  any    `json:"inference_parameters,omitempty"`
-	InputDatasetID       any    `json:"input_dataset_id,omitempty"`
-	Model                string `json:"model,omitempty"`
-	OutputDatasetID      any    `json:"output_dataset_id,omitempty"`
-	Precision            string `json:"precision,omitempty"`
+	AccountID            string                                           `json:"account_id,omitempty"`
+	BatchInferenceJobID  string                                           `json:"batchInferenceJobId,omitempty"`
+	ContinuedFromJobName string                                           `json:"continuedFromJobName,omitempty"`
+	DisplayName          string                                           `json:"displayName,omitempty"`
+	InferenceParameters  BatchInferenceJobCreateParamsInferenceParameters `json:"inferenceParameters,omitempty"`
+	InputDatasetID       string                                           `json:"inputDatasetId,omitempty"`
+	Model                string                                           `json:"model,omitempty"`
+	OutputDatasetID      string                                           `json:"outputDatasetId,omitempty"`
+	Precision            string                                           `json:"precision,omitempty"`
 }
 
 // BatchInferenceJobCreateParamsInferenceParameters mirrors fireworks.types.batch_inference_job_create_params.InferenceParameters.
 type BatchInferenceJobCreateParamsInferenceParameters struct {
-	ExtraBody   any `json:"extra_body,omitempty"`
-	MaxTokens   any `json:"max_tokens,omitempty"`
-	N           any `json:"n,omitempty"`
-	Temperature any `json:"temperature,omitempty"`
-	TopK        any `json:"top_k,omitempty"`
-	TopP        any `json:"top_p,omitempty"`
+	ExtraBody   string `json:"extraBody,omitempty"`
+	MaxTokens   any    `json:"maxTokens,omitempty"`
+	N           any    `json:"n,omitempty"`
+	Temperature any    `json:"temperature,omitempty"`
+	TopK        any    `json:"topK,omitempty"`
+	TopP        any    `json:"topP,omitempty"`
 }
 
 // BatchInferenceJobGetParams mirrors fireworks.types.batch_inference_job_get_params.BatchInferenceJobGetParams.
 type BatchInferenceJobGetParams struct {
 	AccountID string `json:"account_id,omitempty"`
-	ReadMask  any    `json:"read_mask,omitempty"`
+	ReadMask  string `json:"readMask,omitempty"`
 }
 
 // BatchInferenceJobListParams mirrors fireworks.types.batch_inference_job_list_params.BatchInferenceJobListParams.
 type BatchInferenceJobListParams struct {
 	AccountID string `json:"account_id,omitempty"`
 	Filter    string `json:"filter,omitempty"`
-	OrderBy   any    `json:"order_by,omitempty"`
-	PageSize  any    `json:"page_size,omitempty"`
-	PageToken any    `json:"page_token,omitempty"`
-	ReadMask  any    `json:"read_mask,omitempty"`
+	OrderBy   string `json:"orderBy,omitempty"`
+	PageSize  any    `json:"pageSize,omitempty"`
+	PageToken string `json:"pageToken,omitempty"`
+	ReadMask  string `json:"readMask,omitempty"`
 }
 
 // CacheControlEphemeralParam mirrors fireworks.types.cache_control_ephemeral_param.CacheControlEphemeralParam.
@@ -568,16 +568,16 @@ type Dataset struct {
 type DatasetCreateParams struct {
 	AccountID       string       `json:"account_id,omitempty"`
 	Dataset         DatasetParam `json:"dataset"`
-	DatasetID       any          `json:"dataset_id"`
+	DatasetID       string       `json:"datasetId"`
 	Filter          string       `json:"filter,omitempty"`
-	SourceDatasetID any          `json:"source_dataset_id,omitempty"`
+	SourceDatasetID string       `json:"sourceDatasetId,omitempty"`
 }
 
 // DatasetGetDownloadEndpointParams mirrors fireworks.types.dataset_get_download_endpoint_params.DatasetGetDownloadEndpointParams.
 type DatasetGetDownloadEndpointParams struct {
 	AccountID       string `json:"account_id,omitempty"`
-	DownloadLineage any    `json:"download_lineage,omitempty"`
-	ReadMask        any    `json:"read_mask,omitempty"`
+	DownloadLineage any    `json:"downloadLineage,omitempty"`
+	ReadMask        string `json:"readMask,omitempty"`
 }
 
 // DatasetGetDownloadEndpointResponse mirrors fireworks.types.dataset_get_download_endpoint_response.DatasetGetDownloadEndpointResponse.
@@ -588,14 +588,14 @@ type DatasetGetDownloadEndpointResponse struct {
 // DatasetGetParams mirrors fireworks.types.dataset_get_params.DatasetGetParams.
 type DatasetGetParams struct {
 	AccountID string `json:"account_id,omitempty"`
-	ReadMask  any    `json:"read_mask,omitempty"`
+	ReadMask  string `json:"readMask,omitempty"`
 }
 
 // DatasetGetUploadEndpointParams mirrors fireworks.types.dataset_get_upload_endpoint_params.DatasetGetUploadEndpointParams.
 type DatasetGetUploadEndpointParams struct {
-	AccountID      string `json:"account_id,omitempty"`
-	FilenameToSize any    `json:"filename_to_size"`
-	ReadMask       any    `json:"read_mask,omitempty"`
+	AccountID      string            `json:"account_id,omitempty"`
+	FilenameToSize map[string]string `json:"filenameToSize"`
+	ReadMask       string            `json:"readMask,omitempty"`
 }
 
 // DatasetGetUploadEndpointResponse mirrors fireworks.types.dataset_get_upload_endpoint_response.DatasetGetUploadEndpointResponse.
@@ -607,39 +607,39 @@ type DatasetGetUploadEndpointResponse struct {
 type DatasetListParams struct {
 	AccountID string `json:"account_id,omitempty"`
 	Filter    string `json:"filter,omitempty"`
-	OrderBy   any    `json:"order_by,omitempty"`
-	PageSize  any    `json:"page_size,omitempty"`
-	PageToken any    `json:"page_token,omitempty"`
-	ReadMask  any    `json:"read_mask,omitempty"`
+	OrderBy   string `json:"orderBy,omitempty"`
+	PageSize  any    `json:"pageSize,omitempty"`
+	PageToken string `json:"pageToken,omitempty"`
+	ReadMask  string `json:"readMask,omitempty"`
 }
 
 // DatasetParam mirrors fireworks.types.dataset_param.DatasetParam.
 type DatasetParam struct {
-	DisplayName      any              `json:"display_name,omitempty"`
-	EvalProtocol     any              `json:"eval_protocol,omitempty"`
-	EvaluationResult any              `json:"evaluation_result,omitempty"`
-	ExampleCount     any              `json:"example_count,omitempty"`
-	ExternalURL      any              `json:"external_url,omitempty"`
-	Format           string           `json:"format,omitempty"`
-	SourceJobName    any              `json:"source_job_name,omitempty"`
-	Splitted         SplittedParam    `json:"splitted,omitempty"`
-	Transformed      TransformedParam `json:"transformed,omitempty"`
-	UserUploaded     any              `json:"user_uploaded,omitempty"`
+	DisplayName      string                `json:"displayName,omitempty"`
+	EvalProtocol     any                   `json:"evalProtocol,omitempty"`
+	EvaluationResult EvaluationResultParam `json:"evaluationResult,omitempty"`
+	ExampleCount     string                `json:"exampleCount,omitempty"`
+	ExternalURL      string                `json:"externalUrl,omitempty"`
+	Format           string                `json:"format,omitempty"`
+	SourceJobName    string                `json:"sourceJobName,omitempty"`
+	Splitted         SplittedParam         `json:"splitted,omitempty"`
+	Transformed      TransformedParam      `json:"transformed,omitempty"`
+	UserUploaded     any                   `json:"userUploaded,omitempty"`
 }
 
 // DatasetUpdateParams mirrors fireworks.types.dataset_update_params.DatasetUpdateParams.
 type DatasetUpdateParams struct {
-	AccountID        string           `json:"account_id,omitempty"`
-	DisplayName      any              `json:"display_name,omitempty"`
-	EvalProtocol     any              `json:"eval_protocol,omitempty"`
-	EvaluationResult any              `json:"evaluation_result,omitempty"`
-	ExampleCount     any              `json:"example_count,omitempty"`
-	ExternalURL      any              `json:"external_url,omitempty"`
-	Format           string           `json:"format,omitempty"`
-	SourceJobName    any              `json:"source_job_name,omitempty"`
-	Splitted         SplittedParam    `json:"splitted,omitempty"`
-	Transformed      TransformedParam `json:"transformed,omitempty"`
-	UserUploaded     any              `json:"user_uploaded,omitempty"`
+	AccountID        string                `json:"account_id,omitempty"`
+	DisplayName      string                `json:"displayName,omitempty"`
+	EvalProtocol     any                   `json:"evalProtocol,omitempty"`
+	EvaluationResult EvaluationResultParam `json:"evaluationResult,omitempty"`
+	ExampleCount     string                `json:"exampleCount,omitempty"`
+	ExternalURL      string                `json:"externalUrl,omitempty"`
+	Format           string                `json:"format,omitempty"`
+	SourceJobName    string                `json:"sourceJobName,omitempty"`
+	Splitted         SplittedParam         `json:"splitted,omitempty"`
+	Transformed      TransformedParam      `json:"transformed,omitempty"`
+	UserUploaded     any                   `json:"userUploaded,omitempty"`
 }
 
 // DatasetUploadParams mirrors fireworks.types.dataset_upload_params.DatasetUploadParams.
@@ -724,75 +724,75 @@ type Deployment struct {
 
 // DeploymentCreateParams mirrors fireworks.types.deployment_create_params.DeploymentCreateParams.
 type DeploymentCreateParams struct {
-	AccountID                       string         `json:"account_id,omitempty"`
-	BaseModel                       any            `json:"base_model"`
-	DeploymentID                    any            `json:"deployment_id,omitempty"`
-	DisableAutoDeploy               any            `json:"disable_auto_deploy,omitempty"`
-	DisableSpeculativeDecoding      any            `json:"disable_speculative_decoding,omitempty"`
-	SkipImageTagValidation          any            `json:"skip_image_tag_validation,omitempty"`
-	SkipShapeValidation             any            `json:"skip_shape_validation,omitempty"`
-	ValidateOnly                    any            `json:"validate_only,omitempty"`
-	AcceleratorCount                any            `json:"accelerator_count,omitempty"`
-	AcceleratorType                 any            `json:"accelerator_type,omitempty"`
-	ActiveModelVersion              any            `json:"active_model_version,omitempty"`
-	AutoscalingPolicy               any            `json:"autoscaling_policy,omitempty"`
-	AutoTune                        any            `json:"auto_tune,omitempty"`
-	DeploymentShape                 any            `json:"deployment_shape,omitempty"`
-	DeploymentTemplate              any            `json:"deployment_template,omitempty"`
-	Description                     string         `json:"description,omitempty"`
-	DirectRouteAPIKeys              any            `json:"direct_route_api_keys,omitempty"`
-	DirectRouteType                 any            `json:"direct_route_type,omitempty"`
-	DisableDeploymentSizeValidation any            `json:"disable_deployment_size_validation,omitempty"`
-	DisplayName                     any            `json:"display_name,omitempty"`
-	DraftModel                      any            `json:"draft_model,omitempty"`
-	DraftTokenCount                 any            `json:"draft_token_count,omitempty"`
-	EnableAddons                    any            `json:"enable_addons,omitempty"`
-	EnableHotLoad                   any            `json:"enable_hot_load,omitempty"`
-	EnableHotReloadLatestAddon      any            `json:"enable_hot_reload_latest_addon,omitempty"`
-	EnableMtp                       any            `json:"enable_mtp,omitempty"`
-	EnableSessionAffinity           any            `json:"enable_session_affinity,omitempty"`
-	ExpireTime                      any            `json:"expire_time,omitempty"`
-	HotLoadBucketType               any            `json:"hot_load_bucket_type,omitempty"`
-	HotLoadBucketURL                any            `json:"hot_load_bucket_url,omitempty"`
-	MaxContextLength                any            `json:"max_context_length,omitempty"`
-	MaxReplicaCount                 any            `json:"max_replica_count,omitempty"`
-	MaxWithRevocableReplicaCount    any            `json:"max_with_revocable_replica_count,omitempty"`
-	MinReplicaCount                 any            `json:"min_replica_count,omitempty"`
-	NgramSpeculationLength          any            `json:"ngram_speculation_length,omitempty"`
-	Placement                       PlacementParam `json:"placement,omitempty"`
-	Precision                       string         `json:"precision,omitempty"`
-	PricingPlanID                   any            `json:"pricing_plan_id,omitempty"`
-	TargetModelVersion              any            `json:"target_model_version,omitempty"`
+	AccountID                       string                 `json:"account_id,omitempty"`
+	BaseModel                       string                 `json:"baseModel"`
+	DeploymentID                    string                 `json:"deploymentId,omitempty"`
+	DisableAutoDeploy               any                    `json:"disableAutoDeploy,omitempty"`
+	DisableSpeculativeDecoding      any                    `json:"disableSpeculativeDecoding,omitempty"`
+	SkipImageTagValidation          any                    `json:"skipImageTagValidation,omitempty"`
+	SkipShapeValidation             any                    `json:"skipShapeValidation,omitempty"`
+	ValidateOnly                    any                    `json:"validateOnly,omitempty"`
+	AcceleratorCount                any                    `json:"acceleratorCount,omitempty"`
+	AcceleratorType                 string                 `json:"acceleratorType,omitempty"`
+	ActiveModelVersion              string                 `json:"activeModelVersion,omitempty"`
+	AutoscalingPolicy               AutoscalingPolicyParam `json:"autoscalingPolicy,omitempty"`
+	AutoTune                        AutoTuneParam          `json:"autoTune,omitempty"`
+	DeploymentShape                 string                 `json:"deploymentShape,omitempty"`
+	DeploymentTemplate              string                 `json:"deploymentTemplate,omitempty"`
+	Description                     string                 `json:"description,omitempty"`
+	DirectRouteAPIKeys              []string               `json:"directRouteApiKeys,omitempty"`
+	DirectRouteType                 string                 `json:"directRouteType,omitempty"`
+	DisableDeploymentSizeValidation any                    `json:"disableDeploymentSizeValidation,omitempty"`
+	DisplayName                     string                 `json:"displayName,omitempty"`
+	DraftModel                      string                 `json:"draftModel,omitempty"`
+	DraftTokenCount                 any                    `json:"draftTokenCount,omitempty"`
+	EnableAddons                    any                    `json:"enableAddons,omitempty"`
+	EnableHotLoad                   any                    `json:"enableHotLoad,omitempty"`
+	EnableHotReloadLatestAddon      any                    `json:"enableHotReloadLatestAddon,omitempty"`
+	EnableMtp                       any                    `json:"enableMtp,omitempty"`
+	EnableSessionAffinity           any                    `json:"enableSessionAffinity,omitempty"`
+	ExpireTime                      any                    `json:"expireTime,omitempty"`
+	HotLoadBucketType               string                 `json:"hotLoadBucketType,omitempty"`
+	HotLoadBucketURL                string                 `json:"hotLoadBucketUrl,omitempty"`
+	MaxContextLength                any                    `json:"maxContextLength,omitempty"`
+	MaxReplicaCount                 any                    `json:"maxReplicaCount,omitempty"`
+	MaxWithRevocableReplicaCount    any                    `json:"maxWithRevocableReplicaCount,omitempty"`
+	MinReplicaCount                 any                    `json:"minReplicaCount,omitempty"`
+	NgramSpeculationLength          any                    `json:"ngramSpeculationLength,omitempty"`
+	Placement                       PlacementParam         `json:"placement,omitempty"`
+	Precision                       string                 `json:"precision,omitempty"`
+	PricingPlanID                   string                 `json:"pricingPlanId,omitempty"`
+	TargetModelVersion              string                 `json:"targetModelVersion,omitempty"`
 }
 
 // DeploymentDeleteParams mirrors fireworks.types.deployment_delete_params.DeploymentDeleteParams.
 type DeploymentDeleteParams struct {
 	AccountID    string `json:"account_id,omitempty"`
 	Hard         any    `json:"hard,omitempty"`
-	IgnoreChecks any    `json:"ignore_checks,omitempty"`
+	IgnoreChecks any    `json:"ignoreChecks,omitempty"`
 }
 
 // DeploymentGetParams mirrors fireworks.types.deployment_get_params.DeploymentGetParams.
 type DeploymentGetParams struct {
 	AccountID string `json:"account_id,omitempty"`
-	ReadMask  any    `json:"read_mask,omitempty"`
+	ReadMask  string `json:"readMask,omitempty"`
 }
 
 // DeploymentListParams mirrors fireworks.types.deployment_list_params.DeploymentListParams.
 type DeploymentListParams struct {
 	AccountID   string `json:"account_id,omitempty"`
 	Filter      string `json:"filter,omitempty"`
-	OrderBy     any    `json:"order_by,omitempty"`
-	PageSize    any    `json:"page_size,omitempty"`
-	PageToken   any    `json:"page_token,omitempty"`
-	ReadMask    any    `json:"read_mask,omitempty"`
-	ShowDeleted any    `json:"show_deleted,omitempty"`
+	OrderBy     string `json:"orderBy,omitempty"`
+	PageSize    any    `json:"pageSize,omitempty"`
+	PageToken   string `json:"pageToken,omitempty"`
+	ReadMask    string `json:"readMask,omitempty"`
+	ShowDeleted any    `json:"showDeleted,omitempty"`
 }
 
 // DeploymentScaleParams mirrors fireworks.types.deployment_scale_params.DeploymentScaleParams.
 type DeploymentScaleParams struct {
 	AccountID    string `json:"account_id,omitempty"`
-	ReplicaCount any    `json:"replica_count,omitempty"`
+	ReplicaCount any    `json:"replicaCount,omitempty"`
 }
 
 // DeploymentShape mirrors fireworks.types.deployment_shape.DeploymentShape.
@@ -822,18 +822,18 @@ type DeploymentShape struct {
 // DeploymentShapeGetParams mirrors fireworks.types.deployment_shape_get_params.DeploymentShapeGetParams.
 type DeploymentShapeGetParams struct {
 	AccountID string `json:"account_id,omitempty"`
-	ReadMask  any    `json:"read_mask,omitempty"`
+	ReadMask  string `json:"readMask,omitempty"`
 }
 
 // DeploymentShapeListParams mirrors fireworks.types.deployment_shape_list_params.DeploymentShapeListParams.
 type DeploymentShapeListParams struct {
 	AccountID   string `json:"account_id,omitempty"`
 	Filter      string `json:"filter,omitempty"`
-	OrderBy     any    `json:"order_by,omitempty"`
-	PageSize    any    `json:"page_size,omitempty"`
-	PageToken   any    `json:"page_token,omitempty"`
-	ReadMask    any    `json:"read_mask,omitempty"`
-	TargetModel any    `json:"target_model,omitempty"`
+	OrderBy     string `json:"orderBy,omitempty"`
+	PageSize    any    `json:"pageSize,omitempty"`
+	PageToken   string `json:"pageToken,omitempty"`
+	ReadMask    string `json:"readMask,omitempty"`
+	TargetModel string `json:"targetModel,omitempty"`
 }
 
 // DeploymentShapeVersion mirrors fireworks.types.deployment_shape_version.DeploymentShapeVersion.
@@ -850,17 +850,17 @@ type DeploymentShapeVersion struct {
 type DeploymentShapeVersionGetParams struct {
 	AccountID         string `json:"account_id,omitempty"`
 	DeploymentShapeID string `json:"deployment_shape_id"`
-	ReadMask          any    `json:"read_mask,omitempty"`
+	ReadMask          string `json:"readMask,omitempty"`
 }
 
 // DeploymentShapeVersionListParams mirrors fireworks.types.deployment_shape_version_list_params.DeploymentShapeVersionListParams.
 type DeploymentShapeVersionListParams struct {
 	AccountID string `json:"account_id,omitempty"`
 	Filter    string `json:"filter,omitempty"`
-	OrderBy   any    `json:"order_by,omitempty"`
-	PageSize  any    `json:"page_size,omitempty"`
-	PageToken any    `json:"page_token,omitempty"`
-	ReadMask  any    `json:"read_mask,omitempty"`
+	OrderBy   string `json:"orderBy,omitempty"`
+	PageSize  any    `json:"pageSize,omitempty"`
+	PageToken string `json:"pageToken,omitempty"`
+	ReadMask  string `json:"readMask,omitempty"`
 }
 
 // DeploymentUndeleteParams mirrors fireworks.types.deployment_undelete_params.DeploymentUndeleteParams.
@@ -871,40 +871,40 @@ type DeploymentUndeleteParams struct {
 
 // DeploymentUpdateParams mirrors fireworks.types.deployment_update_params.DeploymentUpdateParams.
 type DeploymentUpdateParams struct {
-	AccountID                       string         `json:"account_id,omitempty"`
-	BaseModel                       any            `json:"base_model"`
-	SkipShapeValidation             any            `json:"skip_shape_validation,omitempty"`
-	AcceleratorCount                any            `json:"accelerator_count,omitempty"`
-	AcceleratorType                 any            `json:"accelerator_type,omitempty"`
-	ActiveModelVersion              any            `json:"active_model_version,omitempty"`
-	AutoscalingPolicy               any            `json:"autoscaling_policy,omitempty"`
-	AutoTune                        any            `json:"auto_tune,omitempty"`
-	DeploymentShape                 any            `json:"deployment_shape,omitempty"`
-	DeploymentTemplate              any            `json:"deployment_template,omitempty"`
-	Description                     string         `json:"description,omitempty"`
-	DirectRouteAPIKeys              any            `json:"direct_route_api_keys,omitempty"`
-	DirectRouteType                 any            `json:"direct_route_type,omitempty"`
-	DisableDeploymentSizeValidation any            `json:"disable_deployment_size_validation,omitempty"`
-	DisplayName                     any            `json:"display_name,omitempty"`
-	DraftModel                      any            `json:"draft_model,omitempty"`
-	DraftTokenCount                 any            `json:"draft_token_count,omitempty"`
-	EnableAddons                    any            `json:"enable_addons,omitempty"`
-	EnableHotLoad                   any            `json:"enable_hot_load,omitempty"`
-	EnableHotReloadLatestAddon      any            `json:"enable_hot_reload_latest_addon,omitempty"`
-	EnableMtp                       any            `json:"enable_mtp,omitempty"`
-	EnableSessionAffinity           any            `json:"enable_session_affinity,omitempty"`
-	ExpireTime                      any            `json:"expire_time,omitempty"`
-	HotLoadBucketType               any            `json:"hot_load_bucket_type,omitempty"`
-	HotLoadBucketURL                any            `json:"hot_load_bucket_url,omitempty"`
-	MaxContextLength                any            `json:"max_context_length,omitempty"`
-	MaxReplicaCount                 any            `json:"max_replica_count,omitempty"`
-	MaxWithRevocableReplicaCount    any            `json:"max_with_revocable_replica_count,omitempty"`
-	MinReplicaCount                 any            `json:"min_replica_count,omitempty"`
-	NgramSpeculationLength          any            `json:"ngram_speculation_length,omitempty"`
-	Placement                       PlacementParam `json:"placement,omitempty"`
-	Precision                       string         `json:"precision,omitempty"`
-	PricingPlanID                   any            `json:"pricing_plan_id,omitempty"`
-	TargetModelVersion              any            `json:"target_model_version,omitempty"`
+	AccountID                       string                 `json:"account_id,omitempty"`
+	BaseModel                       string                 `json:"baseModel"`
+	SkipShapeValidation             any                    `json:"skipShapeValidation,omitempty"`
+	AcceleratorCount                any                    `json:"acceleratorCount,omitempty"`
+	AcceleratorType                 string                 `json:"acceleratorType,omitempty"`
+	ActiveModelVersion              string                 `json:"activeModelVersion,omitempty"`
+	AutoscalingPolicy               AutoscalingPolicyParam `json:"autoscalingPolicy,omitempty"`
+	AutoTune                        AutoTuneParam          `json:"autoTune,omitempty"`
+	DeploymentShape                 string                 `json:"deploymentShape,omitempty"`
+	DeploymentTemplate              string                 `json:"deploymentTemplate,omitempty"`
+	Description                     string                 `json:"description,omitempty"`
+	DirectRouteAPIKeys              []string               `json:"directRouteApiKeys,omitempty"`
+	DirectRouteType                 string                 `json:"directRouteType,omitempty"`
+	DisableDeploymentSizeValidation any                    `json:"disableDeploymentSizeValidation,omitempty"`
+	DisplayName                     string                 `json:"displayName,omitempty"`
+	DraftModel                      string                 `json:"draftModel,omitempty"`
+	DraftTokenCount                 any                    `json:"draftTokenCount,omitempty"`
+	EnableAddons                    any                    `json:"enableAddons,omitempty"`
+	EnableHotLoad                   any                    `json:"enableHotLoad,omitempty"`
+	EnableHotReloadLatestAddon      any                    `json:"enableHotReloadLatestAddon,omitempty"`
+	EnableMtp                       any                    `json:"enableMtp,omitempty"`
+	EnableSessionAffinity           any                    `json:"enableSessionAffinity,omitempty"`
+	ExpireTime                      any                    `json:"expireTime,omitempty"`
+	HotLoadBucketType               string                 `json:"hotLoadBucketType,omitempty"`
+	HotLoadBucketURL                string                 `json:"hotLoadBucketUrl,omitempty"`
+	MaxContextLength                any                    `json:"maxContextLength,omitempty"`
+	MaxReplicaCount                 any                    `json:"maxReplicaCount,omitempty"`
+	MaxWithRevocableReplicaCount    any                    `json:"maxWithRevocableReplicaCount,omitempty"`
+	MinReplicaCount                 any                    `json:"minReplicaCount,omitempty"`
+	NgramSpeculationLength          any                    `json:"ngramSpeculationLength,omitempty"`
+	Placement                       PlacementParam         `json:"placement,omitempty"`
+	Precision                       string                 `json:"precision,omitempty"`
+	PricingPlanID                   string                 `json:"pricingPlanId,omitempty"`
+	TargetModelVersion              string                 `json:"targetModelVersion,omitempty"`
 }
 
 // DPOJobAwsS3Config mirrors fireworks.types.dpo_job.AwsS3Config.
@@ -940,28 +940,28 @@ type DPOJobDpoJob struct {
 
 // DPOJobCreateParamsDpoJobCreateParams mirrors fireworks.types.dpo_job_create_params.DpoJobCreateParams.
 type DPOJobCreateParamsDpoJobCreateParams struct {
-	AccountID              string `json:"account_id,omitempty"`
-	Dataset                string `json:"dataset"`
-	DPOJobID               any    `json:"dpo_job_id,omitempty"`
-	AwsS3Config            any    `json:"aws_s3_config,omitempty"`
-	AzureBlobStorageConfig any    `json:"azure_blob_storage_config,omitempty"`
-	DisplayName            any    `json:"display_name,omitempty"`
-	LossConfig             any    `json:"loss_config,omitempty"`
-	TrainingConfig         any    `json:"training_config,omitempty"`
-	WandbConfig            any    `json:"wandb_config,omitempty"`
+	AccountID              string                                      `json:"account_id,omitempty"`
+	Dataset                string                                      `json:"dataset"`
+	DPOJobID               string                                      `json:"dpoJobId,omitempty"`
+	AwsS3Config            DPOJobCreateParamsAwsS3Config               `json:"awsS3Config,omitempty"`
+	AzureBlobStorageConfig DPOJobCreateParamsAzureBlobStorageConfig    `json:"azureBlobStorageConfig,omitempty"`
+	DisplayName            string                                      `json:"displayName,omitempty"`
+	LossConfig             SharedParamsReinforcementLearningLossConfig `json:"lossConfig,omitempty"`
+	TrainingConfig         SharedParamsTrainingConfig                  `json:"trainingConfig,omitempty"`
+	WandbConfig            SharedParamsWandbConfig                     `json:"wandbConfig,omitempty"`
 }
 
 // DPOJobCreateParamsAwsS3Config mirrors fireworks.types.dpo_job_create_params.AwsS3Config.
 type DPOJobCreateParamsAwsS3Config struct {
-	CredentialsSecret any `json:"credentials_secret,omitempty"`
-	IamRoleArn        any `json:"iam_role_arn,omitempty"`
+	CredentialsSecret string `json:"credentialsSecret,omitempty"`
+	IamRoleArn        string `json:"iamRoleArn,omitempty"`
 }
 
 // DPOJobCreateParamsAzureBlobStorageConfig mirrors fireworks.types.dpo_job_create_params.AzureBlobStorageConfig.
 type DPOJobCreateParamsAzureBlobStorageConfig struct {
-	CredentialsSecret       any `json:"credentials_secret,omitempty"`
-	ManagedIdentityClientID any `json:"managed_identity_client_id,omitempty"`
-	TenantID                any `json:"tenant_id,omitempty"`
+	CredentialsSecret       string `json:"credentialsSecret,omitempty"`
+	ManagedIdentityClientID string `json:"managedIdentityClientId,omitempty"`
+	TenantID                string `json:"tenantId,omitempty"`
 }
 
 // DPOJobGetMetricsFileEndpointResponseDpoJobGetMetricsFileEndpointResponse mirrors fireworks.types.dpo_job_get_metrics_file_endpoint_response.DpoJobGetMetricsFileEndpointResponse.
@@ -972,17 +972,17 @@ type DPOJobGetMetricsFileEndpointResponseDpoJobGetMetricsFileEndpointResponse st
 // DPOJobGetParamsDpoJobGetParams mirrors fireworks.types.dpo_job_get_params.DpoJobGetParams.
 type DPOJobGetParamsDpoJobGetParams struct {
 	AccountID string `json:"account_id,omitempty"`
-	ReadMask  any    `json:"read_mask,omitempty"`
+	ReadMask  string `json:"readMask,omitempty"`
 }
 
 // DPOJobListParamsDpoJobListParams mirrors fireworks.types.dpo_job_list_params.DpoJobListParams.
 type DPOJobListParamsDpoJobListParams struct {
 	AccountID string `json:"account_id,omitempty"`
 	Filter    string `json:"filter,omitempty"`
-	OrderBy   any    `json:"order_by,omitempty"`
-	PageSize  any    `json:"page_size,omitempty"`
-	PageToken any    `json:"page_token,omitempty"`
-	ReadMask  any    `json:"read_mask,omitempty"`
+	OrderBy   string `json:"orderBy,omitempty"`
+	PageSize  any    `json:"pageSize,omitempty"`
+	PageToken string `json:"pageToken,omitempty"`
+	ReadMask  string `json:"readMask,omitempty"`
 }
 
 // DPOJobResumeParamsDpoJobResumeParams mirrors fireworks.types.dpo_job_resume_params.DpoJobResumeParams.
@@ -993,26 +993,26 @@ type DPOJobResumeParamsDpoJobResumeParams struct {
 
 // EvaluationJobCreateParams mirrors fireworks.types.evaluation_job_create_params.EvaluationJobCreateParams.
 type EvaluationJobCreateParams struct {
-	AccountID       string `json:"account_id,omitempty"`
-	EvaluationJob   any    `json:"evaluation_job"`
-	EvaluationJobID any    `json:"evaluation_job_id,omitempty"`
-	LeaderboardIds  any    `json:"leaderboard_ids,omitempty"`
+	AccountID       string                                 `json:"account_id,omitempty"`
+	EvaluationJob   EvaluationJobCreateParamsEvaluationJob `json:"evaluationJob"`
+	EvaluationJobID string                                 `json:"evaluationJobId,omitempty"`
+	LeaderboardIds  []string                               `json:"leaderboardIds,omitempty"`
 }
 
 // EvaluationJobCreateParamsEvaluationJobAwsS3Config mirrors fireworks.types.evaluation_job_create_params.EvaluationJobAwsS3Config.
 type EvaluationJobCreateParamsEvaluationJobAwsS3Config struct {
-	CredentialsSecret any `json:"credentials_secret,omitempty"`
-	IamRoleArn        any `json:"iam_role_arn,omitempty"`
+	CredentialsSecret string `json:"credentialsSecret,omitempty"`
+	IamRoleArn        string `json:"iamRoleArn,omitempty"`
 }
 
 // EvaluationJobCreateParamsEvaluationJob mirrors fireworks.types.evaluation_job_create_params.EvaluationJob.
 type EvaluationJobCreateParamsEvaluationJob struct {
-	Evaluator     string `json:"evaluator"`
-	InputDataset  any    `json:"input_dataset"`
-	OutputDataset any    `json:"output_dataset"`
-	AwsS3Config   any    `json:"aws_s3_config,omitempty"`
-	DisplayName   any    `json:"display_name,omitempty"`
-	OutputStats   any    `json:"output_stats,omitempty"`
+	Evaluator     string                                            `json:"evaluator"`
+	InputDataset  string                                            `json:"inputDataset"`
+	OutputDataset string                                            `json:"outputDataset"`
+	AwsS3Config   EvaluationJobCreateParamsEvaluationJobAwsS3Config `json:"awsS3Config,omitempty"`
+	DisplayName   string                                            `json:"displayName,omitempty"`
+	OutputStats   string                                            `json:"outputStats,omitempty"`
 }
 
 // EvaluationJobCreateResponseAwsS3Config mirrors fireworks.types.evaluation_job_create_response.AwsS3Config.
@@ -1048,7 +1048,7 @@ type EvaluationJobGetLogEndpointResponse struct {
 // EvaluationJobGetParams mirrors fireworks.types.evaluation_job_get_params.EvaluationJobGetParams.
 type EvaluationJobGetParams struct {
 	AccountID string `json:"account_id,omitempty"`
-	ReadMask  any    `json:"read_mask,omitempty"`
+	ReadMask  string `json:"readMask,omitempty"`
 }
 
 // EvaluationJobGetResponseAwsS3Config mirrors fireworks.types.evaluation_job_get_response.AwsS3Config.
@@ -1078,10 +1078,10 @@ type EvaluationJobGetResponse struct {
 type EvaluationJobListParams struct {
 	AccountID string `json:"account_id,omitempty"`
 	Filter    string `json:"filter,omitempty"`
-	OrderBy   any    `json:"order_by,omitempty"`
-	PageSize  any    `json:"page_size,omitempty"`
-	PageToken any    `json:"page_token,omitempty"`
-	ReadMask  any    `json:"read_mask,omitempty"`
+	OrderBy   string `json:"orderBy,omitempty"`
+	PageSize  any    `json:"pageSize,omitempty"`
+	PageToken string `json:"pageToken,omitempty"`
+	ReadMask  string `json:"readMask,omitempty"`
 }
 
 // EvaluationJobListResponseAwsS3Config mirrors fireworks.types.evaluation_job_list_response.AwsS3Config.
@@ -1114,40 +1114,40 @@ type EvaluationResult struct {
 
 // EvaluationResultParam mirrors fireworks.types.evaluation_result_param.EvaluationResultParam.
 type EvaluationResultParam struct {
-	EvaluationJobID any `json:"evaluation_job_id"`
+	EvaluationJobID string `json:"evaluationJobId"`
 }
 
 // EvaluatorCreateParams mirrors fireworks.types.evaluator_create_params.EvaluatorCreateParams.
 type EvaluatorCreateParams struct {
 	AccountID   string                         `json:"account_id,omitempty"`
 	Evaluator   EvaluatorCreateParamsEvaluator `json:"evaluator"`
-	EvaluatorID any                            `json:"evaluator_id,omitempty"`
+	EvaluatorID string                         `json:"evaluatorId,omitempty"`
 }
 
 // EvaluatorCreateParamsEvaluatorCriterionCodeSnippets mirrors fireworks.types.evaluator_create_params.EvaluatorCriterionCodeSnippets.
 type EvaluatorCreateParamsEvaluatorCriterionCodeSnippets struct {
-	EntryFile    any    `json:"entry_file,omitempty"`
-	EntryFunc    any    `json:"entry_func,omitempty"`
-	FileContents any    `json:"file_contents,omitempty"`
-	Language     string `json:"language,omitempty"`
+	EntryFile    string            `json:"entryFile,omitempty"`
+	EntryFunc    string            `json:"entryFunc,omitempty"`
+	FileContents map[string]string `json:"fileContents,omitempty"`
+	Language     string            `json:"language,omitempty"`
 }
 
 // EvaluatorCreateParamsEvaluatorCriterion mirrors fireworks.types.evaluator_create_params.EvaluatorCriterion.
 type EvaluatorCreateParamsEvaluatorCriterion struct {
-	CodeSnippets any    `json:"code_snippets,omitempty"`
-	Description  string `json:"description,omitempty"`
-	Name         string `json:"name,omitempty"`
-	Type         string `json:"type,omitempty"`
+	CodeSnippets EvaluatorCreateParamsEvaluatorCriterionCodeSnippets `json:"codeSnippets,omitempty"`
+	Description  string                                              `json:"description,omitempty"`
+	Name         string                                              `json:"name,omitempty"`
+	Type         string                                              `json:"type,omitempty"`
 }
 
 // EvaluatorCreateParamsEvaluator mirrors fireworks.types.evaluator_create_params.Evaluator.
 type EvaluatorCreateParamsEvaluator struct {
-	CommitHash     any                                       `json:"commit_hash,omitempty"`
+	CommitHash     string                                    `json:"commitHash,omitempty"`
 	Criteria       []EvaluatorCreateParamsEvaluatorCriterion `json:"criteria,omitempty"`
-	DefaultDataset any                                       `json:"default_dataset,omitempty"`
+	DefaultDataset string                                    `json:"defaultDataset,omitempty"`
 	Description    string                                    `json:"description,omitempty"`
-	DisplayName    any                                       `json:"display_name,omitempty"`
-	EntryPoint     any                                       `json:"entry_point,omitempty"`
+	DisplayName    string                                    `json:"displayName,omitempty"`
+	EntryPoint     string                                    `json:"entryPoint,omitempty"`
 	Requirements   string                                    `json:"requirements,omitempty"`
 	Source         EvaluatorSourceParam                      `json:"source,omitempty"`
 }
@@ -1189,7 +1189,7 @@ type EvaluatorCreateResponse struct {
 // EvaluatorGetBuildLogEndpointParams mirrors fireworks.types.evaluator_get_build_log_endpoint_params.EvaluatorGetBuildLogEndpointParams.
 type EvaluatorGetBuildLogEndpointParams struct {
 	AccountID string `json:"account_id,omitempty"`
-	ReadMask  any    `json:"read_mask,omitempty"`
+	ReadMask  string `json:"readMask,omitempty"`
 }
 
 // EvaluatorGetBuildLogEndpointResponse mirrors fireworks.types.evaluator_get_build_log_endpoint_response.EvaluatorGetBuildLogEndpointResponse.
@@ -1200,7 +1200,7 @@ type EvaluatorGetBuildLogEndpointResponse struct {
 // EvaluatorGetParams mirrors fireworks.types.evaluator_get_params.EvaluatorGetParams.
 type EvaluatorGetParams struct {
 	AccountID string `json:"account_id,omitempty"`
-	ReadMask  any    `json:"read_mask,omitempty"`
+	ReadMask  string `json:"readMask,omitempty"`
 }
 
 // EvaluatorGetResponseCriterionCodeSnippets mirrors fireworks.types.evaluator_get_response.CriterionCodeSnippets.
@@ -1240,7 +1240,7 @@ type EvaluatorGetResponse struct {
 // EvaluatorGetSourceCodeEndpointParams mirrors fireworks.types.evaluator_get_source_code_endpoint_params.EvaluatorGetSourceCodeEndpointParams.
 type EvaluatorGetSourceCodeEndpointParams struct {
 	AccountID string `json:"account_id,omitempty"`
-	ReadMask  any    `json:"read_mask,omitempty"`
+	ReadMask  string `json:"readMask,omitempty"`
 }
 
 // EvaluatorGetSourceCodeEndpointResponse mirrors fireworks.types.evaluator_get_source_code_endpoint_response.EvaluatorGetSourceCodeEndpointResponse.
@@ -1250,9 +1250,9 @@ type EvaluatorGetSourceCodeEndpointResponse struct {
 
 // EvaluatorGetUploadEndpointParams mirrors fireworks.types.evaluator_get_upload_endpoint_params.EvaluatorGetUploadEndpointParams.
 type EvaluatorGetUploadEndpointParams struct {
-	AccountID      string `json:"account_id,omitempty"`
-	FilenameToSize any    `json:"filename_to_size"`
-	ReadMask       any    `json:"read_mask,omitempty"`
+	AccountID      string            `json:"account_id,omitempty"`
+	FilenameToSize map[string]string `json:"filenameToSize"`
+	ReadMask       string            `json:"readMask,omitempty"`
 }
 
 // EvaluatorGetUploadEndpointResponse mirrors fireworks.types.evaluator_get_upload_endpoint_response.EvaluatorGetUploadEndpointResponse.
@@ -1264,10 +1264,10 @@ type EvaluatorGetUploadEndpointResponse struct {
 type EvaluatorListParams struct {
 	AccountID string `json:"account_id,omitempty"`
 	Filter    string `json:"filter,omitempty"`
-	OrderBy   any    `json:"order_by,omitempty"`
-	PageSize  any    `json:"page_size,omitempty"`
-	PageToken any    `json:"page_token,omitempty"`
-	ReadMask  any    `json:"read_mask,omitempty"`
+	OrderBy   string `json:"orderBy,omitempty"`
+	PageSize  any    `json:"pageSize,omitempty"`
+	PageToken string `json:"pageToken,omitempty"`
+	ReadMask  string `json:"readMask,omitempty"`
 }
 
 // EvaluatorListResponseCriterionCodeSnippets mirrors fireworks.types.evaluator_list_response.CriterionCodeSnippets.
@@ -1312,38 +1312,38 @@ type EvaluatorSource struct {
 
 // EvaluatorSourceParam mirrors fireworks.types.evaluator_source_param.EvaluatorSourceParam.
 type EvaluatorSourceParam struct {
-	GithubRepositoryName any    `json:"github_repository_name,omitempty"`
+	GithubRepositoryName string `json:"githubRepositoryName,omitempty"`
 	Type                 string `json:"type,omitempty"`
 }
 
 // EvaluatorUpdateParams mirrors fireworks.types.evaluator_update_params.EvaluatorUpdateParams.
 type EvaluatorUpdateParams struct {
 	AccountID         string                           `json:"account_id,omitempty"`
-	PrepareCodeUpload any                              `json:"prepare_code_upload,omitempty"`
-	CommitHash        any                              `json:"commit_hash,omitempty"`
+	PrepareCodeUpload any                              `json:"prepareCodeUpload,omitempty"`
+	CommitHash        string                           `json:"commitHash,omitempty"`
 	Criteria          []EvaluatorUpdateParamsCriterion `json:"criteria,omitempty"`
-	DefaultDataset    any                              `json:"default_dataset,omitempty"`
+	DefaultDataset    string                           `json:"defaultDataset,omitempty"`
 	Description       string                           `json:"description,omitempty"`
-	DisplayName       any                              `json:"display_name,omitempty"`
-	EntryPoint        any                              `json:"entry_point,omitempty"`
+	DisplayName       string                           `json:"displayName,omitempty"`
+	EntryPoint        string                           `json:"entryPoint,omitempty"`
 	Requirements      string                           `json:"requirements,omitempty"`
 	Source            EvaluatorSourceParam             `json:"source,omitempty"`
 }
 
 // EvaluatorUpdateParamsCriterionCodeSnippets mirrors fireworks.types.evaluator_update_params.CriterionCodeSnippets.
 type EvaluatorUpdateParamsCriterionCodeSnippets struct {
-	EntryFile    any    `json:"entry_file,omitempty"`
-	EntryFunc    any    `json:"entry_func,omitempty"`
-	FileContents any    `json:"file_contents,omitempty"`
-	Language     string `json:"language,omitempty"`
+	EntryFile    string            `json:"entryFile,omitempty"`
+	EntryFunc    string            `json:"entryFunc,omitempty"`
+	FileContents map[string]string `json:"fileContents,omitempty"`
+	Language     string            `json:"language,omitempty"`
 }
 
 // EvaluatorUpdateParamsCriterion mirrors fireworks.types.evaluator_update_params.Criterion.
 type EvaluatorUpdateParamsCriterion struct {
-	CodeSnippets any    `json:"code_snippets,omitempty"`
-	Description  string `json:"description,omitempty"`
-	Name         string `json:"name,omitempty"`
-	Type         string `json:"type,omitempty"`
+	CodeSnippets EvaluatorUpdateParamsCriterionCodeSnippets `json:"codeSnippets,omitempty"`
+	Description  string                                     `json:"description,omitempty"`
+	Name         string                                     `json:"name,omitempty"`
+	Type         string                                     `json:"type,omitempty"`
 }
 
 // EvaluatorUpdateResponseCriterionCodeSnippets mirrors fireworks.types.evaluator_update_response.CriterionCodeSnippets.
@@ -1389,27 +1389,27 @@ type EvaluatorValidateUploadParams struct {
 // LoraGetParams mirrors fireworks.types.lora_get_params.LoraGetParams.
 type LoraGetParams struct {
 	AccountID string `json:"account_id,omitempty"`
-	ReadMask  any    `json:"read_mask,omitempty"`
+	ReadMask  string `json:"readMask,omitempty"`
 }
 
 // LoraListParams mirrors fireworks.types.lora_list_params.LoraListParams.
 type LoraListParams struct {
 	AccountID string `json:"account_id,omitempty"`
 	Filter    string `json:"filter,omitempty"`
-	OrderBy   any    `json:"order_by,omitempty"`
-	PageSize  any    `json:"page_size,omitempty"`
-	PageToken any    `json:"page_token,omitempty"`
-	ReadMask  any    `json:"read_mask,omitempty"`
+	OrderBy   string `json:"orderBy,omitempty"`
+	PageSize  any    `json:"pageSize,omitempty"`
+	PageToken string `json:"pageToken,omitempty"`
+	ReadMask  string `json:"readMask,omitempty"`
 }
 
 // LoraLoadParams mirrors fireworks.types.lora_load_params.LoraLoadParams.
 type LoraLoadParams struct {
 	AccountID          string `json:"account_id,omitempty"`
-	ReplaceMergedAddon any    `json:"replace_merged_addon,omitempty"`
+	ReplaceMergedAddon any    `json:"replaceMergedAddon,omitempty"`
 	Default            any    `json:"default,omitempty"`
 	Deployment         string `json:"deployment,omitempty"`
 	Description        string `json:"description,omitempty"`
-	DisplayName        any    `json:"display_name,omitempty"`
+	DisplayName        string `json:"displayName,omitempty"`
 	Model              string `json:"model,omitempty"`
 	Public             any    `json:"public,omitempty"`
 	Serverless         any    `json:"serverless,omitempty"`
@@ -1421,7 +1421,7 @@ type LoraUpdateParams struct {
 	Default     any    `json:"default,omitempty"`
 	Deployment  string `json:"deployment,omitempty"`
 	Description string `json:"description,omitempty"`
-	DisplayName any    `json:"display_name,omitempty"`
+	DisplayName string `json:"displayName,omitempty"`
 	Model       string `json:"model,omitempty"`
 	Public      any    `json:"public,omitempty"`
 	Serverless  any    `json:"serverless,omitempty"`
@@ -1448,7 +1448,7 @@ type MessageCreateParams struct {
 
 // MessageCreateParamsMessageContentUnionMember1AnthropicRequestDocumentBlockSourceAnthropicBase64PdfSource mirrors fireworks.types.message_create_params.MessageContentUnionMember1AnthropicRequestDocumentBlockSourceAnthropicBase64PdfSource.
 type MessageCreateParamsMessageContentUnionMember1AnthropicRequestDocumentBlockSourceAnthropicBase64PdfSource struct {
-	Data      any    `json:"data"`
+	Data      any    `json:"data,omitempty"`
 	MediaType string `json:"media_type"`
 	Type      string `json:"type"`
 }
@@ -1511,7 +1511,7 @@ type MessageCreateParamsMessageContentUnionMember1AnthropicRequestToolUseBlock s
 
 // MessageCreateParamsContentAnthropicRequestDocumentBlockSourceAnthropicBase64PdfSource mirrors fireworks.types.message_create_params.ContentAnthropicRequestDocumentBlockSourceAnthropicBase64PdfSource.
 type MessageCreateParamsContentAnthropicRequestDocumentBlockSourceAnthropicBase64PdfSource struct {
-	Data      any    `json:"data"`
+	Data      any    `json:"data,omitempty"`
 	MediaType string `json:"media_type"`
 	Type      string `json:"type"`
 }
@@ -1703,7 +1703,7 @@ type Model struct {
 // ModelCreateParams mirrors fireworks.types.model_create_params.ModelCreateParams.
 type ModelCreateParams struct {
 	AccountID string     `json:"account_id,omitempty"`
-	ModelID   any        `json:"model_id"`
+	ModelID   string     `json:"modelId"`
 	Cluster   string     `json:"cluster,omitempty"`
 	Model     ModelParam `json:"model,omitempty"`
 }
@@ -1711,7 +1711,7 @@ type ModelCreateParams struct {
 // ModelGetDownloadEndpointParams mirrors fireworks.types.model_get_download_endpoint_params.ModelGetDownloadEndpointParams.
 type ModelGetDownloadEndpointParams struct {
 	AccountID string `json:"account_id,omitempty"`
-	ReadMask  any    `json:"read_mask,omitempty"`
+	ReadMask  string `json:"readMask,omitempty"`
 }
 
 // ModelGetDownloadEndpointResponse mirrors fireworks.types.model_get_download_endpoint_response.ModelGetDownloadEndpointResponse.
@@ -1722,15 +1722,15 @@ type ModelGetDownloadEndpointResponse struct {
 // ModelGetParams mirrors fireworks.types.model_get_params.ModelGetParams.
 type ModelGetParams struct {
 	AccountID string `json:"account_id,omitempty"`
-	ReadMask  any    `json:"read_mask,omitempty"`
+	ReadMask  string `json:"readMask,omitempty"`
 }
 
 // ModelGetUploadEndpointParams mirrors fireworks.types.model_get_upload_endpoint_params.ModelGetUploadEndpointParams.
 type ModelGetUploadEndpointParams struct {
-	AccountID             string `json:"account_id,omitempty"`
-	FilenameToSize        any    `json:"filename_to_size"`
-	EnableResumableUpload any    `json:"enable_resumable_upload,omitempty"`
-	ReadMask              any    `json:"read_mask,omitempty"`
+	AccountID             string            `json:"account_id,omitempty"`
+	FilenameToSize        map[string]string `json:"filenameToSize"`
+	EnableResumableUpload any               `json:"enableResumableUpload,omitempty"`
+	ReadMask              string            `json:"readMask,omitempty"`
 }
 
 // ModelGetUploadEndpointResponse mirrors fireworks.types.model_get_upload_endpoint_response.ModelGetUploadEndpointResponse.
@@ -1743,74 +1743,74 @@ type ModelGetUploadEndpointResponse struct {
 type ModelListParams struct {
 	AccountID string `json:"account_id,omitempty"`
 	Filter    string `json:"filter,omitempty"`
-	OrderBy   any    `json:"order_by,omitempty"`
-	PageSize  any    `json:"page_size,omitempty"`
-	PageToken any    `json:"page_token,omitempty"`
-	ReadMask  any    `json:"read_mask,omitempty"`
+	OrderBy   string `json:"orderBy,omitempty"`
+	PageSize  any    `json:"pageSize,omitempty"`
+	PageToken string `json:"pageToken,omitempty"`
+	ReadMask  string `json:"readMask,omitempty"`
 }
 
 // ModelParam mirrors fireworks.types.model_param.ModelParam.
 type ModelParam struct {
-	BaseModelDetails       any    `json:"base_model_details,omitempty"`
-	ContextLength          any    `json:"context_length,omitempty"`
-	ConversationConfig     any    `json:"conversation_config,omitempty"`
-	DefaultDraftModel      any    `json:"default_draft_model,omitempty"`
-	DefaultDraftTokenCount any    `json:"default_draft_token_count,omitempty"`
-	DeprecationDate        any    `json:"deprecation_date,omitempty"`
-	Description            string `json:"description,omitempty"`
-	DisplayName            any    `json:"display_name,omitempty"`
-	GithubURL              any    `json:"github_url,omitempty"`
-	HuggingFaceURL         any    `json:"hugging_face_url,omitempty"`
-	Kind                   string `json:"kind,omitempty"`
-	PeftDetails            any    `json:"peft_details,omitempty"`
-	Public                 any    `json:"public,omitempty"`
-	SnapshotType           any    `json:"snapshot_type,omitempty"`
-	SupportsImageInput     any    `json:"supports_image_input,omitempty"`
-	SupportsLora           any    `json:"supports_lora,omitempty"`
-	SupportsTools          any    `json:"supports_tools,omitempty"`
-	TeftDetails            any    `json:"teft_details,omitempty"`
-	TrainingContextLength  any    `json:"training_context_length,omitempty"`
-	UseHfApplyChatTemplate any    `json:"use_hf_apply_chat_template,omitempty"`
+	BaseModelDetails       BaseModelDetailsParam   `json:"baseModelDetails,omitempty"`
+	ContextLength          any                     `json:"contextLength,omitempty"`
+	ConversationConfig     ConversationConfigParam `json:"conversationConfig,omitempty"`
+	DefaultDraftModel      string                  `json:"defaultDraftModel,omitempty"`
+	DefaultDraftTokenCount any                     `json:"defaultDraftTokenCount,omitempty"`
+	DeprecationDate        TypeDateParam           `json:"deprecationDate,omitempty"`
+	Description            string                  `json:"description,omitempty"`
+	DisplayName            string                  `json:"displayName,omitempty"`
+	GithubURL              string                  `json:"githubUrl,omitempty"`
+	HuggingFaceURL         string                  `json:"huggingFaceUrl,omitempty"`
+	Kind                   string                  `json:"kind,omitempty"`
+	PeftDetails            PeftDetailsParam        `json:"peftDetails,omitempty"`
+	Public                 any                     `json:"public,omitempty"`
+	SnapshotType           string                  `json:"snapshotType,omitempty"`
+	SupportsImageInput     any                     `json:"supportsImageInput,omitempty"`
+	SupportsLora           any                     `json:"supportsLora,omitempty"`
+	SupportsTools          any                     `json:"supportsTools,omitempty"`
+	TeftDetails            any                     `json:"teftDetails,omitempty"`
+	TrainingContextLength  any                     `json:"trainingContextLength,omitempty"`
+	UseHfApplyChatTemplate any                     `json:"useHfApplyChatTemplate,omitempty"`
 }
 
 // ModelPrepareParams mirrors fireworks.types.model_prepare_params.ModelPrepareParams.
 type ModelPrepareParams struct {
 	AccountID string `json:"account_id,omitempty"`
 	Precision string `json:"precision,omitempty"`
-	ReadMask  any    `json:"read_mask,omitempty"`
+	ReadMask  string `json:"readMask,omitempty"`
 }
 
 // ModelUpdateParams mirrors fireworks.types.model_update_params.ModelUpdateParams.
 type ModelUpdateParams struct {
-	AccountID              string `json:"account_id,omitempty"`
-	BaseModelDetails       any    `json:"base_model_details,omitempty"`
-	ContextLength          any    `json:"context_length,omitempty"`
-	ConversationConfig     any    `json:"conversation_config,omitempty"`
-	DefaultDraftModel      any    `json:"default_draft_model,omitempty"`
-	DefaultDraftTokenCount any    `json:"default_draft_token_count,omitempty"`
-	DeprecationDate        any    `json:"deprecation_date,omitempty"`
-	Description            string `json:"description,omitempty"`
-	DisplayName            any    `json:"display_name,omitempty"`
-	GithubURL              any    `json:"github_url,omitempty"`
-	HuggingFaceURL         any    `json:"hugging_face_url,omitempty"`
-	Kind                   string `json:"kind,omitempty"`
-	PeftDetails            any    `json:"peft_details,omitempty"`
-	Public                 any    `json:"public,omitempty"`
-	SnapshotType           any    `json:"snapshot_type,omitempty"`
-	SupportsImageInput     any    `json:"supports_image_input,omitempty"`
-	SupportsLora           any    `json:"supports_lora,omitempty"`
-	SupportsTools          any    `json:"supports_tools,omitempty"`
-	TeftDetails            any    `json:"teft_details,omitempty"`
-	TrainingContextLength  any    `json:"training_context_length,omitempty"`
-	UseHfApplyChatTemplate any    `json:"use_hf_apply_chat_template,omitempty"`
+	AccountID              string                  `json:"account_id,omitempty"`
+	BaseModelDetails       BaseModelDetailsParam   `json:"baseModelDetails,omitempty"`
+	ContextLength          any                     `json:"contextLength,omitempty"`
+	ConversationConfig     ConversationConfigParam `json:"conversationConfig,omitempty"`
+	DefaultDraftModel      string                  `json:"defaultDraftModel,omitempty"`
+	DefaultDraftTokenCount any                     `json:"defaultDraftTokenCount,omitempty"`
+	DeprecationDate        TypeDateParam           `json:"deprecationDate,omitempty"`
+	Description            string                  `json:"description,omitempty"`
+	DisplayName            string                  `json:"displayName,omitempty"`
+	GithubURL              string                  `json:"githubUrl,omitempty"`
+	HuggingFaceURL         string                  `json:"huggingFaceUrl,omitempty"`
+	Kind                   string                  `json:"kind,omitempty"`
+	PeftDetails            PeftDetailsParam        `json:"peftDetails,omitempty"`
+	Public                 any                     `json:"public,omitempty"`
+	SnapshotType           string                  `json:"snapshotType,omitempty"`
+	SupportsImageInput     any                     `json:"supportsImageInput,omitempty"`
+	SupportsLora           any                     `json:"supportsLora,omitempty"`
+	SupportsTools          any                     `json:"supportsTools,omitempty"`
+	TeftDetails            any                     `json:"teftDetails,omitempty"`
+	TrainingContextLength  any                     `json:"trainingContextLength,omitempty"`
+	UseHfApplyChatTemplate any                     `json:"useHfApplyChatTemplate,omitempty"`
 }
 
 // ModelValidateUploadParams mirrors fireworks.types.model_validate_upload_params.ModelValidateUploadParams.
 type ModelValidateUploadParams struct {
 	AccountID              string `json:"account_id,omitempty"`
-	ConfigOnly             any    `json:"config_only,omitempty"`
-	SkipHfConfigValidation any    `json:"skip_hf_config_validation,omitempty"`
-	TrustRemoteCode        any    `json:"trust_remote_code,omitempty"`
+	ConfigOnly             any    `json:"configOnly,omitempty"`
+	SkipHfConfigValidation any    `json:"skipHfConfigValidation,omitempty"`
+	TrustRemoteCode        any    `json:"trustRemoteCode,omitempty"`
 }
 
 // ModelValidateUploadResponse mirrors fireworks.types.model_validate_upload_response.ModelValidateUploadResponse.
@@ -1829,10 +1829,10 @@ type PeftDetails struct {
 
 // PeftDetailsParam mirrors fireworks.types.peft_details_param.PeftDetailsParam.
 type PeftDetailsParam struct {
-	BaseModel           any `json:"base_model"`
-	R                   int `json:"r"`
-	TargetModules       any `json:"target_modules"`
-	MergeAddonModelName any `json:"merge_addon_model_name,omitempty"`
+	BaseModel           string   `json:"baseModel"`
+	R                   int      `json:"r"`
+	TargetModules       []string `json:"targetModules"`
+	MergeAddonModelName string   `json:"mergeAddonModelName,omitempty"`
 }
 
 // Placement mirrors fireworks.types.placement.Placement.
@@ -1844,7 +1844,7 @@ type Placement struct {
 
 // PlacementParam mirrors fireworks.types.placement_param.PlacementParam.
 type PlacementParam struct {
-	MultiRegion any      `json:"multi_region,omitempty"`
+	MultiRegion string   `json:"multiRegion,omitempty"`
 	Region      string   `json:"region,omitempty"`
 	Regions     []string `json:"regions,omitempty"`
 }
@@ -1926,64 +1926,64 @@ type ReinforcementFineTuningJobCancelParams struct {
 
 // ReinforcementFineTuningJobCreateParams mirrors fireworks.types.reinforcement_fine_tuning_job_create_params.ReinforcementFineTuningJobCreateParams.
 type ReinforcementFineTuningJobCreateParams struct {
-	AccountID                    string `json:"account_id,omitempty"`
-	Dataset                      string `json:"dataset"`
-	Evaluator                    string `json:"evaluator"`
-	ReinforcementFineTuningJobID any    `json:"reinforcement_fine_tuning_job_id,omitempty"`
-	AwsS3Config                  any    `json:"aws_s3_config,omitempty"`
-	AzureBlobStorageConfig       any    `json:"azure_blob_storage_config,omitempty"`
-	ChunkSize                    any    `json:"chunk_size,omitempty"`
-	DisplayName                  any    `json:"display_name,omitempty"`
-	EvalAutoCarveout             any    `json:"eval_auto_carveout,omitempty"`
-	EvaluationDataset            any    `json:"evaluation_dataset,omitempty"`
-	InferenceParameters          any    `json:"inference_parameters,omitempty"`
-	LossConfig                   any    `json:"loss_config,omitempty"`
-	MaxConcurrentEvaluations     any    `json:"max_concurrent_evaluations,omitempty"`
-	MaxConcurrentRollouts        any    `json:"max_concurrent_rollouts,omitempty"`
-	MaxInferenceReplicaCount     any    `json:"max_inference_replica_count,omitempty"`
-	McpServer                    any    `json:"mcp_server,omitempty"`
-	NodeCount                    any    `json:"node_count,omitempty"`
-	TrainingConfig               any    `json:"training_config,omitempty"`
-	WandbConfig                  any    `json:"wandb_config,omitempty"`
+	AccountID                    string                                                       `json:"account_id,omitempty"`
+	Dataset                      string                                                       `json:"dataset"`
+	Evaluator                    string                                                       `json:"evaluator"`
+	ReinforcementFineTuningJobID string                                                       `json:"reinforcementFineTuningJobId,omitempty"`
+	AwsS3Config                  ReinforcementFineTuningJobCreateParamsAwsS3Config            `json:"awsS3Config,omitempty"`
+	AzureBlobStorageConfig       ReinforcementFineTuningJobCreateParamsAzureBlobStorageConfig `json:"azureBlobStorageConfig,omitempty"`
+	ChunkSize                    any                                                          `json:"chunkSize,omitempty"`
+	DisplayName                  string                                                       `json:"displayName,omitempty"`
+	EvalAutoCarveout             any                                                          `json:"evalAutoCarveout,omitempty"`
+	EvaluationDataset            string                                                       `json:"evaluationDataset,omitempty"`
+	InferenceParameters          ReinforcementFineTuningJobCreateParamsInferenceParameters    `json:"inferenceParameters,omitempty"`
+	LossConfig                   SharedParamsReinforcementLearningLossConfig                  `json:"lossConfig,omitempty"`
+	MaxConcurrentEvaluations     any                                                          `json:"maxConcurrentEvaluations,omitempty"`
+	MaxConcurrentRollouts        any                                                          `json:"maxConcurrentRollouts,omitempty"`
+	MaxInferenceReplicaCount     any                                                          `json:"maxInferenceReplicaCount,omitempty"`
+	McpServer                    string                                                       `json:"mcpServer,omitempty"`
+	NodeCount                    any                                                          `json:"nodeCount,omitempty"`
+	TrainingConfig               SharedParamsTrainingConfig                                   `json:"trainingConfig,omitempty"`
+	WandbConfig                  SharedParamsWandbConfig                                      `json:"wandbConfig,omitempty"`
 }
 
 // ReinforcementFineTuningJobCreateParamsAwsS3Config mirrors fireworks.types.reinforcement_fine_tuning_job_create_params.AwsS3Config.
 type ReinforcementFineTuningJobCreateParamsAwsS3Config struct {
-	CredentialsSecret any `json:"credentials_secret,omitempty"`
-	IamRoleArn        any `json:"iam_role_arn,omitempty"`
+	CredentialsSecret string `json:"credentialsSecret,omitempty"`
+	IamRoleArn        string `json:"iamRoleArn,omitempty"`
 }
 
 // ReinforcementFineTuningJobCreateParamsAzureBlobStorageConfig mirrors fireworks.types.reinforcement_fine_tuning_job_create_params.AzureBlobStorageConfig.
 type ReinforcementFineTuningJobCreateParamsAzureBlobStorageConfig struct {
-	CredentialsSecret       any `json:"credentials_secret,omitempty"`
-	ManagedIdentityClientID any `json:"managed_identity_client_id,omitempty"`
-	TenantID                any `json:"tenant_id,omitempty"`
+	CredentialsSecret       string `json:"credentialsSecret,omitempty"`
+	ManagedIdentityClientID string `json:"managedIdentityClientId,omitempty"`
+	TenantID                string `json:"tenantId,omitempty"`
 }
 
 // ReinforcementFineTuningJobCreateParamsInferenceParameters mirrors fireworks.types.reinforcement_fine_tuning_job_create_params.InferenceParameters.
 type ReinforcementFineTuningJobCreateParamsInferenceParameters struct {
-	ExtraBody               any `json:"extra_body,omitempty"`
-	MaxOutputTokens         any `json:"max_output_tokens,omitempty"`
-	ResponseCandidatesCount any `json:"response_candidates_count,omitempty"`
-	Temperature             any `json:"temperature,omitempty"`
-	TopK                    any `json:"top_k,omitempty"`
-	TopP                    any `json:"top_p,omitempty"`
+	ExtraBody               string `json:"extraBody,omitempty"`
+	MaxOutputTokens         any    `json:"maxOutputTokens,omitempty"`
+	ResponseCandidatesCount any    `json:"responseCandidatesCount,omitempty"`
+	Temperature             any    `json:"temperature,omitempty"`
+	TopK                    any    `json:"topK,omitempty"`
+	TopP                    any    `json:"topP,omitempty"`
 }
 
 // ReinforcementFineTuningJobGetParams mirrors fireworks.types.reinforcement_fine_tuning_job_get_params.ReinforcementFineTuningJobGetParams.
 type ReinforcementFineTuningJobGetParams struct {
 	AccountID string `json:"account_id,omitempty"`
-	ReadMask  any    `json:"read_mask,omitempty"`
+	ReadMask  string `json:"readMask,omitempty"`
 }
 
 // ReinforcementFineTuningJobListParams mirrors fireworks.types.reinforcement_fine_tuning_job_list_params.ReinforcementFineTuningJobListParams.
 type ReinforcementFineTuningJobListParams struct {
 	AccountID string `json:"account_id,omitempty"`
 	Filter    string `json:"filter,omitempty"`
-	OrderBy   any    `json:"order_by,omitempty"`
-	PageSize  any    `json:"page_size,omitempty"`
-	PageToken any    `json:"page_token,omitempty"`
-	ReadMask  any    `json:"read_mask,omitempty"`
+	OrderBy   string `json:"orderBy,omitempty"`
+	PageSize  any    `json:"pageSize,omitempty"`
+	PageToken string `json:"pageToken,omitempty"`
+	ReadMask  string `json:"readMask,omitempty"`
 }
 
 // ReinforcementFineTuningJobResumeParams mirrors fireworks.types.reinforcement_fine_tuning_job_resume_params.ReinforcementFineTuningJobResumeParams.
@@ -2051,61 +2051,61 @@ type ReinforcementFineTuningStep struct {
 
 // ReinforcementFineTuningStepCreateParams mirrors fireworks.types.reinforcement_fine_tuning_step_create_params.ReinforcementFineTuningStepCreateParams.
 type ReinforcementFineTuningStepCreateParams struct {
-	AccountID              string `json:"account_id,omitempty"`
-	RLORTrainerJobID       any    `json:"rlor_trainer_job_id,omitempty"`
-	AwsS3Config            any    `json:"aws_s3_config,omitempty"`
-	AzureBlobStorageConfig any    `json:"azure_blob_storage_config,omitempty"`
-	Dataset                string `json:"dataset,omitempty"`
-	DisplayName            any    `json:"display_name,omitempty"`
-	EvalAutoCarveout       any    `json:"eval_auto_carveout,omitempty"`
-	EvaluationDataset      any    `json:"evaluation_dataset,omitempty"`
-	ForwardOnly            any    `json:"forward_only,omitempty"`
-	HotLoadDeploymentID    any    `json:"hot_load_deployment_id,omitempty"`
-	KeepAlive              any    `json:"keep_alive,omitempty"`
-	LossConfig             any    `json:"loss_config,omitempty"`
-	NodeCount              any    `json:"node_count,omitempty"`
-	RewardWeights          any    `json:"reward_weights,omitempty"`
-	RolloutDeploymentName  any    `json:"rollout_deployment_name,omitempty"`
-	ServiceMode            any    `json:"service_mode,omitempty"`
-	TrainingConfig         any    `json:"training_config,omitempty"`
-	UsePurpose             any    `json:"use_purpose,omitempty"`
-	WandbConfig            any    `json:"wandb_config,omitempty"`
+	AccountID              string                                                        `json:"account_id,omitempty"`
+	RLORTrainerJobID       string                                                        `json:"rlorTrainerJobId,omitempty"`
+	AwsS3Config            ReinforcementFineTuningStepCreateParamsAwsS3Config            `json:"awsS3Config,omitempty"`
+	AzureBlobStorageConfig ReinforcementFineTuningStepCreateParamsAzureBlobStorageConfig `json:"azureBlobStorageConfig,omitempty"`
+	Dataset                string                                                        `json:"dataset,omitempty"`
+	DisplayName            string                                                        `json:"displayName,omitempty"`
+	EvalAutoCarveout       any                                                           `json:"evalAutoCarveout,omitempty"`
+	EvaluationDataset      string                                                        `json:"evaluationDataset,omitempty"`
+	ForwardOnly            any                                                           `json:"forwardOnly,omitempty"`
+	HotLoadDeploymentID    string                                                        `json:"hotLoadDeploymentId,omitempty"`
+	KeepAlive              any                                                           `json:"keepAlive,omitempty"`
+	LossConfig             SharedParamsReinforcementLearningLossConfig                   `json:"lossConfig,omitempty"`
+	NodeCount              any                                                           `json:"nodeCount,omitempty"`
+	RewardWeights          []string                                                      `json:"rewardWeights,omitempty"`
+	RolloutDeploymentName  string                                                        `json:"rolloutDeploymentName,omitempty"`
+	ServiceMode            any                                                           `json:"serviceMode,omitempty"`
+	TrainingConfig         SharedParamsTrainingConfig                                    `json:"trainingConfig,omitempty"`
+	UsePurpose             string                                                        `json:"usePurpose,omitempty"`
+	WandbConfig            SharedParamsWandbConfig                                       `json:"wandbConfig,omitempty"`
 }
 
 // ReinforcementFineTuningStepCreateParamsAwsS3Config mirrors fireworks.types.reinforcement_fine_tuning_step_create_params.AwsS3Config.
 type ReinforcementFineTuningStepCreateParamsAwsS3Config struct {
-	CredentialsSecret any `json:"credentials_secret,omitempty"`
-	IamRoleArn        any `json:"iam_role_arn,omitempty"`
+	CredentialsSecret string `json:"credentialsSecret,omitempty"`
+	IamRoleArn        string `json:"iamRoleArn,omitempty"`
 }
 
 // ReinforcementFineTuningStepCreateParamsAzureBlobStorageConfig mirrors fireworks.types.reinforcement_fine_tuning_step_create_params.AzureBlobStorageConfig.
 type ReinforcementFineTuningStepCreateParamsAzureBlobStorageConfig struct {
-	CredentialsSecret       any `json:"credentials_secret,omitempty"`
-	ManagedIdentityClientID any `json:"managed_identity_client_id,omitempty"`
-	TenantID                any `json:"tenant_id,omitempty"`
+	CredentialsSecret       string `json:"credentialsSecret,omitempty"`
+	ManagedIdentityClientID string `json:"managedIdentityClientId,omitempty"`
+	TenantID                string `json:"tenantId,omitempty"`
 }
 
 // ReinforcementFineTuningStepExecuteParams mirrors fireworks.types.reinforcement_fine_tuning_step_execute_params.ReinforcementFineTuningStepExecuteParams.
 type ReinforcementFineTuningStepExecuteParams struct {
 	AccountID   string `json:"account_id,omitempty"`
 	Dataset     string `json:"dataset"`
-	OutputModel any    `json:"output_model"`
+	OutputModel string `json:"outputModel"`
 }
 
 // ReinforcementFineTuningStepGetParams mirrors fireworks.types.reinforcement_fine_tuning_step_get_params.ReinforcementFineTuningStepGetParams.
 type ReinforcementFineTuningStepGetParams struct {
 	AccountID string `json:"account_id,omitempty"`
-	ReadMask  any    `json:"read_mask,omitempty"`
+	ReadMask  string `json:"readMask,omitempty"`
 }
 
 // ReinforcementFineTuningStepListParams mirrors fireworks.types.reinforcement_fine_tuning_step_list_params.ReinforcementFineTuningStepListParams.
 type ReinforcementFineTuningStepListParams struct {
 	AccountID string `json:"account_id,omitempty"`
 	Filter    string `json:"filter,omitempty"`
-	OrderBy   any    `json:"order_by,omitempty"`
-	PageSize  any    `json:"page_size,omitempty"`
-	PageToken any    `json:"page_token,omitempty"`
-	ReadMask  any    `json:"read_mask,omitempty"`
+	OrderBy   string `json:"orderBy,omitempty"`
+	PageSize  any    `json:"pageSize,omitempty"`
+	PageToken string `json:"pageToken,omitempty"`
+	ReadMask  string `json:"readMask,omitempty"`
 }
 
 // ReinforcementFineTuningStepResumeParams mirrors fireworks.types.reinforcement_fine_tuning_step_resume_params.ReinforcementFineTuningStepResumeParams.
@@ -2136,7 +2136,7 @@ type RequestContentBlockLocationCitationParam struct {
 
 // RequestImageBlockParamSourceAnthropicBase64ImageSource mirrors fireworks.types.request_image_block_param.SourceAnthropicBase64ImageSource.
 type RequestImageBlockParamSourceAnthropicBase64ImageSource struct {
-	Data      any    `json:"data"`
+	Data      any    `json:"data,omitempty"`
 	MediaType string `json:"media_type"`
 	Type      string `json:"type"`
 }
@@ -2283,7 +2283,7 @@ type Secret struct {
 // SecretCreateParams mirrors fireworks.types.secret_create_params.SecretCreateParams.
 type SecretCreateParams struct {
 	AccountID string `json:"account_id,omitempty"`
-	KeyName   any    `json:"key_name"`
+	KeyName   string `json:"keyName"`
 	Name      string `json:"name"`
 	Value     string `json:"value,omitempty"`
 }
@@ -2291,23 +2291,23 @@ type SecretCreateParams struct {
 // SecretGetParams mirrors fireworks.types.secret_get_params.SecretGetParams.
 type SecretGetParams struct {
 	AccountID string `json:"account_id,omitempty"`
-	ReadMask  any    `json:"read_mask,omitempty"`
+	ReadMask  string `json:"readMask,omitempty"`
 }
 
 // SecretListParams mirrors fireworks.types.secret_list_params.SecretListParams.
 type SecretListParams struct {
 	AccountID string `json:"account_id,omitempty"`
 	Filter    string `json:"filter,omitempty"`
-	OrderBy   any    `json:"order_by,omitempty"`
-	PageSize  any    `json:"page_size,omitempty"`
-	PageToken any    `json:"page_token,omitempty"`
-	ReadMask  any    `json:"read_mask,omitempty"`
+	OrderBy   string `json:"orderBy,omitempty"`
+	PageSize  any    `json:"pageSize,omitempty"`
+	PageToken string `json:"pageToken,omitempty"`
+	ReadMask  string `json:"readMask,omitempty"`
 }
 
 // SecretUpdateParams mirrors fireworks.types.secret_update_params.SecretUpdateParams.
 type SecretUpdateParams struct {
 	AccountID string `json:"account_id,omitempty"`
-	KeyName   any    `json:"key_name"`
+	KeyName   string `json:"keyName"`
 	Value     string `json:"value,omitempty"`
 }
 
@@ -2567,7 +2567,7 @@ type SharedParamsChatMessage struct {
 
 // SharedParamsReinforcementLearningLossConfig mirrors fireworks.types.shared_params.reinforcement_learning_loss_config.ReinforcementLearningLossConfig.
 type SharedParamsReinforcementLearningLossConfig struct {
-	KlBeta any    `json:"kl_beta,omitempty"`
+	KlBeta any    `json:"klBeta,omitempty"`
 	Method string `json:"method,omitempty"`
 }
 
@@ -2579,29 +2579,29 @@ type SharedParamsStatus struct {
 
 // SharedParamsTrainingConfig mirrors fireworks.types.shared_params.training_config.TrainingConfig.
 type SharedParamsTrainingConfig struct {
-	BaseModel                 any    `json:"base_model,omitempty"`
-	BatchSize                 any    `json:"batch_size,omitempty"`
-	BatchSizeSamples          any    `json:"batch_size_samples,omitempty"`
+	BaseModel                 string `json:"baseModel,omitempty"`
+	BatchSize                 any    `json:"batchSize,omitempty"`
+	BatchSizeSamples          any    `json:"batchSizeSamples,omitempty"`
 	Epochs                    any    `json:"epochs,omitempty"`
-	GradientAccumulationSteps any    `json:"gradient_accumulation_steps,omitempty"`
-	JinjaTemplate             any    `json:"jinja_template,omitempty"`
-	LearningRate              any    `json:"learning_rate,omitempty"`
-	LearningRateWarmupSteps   any    `json:"learning_rate_warmup_steps,omitempty"`
-	LoraRank                  any    `json:"lora_rank,omitempty"`
-	MaxContextLength          any    `json:"max_context_length,omitempty"`
-	OptimizerWeightDecay      any    `json:"optimizer_weight_decay,omitempty"`
-	OutputModel               any    `json:"output_model,omitempty"`
+	GradientAccumulationSteps any    `json:"gradientAccumulationSteps,omitempty"`
+	JinjaTemplate             string `json:"jinjaTemplate,omitempty"`
+	LearningRate              any    `json:"learningRate,omitempty"`
+	LearningRateWarmupSteps   any    `json:"learningRateWarmupSteps,omitempty"`
+	LoraRank                  any    `json:"loraRank,omitempty"`
+	MaxContextLength          any    `json:"maxContextLength,omitempty"`
+	OptimizerWeightDecay      any    `json:"optimizerWeightDecay,omitempty"`
+	OutputModel               string `json:"outputModel,omitempty"`
 	Region                    string `json:"region,omitempty"`
-	WarmStartFrom             any    `json:"warm_start_from,omitempty"`
+	WarmStartFrom             string `json:"warmStartFrom,omitempty"`
 }
 
 // SharedParamsWandbConfig mirrors fireworks.types.shared_params.wandb_config.WandbConfig.
 type SharedParamsWandbConfig struct {
-	APIKey  any    `json:"api_key,omitempty"`
+	APIKey  string `json:"apiKey,omitempty"`
 	Enabled any    `json:"enabled,omitempty"`
 	Entity  string `json:"entity,omitempty"`
 	Project string `json:"project,omitempty"`
-	RunID   any    `json:"run_id,omitempty"`
+	RunID   string `json:"runId,omitempty"`
 }
 
 // Splitted mirrors fireworks.types.splitted.Splitted.
@@ -2611,7 +2611,7 @@ type Splitted struct {
 
 // SplittedParam mirrors fireworks.types.splitted_param.SplittedParam.
 type SplittedParam struct {
-	SourceDatasetID any `json:"source_dataset_id"`
+	SourceDatasetID string `json:"sourceDatasetId"`
 }
 
 // SupervisedFineTuningJobAwsS3Config mirrors fireworks.types.supervised_fine_tuning_job.AwsS3Config.
@@ -2693,66 +2693,66 @@ type SupervisedFineTuningJob struct {
 
 // SupervisedFineTuningJobCreateParams mirrors fireworks.types.supervised_fine_tuning_job_create_params.SupervisedFineTuningJobCreateParams.
 type SupervisedFineTuningJobCreateParams struct {
-	AccountID                 string `json:"account_id,omitempty"`
-	Dataset                   string `json:"dataset"`
-	SupervisedFineTuningJobID any    `json:"supervised_fine_tuning_job_id,omitempty"`
-	AwsS3Config               any    `json:"aws_s3_config,omitempty"`
-	AzureBlobStorageConfig    any    `json:"azure_blob_storage_config,omitempty"`
-	BaseModel                 any    `json:"base_model,omitempty"`
-	BatchSize                 any    `json:"batch_size,omitempty"`
-	BatchSizeSamples          any    `json:"batch_size_samples,omitempty"`
-	DisplayName               any    `json:"display_name,omitempty"`
-	EarlyStop                 any    `json:"early_stop,omitempty"`
-	Epochs                    any    `json:"epochs,omitempty"`
-	EvalAutoCarveout          any    `json:"eval_auto_carveout,omitempty"`
-	EvaluationDataset         any    `json:"evaluation_dataset,omitempty"`
-	GradientAccumulationSteps any    `json:"gradient_accumulation_steps,omitempty"`
-	IsTurbo                   any    `json:"is_turbo,omitempty"`
-	JinjaTemplate             any    `json:"jinja_template,omitempty"`
-	LearningRate              any    `json:"learning_rate,omitempty"`
-	LearningRateWarmupSteps   any    `json:"learning_rate_warmup_steps,omitempty"`
-	LoraRank                  any    `json:"lora_rank,omitempty"`
-	MaxContextLength          any    `json:"max_context_length,omitempty"`
-	MetricsFileSignedURL      any    `json:"metrics_file_signed_url,omitempty"`
-	MtpEnabled                any    `json:"mtp_enabled,omitempty"`
-	MtpFreezeBaseModel        any    `json:"mtp_freeze_base_model,omitempty"`
-	MtpNumDraftTokens         any    `json:"mtp_num_draft_tokens,omitempty"`
-	Nodes                     any    `json:"nodes,omitempty"`
-	OptimizerWeightDecay      any    `json:"optimizer_weight_decay,omitempty"`
-	OutputModel               any    `json:"output_model,omitempty"`
-	Region                    string `json:"region,omitempty"`
-	UsePurpose                any    `json:"use_purpose,omitempty"`
-	WandbConfig               any    `json:"wandb_config,omitempty"`
-	WarmStartFrom             any    `json:"warm_start_from,omitempty"`
+	AccountID                 string                                                    `json:"account_id,omitempty"`
+	Dataset                   string                                                    `json:"dataset"`
+	SupervisedFineTuningJobID string                                                    `json:"supervisedFineTuningJobId,omitempty"`
+	AwsS3Config               SupervisedFineTuningJobCreateParamsAwsS3Config            `json:"awsS3Config,omitempty"`
+	AzureBlobStorageConfig    SupervisedFineTuningJobCreateParamsAzureBlobStorageConfig `json:"azureBlobStorageConfig,omitempty"`
+	BaseModel                 string                                                    `json:"baseModel,omitempty"`
+	BatchSize                 any                                                       `json:"batchSize,omitempty"`
+	BatchSizeSamples          any                                                       `json:"batchSizeSamples,omitempty"`
+	DisplayName               string                                                    `json:"displayName,omitempty"`
+	EarlyStop                 any                                                       `json:"earlyStop,omitempty"`
+	Epochs                    any                                                       `json:"epochs,omitempty"`
+	EvalAutoCarveout          any                                                       `json:"evalAutoCarveout,omitempty"`
+	EvaluationDataset         string                                                    `json:"evaluationDataset,omitempty"`
+	GradientAccumulationSteps any                                                       `json:"gradientAccumulationSteps,omitempty"`
+	IsTurbo                   any                                                       `json:"isTurbo,omitempty"`
+	JinjaTemplate             string                                                    `json:"jinjaTemplate,omitempty"`
+	LearningRate              any                                                       `json:"learningRate,omitempty"`
+	LearningRateWarmupSteps   any                                                       `json:"learningRateWarmupSteps,omitempty"`
+	LoraRank                  any                                                       `json:"loraRank,omitempty"`
+	MaxContextLength          any                                                       `json:"maxContextLength,omitempty"`
+	MetricsFileSignedURL      string                                                    `json:"metricsFileSignedUrl,omitempty"`
+	MtpEnabled                any                                                       `json:"mtpEnabled,omitempty"`
+	MtpFreezeBaseModel        any                                                       `json:"mtpFreezeBaseModel,omitempty"`
+	MtpNumDraftTokens         any                                                       `json:"mtpNumDraftTokens,omitempty"`
+	Nodes                     any                                                       `json:"nodes,omitempty"`
+	OptimizerWeightDecay      any                                                       `json:"optimizerWeightDecay,omitempty"`
+	OutputModel               string                                                    `json:"outputModel,omitempty"`
+	Region                    string                                                    `json:"region,omitempty"`
+	UsePurpose                string                                                    `json:"usePurpose,omitempty"`
+	WandbConfig               SharedParamsWandbConfig                                   `json:"wandbConfig,omitempty"`
+	WarmStartFrom             string                                                    `json:"warmStartFrom,omitempty"`
 }
 
 // SupervisedFineTuningJobCreateParamsAwsS3Config mirrors fireworks.types.supervised_fine_tuning_job_create_params.AwsS3Config.
 type SupervisedFineTuningJobCreateParamsAwsS3Config struct {
-	CredentialsSecret any `json:"credentials_secret,omitempty"`
-	IamRoleArn        any `json:"iam_role_arn,omitempty"`
+	CredentialsSecret string `json:"credentialsSecret,omitempty"`
+	IamRoleArn        string `json:"iamRoleArn,omitempty"`
 }
 
 // SupervisedFineTuningJobCreateParamsAzureBlobStorageConfig mirrors fireworks.types.supervised_fine_tuning_job_create_params.AzureBlobStorageConfig.
 type SupervisedFineTuningJobCreateParamsAzureBlobStorageConfig struct {
-	CredentialsSecret       any `json:"credentials_secret,omitempty"`
-	ManagedIdentityClientID any `json:"managed_identity_client_id,omitempty"`
-	TenantID                any `json:"tenant_id,omitempty"`
+	CredentialsSecret       string `json:"credentialsSecret,omitempty"`
+	ManagedIdentityClientID string `json:"managedIdentityClientId,omitempty"`
+	TenantID                string `json:"tenantId,omitempty"`
 }
 
 // SupervisedFineTuningJobGetParams mirrors fireworks.types.supervised_fine_tuning_job_get_params.SupervisedFineTuningJobGetParams.
 type SupervisedFineTuningJobGetParams struct {
 	AccountID string `json:"account_id,omitempty"`
-	ReadMask  any    `json:"read_mask,omitempty"`
+	ReadMask  string `json:"readMask,omitempty"`
 }
 
 // SupervisedFineTuningJobListParams mirrors fireworks.types.supervised_fine_tuning_job_list_params.SupervisedFineTuningJobListParams.
 type SupervisedFineTuningJobListParams struct {
 	AccountID string `json:"account_id,omitempty"`
 	Filter    string `json:"filter,omitempty"`
-	OrderBy   any    `json:"order_by,omitempty"`
-	PageSize  any    `json:"page_size,omitempty"`
-	PageToken any    `json:"page_token,omitempty"`
-	ReadMask  any    `json:"read_mask,omitempty"`
+	OrderBy   string `json:"orderBy,omitempty"`
+	PageSize  any    `json:"pageSize,omitempty"`
+	PageToken string `json:"pageToken,omitempty"`
+	ReadMask  string `json:"readMask,omitempty"`
 }
 
 // SupervisedFineTuningJobResumeParams mirrors fireworks.types.supervised_fine_tuning_job_resume_params.SupervisedFineTuningJobResumeParams.
@@ -2770,9 +2770,9 @@ type Transformed struct {
 
 // TransformedParam mirrors fireworks.types.transformed_param.TransformedParam.
 type TransformedParam struct {
-	SourceDatasetID any    `json:"source_dataset_id"`
+	SourceDatasetID string `json:"sourceDatasetId"`
 	Filter          string `json:"filter,omitempty"`
-	OriginalFormat  any    `json:"original_format,omitempty"`
+	OriginalFormat  string `json:"originalFormat,omitempty"`
 }
 
 // TypeDate mirrors fireworks.types.type_date.TypeDate.
@@ -2806,33 +2806,33 @@ type User struct {
 type UserCreateParams struct {
 	AccountID      string `json:"account_id,omitempty"`
 	Role           string `json:"role"`
-	UserID         any    `json:"user_id,omitempty"`
-	DisplayName    any    `json:"display_name,omitempty"`
+	UserID         string `json:"userId,omitempty"`
+	DisplayName    string `json:"displayName,omitempty"`
 	Email          string `json:"email,omitempty"`
-	ServiceAccount any    `json:"service_account,omitempty"`
+	ServiceAccount any    `json:"serviceAccount,omitempty"`
 }
 
 // UserGetParams mirrors fireworks.types.user_get_params.UserGetParams.
 type UserGetParams struct {
 	AccountID string `json:"account_id,omitempty"`
-	ReadMask  any    `json:"read_mask,omitempty"`
+	ReadMask  string `json:"readMask,omitempty"`
 }
 
 // UserListParams mirrors fireworks.types.user_list_params.UserListParams.
 type UserListParams struct {
 	AccountID string `json:"account_id,omitempty"`
 	Filter    string `json:"filter,omitempty"`
-	OrderBy   any    `json:"order_by,omitempty"`
-	PageSize  any    `json:"page_size,omitempty"`
-	PageToken any    `json:"page_token,omitempty"`
-	ReadMask  any    `json:"read_mask,omitempty"`
+	OrderBy   string `json:"orderBy,omitempty"`
+	PageSize  any    `json:"pageSize,omitempty"`
+	PageToken string `json:"pageToken,omitempty"`
+	ReadMask  string `json:"readMask,omitempty"`
 }
 
 // UserUpdateParams mirrors fireworks.types.user_update_params.UserUpdateParams.
 type UserUpdateParams struct {
 	AccountID      string `json:"account_id,omitempty"`
 	Role           string `json:"role"`
-	DisplayName    any    `json:"display_name,omitempty"`
+	DisplayName    string `json:"displayName,omitempty"`
 	Email          string `json:"email,omitempty"`
-	ServiceAccount any    `json:"service_account,omitempty"`
+	ServiceAccount any    `json:"serviceAccount,omitempty"`
 }
