@@ -1055,21 +1055,57 @@ func writeMultipartField(writer *multipart.Writer, key string, value any) error 
 		return nil
 	case string:
 		return writer.WriteField(key, v)
+	case bool:
+		return writer.WriteField(key, strconv.FormatBool(v))
 	case []string:
 		for _, item := range v {
-			if err := writer.WriteField(key, item); err != nil {
+			if err := writer.WriteField(key+"[]", item); err != nil {
 				return err
 			}
 		}
 		return nil
 	case []byte:
 		return writer.WriteField(key, string(v))
-	default:
-		payload, err := json.Marshal(v)
-		if err != nil {
-			return fmt.Errorf("fireworks: marshal multipart field %q: %w", key, err)
+	case []any:
+		for _, item := range v {
+			if item == nil {
+				continue
+			}
+			if err := writeMultipartField(writer, key+"[]", item); err != nil {
+				return err
+			}
 		}
-		return writer.WriteField(key, string(payload))
+		return nil
+	case map[string]any:
+		for subkey, subvalue := range v {
+			if err := writeMultipartField(writer, key+"["+subkey+"]", subvalue); err != nil {
+				return err
+			}
+		}
+		return nil
+	default:
+		reflected := reflect.ValueOf(value)
+		if reflected.IsValid() && reflected.Kind() == reflect.Map {
+			for _, mapKey := range reflected.MapKeys() {
+				if err := writeMultipartField(writer, key+"["+fmt.Sprint(mapKey.Interface())+"]", reflected.MapIndex(mapKey).Interface()); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+		if reflected.IsValid() && (reflected.Kind() == reflect.Slice || reflected.Kind() == reflect.Array) {
+			for i := 0; i < reflected.Len(); i++ {
+				item := reflected.Index(i).Interface()
+				if item == nil {
+					continue
+				}
+				if err := writeMultipartField(writer, key+"[]", item); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+		return writer.WriteField(key, queryPrimitiveString(v))
 	}
 }
 

@@ -1064,6 +1064,61 @@ func TestNewFileFromPathUsesBasenameAndBytes(t *testing.T) {
 	}
 }
 
+func TestMultipartFieldsUsePythonBracketSerialization(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Content-Type"); !strings.HasPrefix(got, "multipart/form-data; boundary=") {
+			t.Errorf("Content-Type = %q", got)
+		}
+		if err := r.ParseMultipartForm(1 << 20); err != nil {
+			t.Fatalf("parse multipart: %v", err)
+		}
+		values := r.MultipartForm.Value
+		if got := values["meta[enabled]"]; len(got) != 1 || got[0] != "true" {
+			t.Errorf("meta[enabled] = %#v", got)
+		}
+		if got := values["meta[tags][]"]; len(got) != 2 || got[0] != "a" || got[1] != "b" {
+			t.Errorf("meta[tags][] = %#v", got)
+		}
+		if got := values["ids[]"]; len(got) != 2 || got[0] != "1" || got[1] != "2" {
+			t.Errorf("ids[] = %#v", got)
+		}
+		if got := values["raw"]; len(got) != 1 || got[0] != "abc" {
+			t.Errorf("raw = %#v", got)
+		}
+		_ = json.NewEncoder(w).Encode(JSON{"ok": true})
+	}))
+	defer server.Close()
+
+	client, err := NewClient(WithBaseURL(server.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out Response
+	err = client.MultipartRequest(
+		context.Background(),
+		http.MethodPost,
+		"/multipart",
+		map[string]any{
+			"ids": []int{1, 2},
+			"meta": map[string]any{
+				"enabled": true,
+				"tags":    []any{"a", nil, "b"},
+			},
+			"raw": []byte("abc"),
+		},
+		nil,
+		&out,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out["ok"] != true {
+		t.Fatalf("response = %#v", out)
+	}
+}
+
 func TestStatusErrorMapping(t *testing.T) {
 	t.Setenv("FIREWORKS_API_KEY", "test-key")
 
