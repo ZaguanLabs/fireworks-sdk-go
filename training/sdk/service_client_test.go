@@ -490,6 +490,62 @@ func TestFiretitanTrainingClientCheckpointDelegation(t *testing.T) {
 	}
 }
 
+func TestFiretitanServiceClientCheckpointDelegation(t *testing.T) {
+	svc, err := NewFiretitanServiceClient(FiretitanServiceClientOptions{
+		Config: FiretitanProvisioningConfig{
+			BaseModel:    "accounts/acct/models/base",
+			TrainerJobID: "trainer-1",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var listedJob string
+	var listedPageSize int
+	svc.ListCheckpointsFunc = func(_ context.Context, jobID string, pageSize int) ([]map[string]any, error) {
+		listedJob = jobID
+		listedPageSize = pageSize
+		return []map[string]any{{"name": "cp"}}, nil
+	}
+	var promoted PromoteCheckpointOptions
+	svc.PromoteCheckpointFunc = func(_ context.Context, opts PromoteCheckpointOptions) (map[string]any, error) {
+		promoted = opts
+		return map[string]any{"name": "accounts/acct/models/out"}, nil
+	}
+	rows, err := svc.ListCheckpoints(context.Background(), "", 25)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if listedJob != "trainer-1" || listedPageSize != 25 || rows[0]["name"] != "cp" {
+		t.Fatalf("list job=%q page=%d rows=%#v", listedJob, listedPageSize, rows)
+	}
+	model, err := svc.PromoteCheckpoint(context.Background(), PromoteCheckpointOptions{
+		CheckpointID:  "step-1",
+		OutputModelID: "out",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if promoted.JobID != "trainer-1" || promoted.BaseModel != "accounts/acct/models/base" || model["name"] != "accounts/acct/models/out" {
+		t.Fatalf("promote opts=%#v model=%#v", promoted, model)
+	}
+}
+
+func TestFiretitanServiceClientCheckpointOpsRequireTrainer(t *testing.T) {
+	svc, err := NewFiretitanServiceClient(FiretitanServiceClientOptions{
+		Config: FiretitanProvisioningConfig{BaseModel: "accounts/acct/models/base"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.ListCheckpoints(context.Background(), "", 0); err == nil || !strings.Contains(err.Error(), "provisioned trainer") {
+		t.Fatalf("list error = %v", err)
+	}
+	if _, err := svc.PromoteCheckpoint(context.Background(), PromoteCheckpointOptions{}); err == nil || !strings.Contains(err.Error(), "provisioned trainer") {
+		t.Fatalf("promote error = %v", err)
+	}
+}
+
 func TestFiretitanTrainingClientCheckpointOpsRequireTrainer(t *testing.T) {
 	svc, err := NewFiretitanServiceClient(FiretitanServiceClientOptions{
 		Config: FiretitanProvisioningConfig{BaseModel: "accounts/acct/models/base"},

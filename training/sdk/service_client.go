@@ -190,6 +190,37 @@ func (c *FiretitanServiceClient) GetServerCapabilities() ServerCapabilitiesRespo
 	return LazyManagedServerCapabilities(&c.Config)
 }
 
+func (c *FiretitanServiceClient) ListCheckpoints(ctx context.Context, jobID string, pageSize int) ([]map[string]any, error) {
+	if c == nil || c.ListCheckpointsFunc == nil {
+		return nil, ControlPlaneCheckpointClientError()
+	}
+	if strings.TrimSpace(jobID) == "" {
+		var err error
+		jobID, err = c.TrainerJobID()
+		if err != nil {
+			return nil, ControlPlaneCheckpointClientError()
+		}
+	}
+	return c.ListCheckpointsFunc(ctx, jobID, pageSize)
+}
+
+func (c *FiretitanServiceClient) PromoteCheckpoint(ctx context.Context, opts PromoteCheckpointOptions) (map[string]any, error) {
+	if c == nil || c.PromoteCheckpointFunc == nil {
+		return nil, ControlPlaneCheckpointClientError()
+	}
+	if opts.Name == "" && opts.JobID == "" {
+		jobID, err := c.TrainerJobID()
+		if err != nil {
+			return nil, ControlPlaneCheckpointClientError()
+		}
+		opts.JobID = jobID
+	}
+	if opts.BaseModel == "" {
+		opts.BaseModel = c.Config.BaseModel
+	}
+	return c.PromoteCheckpointFunc(ctx, opts)
+}
+
 func (c *FiretitanServiceClient) AttachSamplerBackend(backend *TinkerSamplerBackend) *FiretitanServiceClient {
 	if c != nil {
 		c.SamplerBackend = backend
@@ -633,10 +664,10 @@ func (c *FiretitanTrainingClient) ListCheckpoints(ctx context.Context, pageSize 
 	if err != nil {
 		return nil, ControlPlaneCheckpointClientError()
 	}
-	if c.Service == nil || c.Service.ListCheckpointsFunc == nil {
-		return nil, fmt.Errorf("FiretitanTrainingClient requires a service checkpoint client")
+	if c.Service == nil {
+		return nil, ControlPlaneCheckpointClientError()
 	}
-	return c.Service.ListCheckpointsFunc(ctx, jobID, pageSize)
+	return c.Service.ListCheckpoints(ctx, jobID, pageSize)
 }
 
 func (c *FiretitanTrainingClient) PromoteCheckpoint(ctx context.Context, opts PromoteCheckpointOptions) (map[string]any, error) {
@@ -650,10 +681,10 @@ func (c *FiretitanTrainingClient) PromoteCheckpoint(ctx context.Context, opts Pr
 	if opts.BaseModel == "" {
 		opts.BaseModel = c.Config.BaseModel
 	}
-	if c.Service == nil || c.Service.PromoteCheckpointFunc == nil {
-		return nil, fmt.Errorf("FiretitanTrainingClient requires a service checkpoint client")
+	if c.Service == nil {
+		return nil, ControlPlaneCheckpointClientError()
 	}
-	return c.Service.PromoteCheckpointFunc(ctx, opts)
+	return c.Service.PromoteCheckpoint(ctx, opts)
 }
 
 func (c *FiretitanTrainingClient) ResolveCheckpointPath(checkpointName string, sourceJobID ...string) (string, error) {
