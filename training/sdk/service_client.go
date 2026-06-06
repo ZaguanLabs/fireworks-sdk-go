@@ -76,16 +76,60 @@ func (c *FiretitanServiceClient) ResolvedMetadata() ManagedResolvedMetadata {
 	return ResolveManagedMetadata(&c.Config, handle)
 }
 
-func (c *FiretitanServiceClient) ManagedTrainerJobID() (string, error) {
-	return RequireManagedString(c.ResolvedMetadata().TrainerJobID, "trainer job id")
+func (c *FiretitanServiceClient) ManagedTrainerJobID() string {
+	return c.ResolvedMetadata().TrainerJobID
 }
 
-func (c *FiretitanServiceClient) ManagedDeploymentID() (string, error) {
-	return RequireManagedString(c.ResolvedMetadata().DeploymentID, "deployment id")
+func (c *FiretitanServiceClient) ManagedDeploymentID() string {
+	return c.ResolvedMetadata().DeploymentID
 }
 
-func (c *FiretitanServiceClient) ManagedMaxContextLength() (int, error) {
-	return RequireManagedInt(c.ResolvedMetadata().MaxContextLength, "max context length")
+func (c *FiretitanServiceClient) ManagedTrainingProfile() *TrainingShapeProfile {
+	return c.ResolvedMetadata().TrainingProfile
+}
+
+func (c *FiretitanServiceClient) ManagedAcceleratorType() string {
+	return c.ResolvedMetadata().AcceleratorType
+}
+
+func (c *FiretitanServiceClient) ManagedAcceleratorCount() *int {
+	return cloneIntPointer(c.ResolvedMetadata().AcceleratorCount)
+}
+
+func (c *FiretitanServiceClient) ManagedMaxContextLength() *int {
+	return cloneIntPointer(c.ResolvedMetadata().MaxContextLength)
+}
+
+func (c *FiretitanServiceClient) ManagedDeploymentShape() string {
+	return c.ResolvedMetadata().DeploymentShape
+}
+
+func (c *FiretitanServiceClient) TrainerJobID() (string, error) {
+	return RequireManagedString(c.ManagedTrainerJobID(), "trainer job id")
+}
+
+func (c *FiretitanServiceClient) DeploymentID() (string, error) {
+	return RequireManagedString(c.ManagedDeploymentID(), "deployment id")
+}
+
+func (c *FiretitanServiceClient) MaxContextLength() (int, error) {
+	return RequireManagedInt(c.ManagedMaxContextLength(), "max context length")
+}
+
+func (c *FiretitanServiceClient) DeploymentShape() (string, error) {
+	return RequireManagedString(c.ManagedDeploymentShape(), "deployment shape")
+}
+
+func (c *FiretitanServiceClient) TrainingProfile() *TrainingShapeProfile {
+	return c.ManagedTrainingProfile()
+}
+
+func (c *FiretitanServiceClient) AcceleratorType() string {
+	return c.ManagedAcceleratorType()
+}
+
+func (c *FiretitanServiceClient) AcceleratorCount() *int {
+	return c.ManagedAcceleratorCount()
 }
 
 func (c *FiretitanServiceClient) ReferenceJobID() string {
@@ -103,7 +147,7 @@ func (c *FiretitanServiceClient) ReferenceClientJobID() (string, error) {
 	if referenceJobID := c.ReferenceJobID(); referenceJobID != "" {
 		return referenceJobID, nil
 	}
-	return c.ManagedTrainerJobID()
+	return c.TrainerJobID()
 }
 
 func (c *FiretitanServiceClient) ReleaseReferences(ctx context.Context) error {

@@ -83,6 +83,7 @@ func TestFiretitanServiceClientCreateTrainingClientAllowsDifferentSeed(t *testin
 
 func TestFiretitanServiceClientResolvedMetadata(t *testing.T) {
 	maxContext := 8192
+	acceleratorCount := 8
 	svc, err := NewFiretitanServiceClient(FiretitanServiceClientOptions{
 		Config: FiretitanProvisioningConfig{
 			BaseModel:      "accounts/acct/models/base",
@@ -98,15 +99,86 @@ func TestFiretitanServiceClientResolvedMetadata(t *testing.T) {
 		TrainerJobID:     "trainer-handle",
 		DeploymentID:     "deployment-handle",
 		MaxContextLength: &maxContext,
+		DeploymentShape:  "accounts/acct/deploymentShapes/serve/versions/1",
+		TrainingProfile: &TrainingShapeProfile{
+			AcceleratorType:  "NVIDIA_H100_80GB",
+			AcceleratorCount: acceleratorCount,
+		},
 	}
-	if got, err := svc.ManagedTrainerJobID(); err != nil || got != "trainer-handle" {
+	if got := svc.ManagedTrainerJobID(); got != "trainer-handle" {
+		t.Fatalf("managed trainer id = %q", got)
+	}
+	if got := svc.ManagedDeploymentID(); got != "deployment-handle" {
+		t.Fatalf("managed deployment id = %q", got)
+	}
+	if got := svc.ManagedMaxContextLength(); got == nil || *got != 8192 {
+		t.Fatalf("managed max context = %#v", got)
+	}
+	if got := svc.ManagedDeploymentShape(); got != "accounts/acct/deploymentShapes/serve/versions/1" {
+		t.Fatalf("managed deployment shape = %q", got)
+	}
+	if got := svc.ManagedTrainingProfile(); got == nil || got.AcceleratorType != "NVIDIA_H100_80GB" {
+		t.Fatalf("managed profile = %#v", got)
+	}
+	if got := svc.ManagedAcceleratorType(); got != "NVIDIA_H100_80GB" {
+		t.Fatalf("managed accelerator type = %q", got)
+	}
+	if got := svc.ManagedAcceleratorCount(); got == nil || *got != acceleratorCount {
+		t.Fatalf("managed accelerator count = %#v", got)
+	}
+	if got, err := svc.TrainerJobID(); err != nil || got != "trainer-handle" {
 		t.Fatalf("trainer id = %q err=%v", got, err)
 	}
-	if got, err := svc.ManagedDeploymentID(); err != nil || got != "deployment-handle" {
+	if got, err := svc.DeploymentID(); err != nil || got != "deployment-handle" {
 		t.Fatalf("deployment id = %q err=%v", got, err)
 	}
-	if got, err := svc.ManagedMaxContextLength(); err != nil || got != 8192 {
+	if got, err := svc.MaxContextLength(); err != nil || got != 8192 {
 		t.Fatalf("max context = %d err=%v", got, err)
+	}
+	if got, err := svc.DeploymentShape(); err != nil || got != "accounts/acct/deploymentShapes/serve/versions/1" {
+		t.Fatalf("deployment shape = %q err=%v", got, err)
+	}
+	if got := svc.TrainingProfile(); got == nil || got.AcceleratorType != "NVIDIA_H100_80GB" {
+		t.Fatalf("profile = %#v", got)
+	}
+	if got := svc.AcceleratorType(); got != "NVIDIA_H100_80GB" {
+		t.Fatalf("accelerator type = %q", got)
+	}
+	if got := svc.AcceleratorCount(); got == nil || *got != acceleratorCount {
+		t.Fatalf("accelerator count = %#v", got)
+	}
+}
+
+func TestFiretitanServiceClientManagedAccessorsAreOptional(t *testing.T) {
+	svc, err := NewFiretitanServiceClient(FiretitanServiceClientOptions{
+		Config: FiretitanProvisioningConfig{BaseModel: "accounts/acct/models/base"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := svc.ManagedTrainerJobID(); got != "" {
+		t.Fatalf("managed trainer id = %q", got)
+	}
+	if got := svc.ManagedDeploymentID(); got != "" {
+		t.Fatalf("managed deployment id = %q", got)
+	}
+	if got := svc.ManagedMaxContextLength(); got != nil {
+		t.Fatalf("managed max context = %#v", got)
+	}
+	if got := svc.ManagedDeploymentShape(); got != "" {
+		t.Fatalf("managed deployment shape = %q", got)
+	}
+	if _, err := svc.TrainerJobID(); err == nil || !strings.Contains(err.Error(), "trainer job id") {
+		t.Fatalf("trainer error = %v", err)
+	}
+	if _, err := svc.DeploymentID(); err == nil || !strings.Contains(err.Error(), "deployment id") {
+		t.Fatalf("deployment error = %v", err)
+	}
+	if _, err := svc.MaxContextLength(); err == nil || !strings.Contains(err.Error(), "max context length") {
+		t.Fatalf("max context error = %v", err)
+	}
+	if _, err := svc.DeploymentShape(); err == nil || !strings.Contains(err.Error(), "deployment shape") {
+		t.Fatalf("deployment shape error = %v", err)
 	}
 }
 
