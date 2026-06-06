@@ -3704,6 +3704,275 @@ func TestSupervisedFineTuningJobsTypedAllParamsUsePythonAliases(t *testing.T) {
 	}
 }
 
+func TestDPOJobsTypedAllParamsUsePythonAliases(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/accounts/acct/dpoJobs":
+			query := r.URL.Query()
+			if got := query.Get("dpoJobId"); got != "dpo-1" {
+				t.Errorf("dpoJobId = %q", got)
+			}
+			if got := query.Get("dpo_job_id"); got != "" {
+				t.Errorf("unexpected snake query = %q", got)
+			}
+
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("decode create body: %v", err)
+			}
+			for _, key := range []string{"account_id", "dpoJobId", "dpo_job_id"} {
+				if _, ok := body[key]; ok {
+					t.Errorf("create body should not contain %q: %#v", key, body)
+				}
+			}
+			for _, key := range []string{
+				"dataset",
+				"awsS3Config",
+				"azureBlobStorageConfig",
+				"displayName",
+				"lossConfig",
+				"trainingConfig",
+				"wandbConfig",
+			} {
+				if _, ok := body[key]; !ok {
+					t.Errorf("create body missing %q: %#v", key, body)
+				}
+			}
+			if body["dataset"] != "dataset-1" || body["displayName"] != "Display Name" {
+				t.Errorf("create scalar body = %#v", body)
+			}
+			aws, ok := body["awsS3Config"].(map[string]any)
+			if !ok || aws["credentialsSecret"] != "aws-secret" || aws["iamRoleArn"] != "arn:aws:iam::123:role/fireworks" {
+				t.Errorf("awsS3Config = %#v", body["awsS3Config"])
+			}
+			azure, ok := body["azureBlobStorageConfig"].(map[string]any)
+			if !ok || azure["credentialsSecret"] != "azure-secret" || azure["managedIdentityClientId"] != "client-id" || azure["tenantId"] != "tenant-id" {
+				t.Errorf("azureBlobStorageConfig = %#v", body["azureBlobStorageConfig"])
+			}
+			loss, ok := body["lossConfig"].(map[string]any)
+			if !ok || loss["klBeta"] != float64(0) || loss["method"] != "METHOD_UNSPECIFIED" {
+				t.Errorf("lossConfig = %#v", body["lossConfig"])
+			}
+			training, ok := body["trainingConfig"].(map[string]any)
+			if !ok {
+				t.Fatalf("trainingConfig = %#v", body["trainingConfig"])
+			}
+			for _, key := range []string{
+				"baseModel",
+				"batchSize",
+				"batchSizeSamples",
+				"epochs",
+				"gradientAccumulationSteps",
+				"jinjaTemplate",
+				"learningRate",
+				"learningRateWarmupSteps",
+				"loraRank",
+				"maxContextLength",
+				"optimizerWeightDecay",
+				"outputModel",
+				"region",
+				"warmStartFrom",
+			} {
+				if _, ok := training[key]; !ok {
+					t.Errorf("trainingConfig missing %q: %#v", key, training)
+				}
+			}
+			if training["batchSize"] != float64(0) || training["learningRate"] != float64(0) || training["optimizerWeightDecay"] != float64(0) {
+				t.Errorf("zero training params were not preserved: %#v", training)
+			}
+			if training["baseModel"] != "accounts/fireworks/models/base" || training["region"] != "REGION_UNSPECIFIED" {
+				t.Errorf("trainingConfig scalars = %#v", training)
+			}
+			wandb, ok := body["wandbConfig"].(map[string]any)
+			if !ok || wandb["apiKey"] != "wandb-key" || wandb["enabled"] != true || wandb["runId"] != "run-1" {
+				t.Errorf("wandbConfig = %#v", body["wandbConfig"])
+			}
+
+			_ = json.NewEncoder(w).Encode(JSON{
+				"name":        "accounts/acct/dpoJobs/dpo-1",
+				"dataset":     "dataset-1",
+				"displayName": "Display Name",
+				"state":       "JOB_STATE_RUNNING",
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/accounts/acct/dpoJobs":
+			query := r.URL.Query()
+			if got := query.Get("filter"); got != "state=running" {
+				t.Errorf("filter = %q", got)
+			}
+			if got := query.Get("orderBy"); got != "create_time desc" {
+				t.Errorf("orderBy = %q", got)
+			}
+			if got := query.Get("pageSize"); got != "0" {
+				t.Errorf("pageSize = %q", got)
+			}
+			if got := query.Get("pageToken"); got != "cursor-1" {
+				t.Errorf("pageToken = %q", got)
+			}
+			if got := query.Get("readMask"); got != "name,state" {
+				t.Errorf("readMask = %q", got)
+			}
+			if got := query.Get("account_id"); got != "" {
+				t.Errorf("account_id should not be query param, got %q", got)
+			}
+			_ = json.NewEncoder(w).Encode(JSON{
+				"dpoJobs":       []JSON{{"name": "accounts/acct/dpoJobs/dpo-1", "dataset": "dataset-1", "state": "JOB_STATE_RUNNING"}},
+				"nextPageToken": "cursor-2",
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/accounts/acct/dpoJobs/dpo-1":
+			if got := r.URL.Query().Get("readMask"); got != "name,state" {
+				t.Errorf("readMask = %q", got)
+			}
+			_ = json.NewEncoder(w).Encode(JSON{
+				"name":    "accounts/acct/dpoJobs/dpo-1",
+				"dataset": "dataset-1",
+				"state":   "JOB_STATE_RUNNING",
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/accounts/acct/dpoJobs/dpo-1:getMetricsFileEndpoint":
+			if got := r.URL.RawQuery; got != "" {
+				t.Errorf("metrics query = %q", got)
+			}
+			_ = json.NewEncoder(w).Encode(JSON{"signedUrl": "gs://metrics.jsonl"})
+
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/accounts/acct/dpoJobs/dpo-1":
+			_ = json.NewEncoder(w).Encode(JSON{"deleted": true})
+
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/accounts/acct/dpoJobs/dpo-1:resume":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("decode resume body: %v", err)
+			}
+			if _, ok := body["account_id"]; ok {
+				t.Errorf("resume body should not contain account_id: %#v", body)
+			}
+			if body["reason"] != "manual" {
+				t.Errorf("resume body = %#v", body)
+			}
+			_ = json.NewEncoder(w).Encode(JSON{
+				"name":    "accounts/acct/dpoJobs/dpo-1",
+				"dataset": "dataset-1",
+				"state":   "JOB_STATE_RUNNING",
+			})
+
+		default:
+			t.Errorf("unexpected request %s %s?%s", r.Method, r.URL.Path, r.URL.RawQuery)
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client, err := NewClient(WithBaseURL(server.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := client.DPOJobs.CreateTyped(context.Background(), fwtypes.DpoJobCreateParams{
+		AccountID: "acct",
+		Dataset:   "dataset-1",
+		DPOJobID:  "dpo-1",
+		AwsS3Config: fwtypes.DPOJobCreateParamsAwsS3Config{
+			CredentialsSecret: "aws-secret",
+			IamRoleArn:        "arn:aws:iam::123:role/fireworks",
+		},
+		AzureBlobStorageConfig: fwtypes.DPOJobCreateParamsAzureBlobStorageConfig{
+			CredentialsSecret:       "azure-secret",
+			ManagedIdentityClientID: "client-id",
+			TenantID:                "tenant-id",
+		},
+		DisplayName: "Display Name",
+		LossConfig: fwtypes.SharedParamsReinforcementLearningLossConfig{
+			KlBeta: 0,
+			Method: "METHOD_UNSPECIFIED",
+		},
+		TrainingConfig: fwtypes.SharedParamsTrainingConfig{
+			BaseModel:                 "accounts/fireworks/models/base",
+			BatchSize:                 0,
+			BatchSizeSamples:          0,
+			Epochs:                    0,
+			GradientAccumulationSteps: 0,
+			JinjaTemplate:             "template",
+			LearningRate:              0,
+			LearningRateWarmupSteps:   0,
+			LoraRank:                  0,
+			MaxContextLength:          0,
+			OptimizerWeightDecay:      0,
+			OutputModel:               "output-model",
+			Region:                    "REGION_UNSPECIFIED",
+			WarmStartFrom:             "accounts/acct/models/warm-start",
+		},
+		WandbConfig: fwtypes.SharedParamsWandbConfig{
+			APIKey:  "wandb-key",
+			Enabled: true,
+			Entity:  "entity",
+			Project: "project",
+			RunID:   "run-1",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.Name == nil || *created.Name != "accounts/acct/dpoJobs/dpo-1" {
+		t.Fatalf("created = %#v", created)
+	}
+
+	page, err := client.DPOJobs.ListTyped(context.Background(), fwtypes.DpoJobListParams{
+		AccountID: "acct",
+		Filter:    "state=running",
+		OrderBy:   "create_time desc",
+		PageSize:  0,
+		PageToken: "cursor-1",
+		ReadMask:  "name,state",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var _ *fwtypes.DPOJobsPage = page
+	if len(page.DPOJobs) != 1 || page.NextPageToken == nil || *page.NextPageToken != "cursor-2" {
+		t.Fatalf("page = %#v", page)
+	}
+
+	got, err := client.DPOJobs.GetTyped(context.Background(), "dpo-1", fwtypes.DpoJobGetParams{
+		AccountID: "acct",
+		ReadMask:  "name,state",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Name == nil || *got.Name != "accounts/acct/dpoJobs/dpo-1" {
+		t.Fatalf("got = %#v", got)
+	}
+
+	metrics, err := client.DPOJobs.GetMetricsFileEndpointTyped(context.Background(), "dpo-1", WithAccountID("acct"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if metrics.SignedURL == nil || *metrics.SignedURL != "gs://metrics.jsonl" {
+		t.Fatalf("metrics = %#v", metrics)
+	}
+
+	deleted, err := client.DPOJobs.DeleteTyped(context.Background(), "dpo-1", WithAccountID("acct"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deleted["deleted"] != true {
+		t.Fatalf("deleted = %#v", deleted)
+	}
+
+	resumed, err := client.DPOJobs.ResumeTyped(context.Background(), "dpo-1", JSON{
+		"account_id": "acct",
+		"reason":     "manual",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resumed.Name == nil || *resumed.Name != "accounts/acct/dpoJobs/dpo-1" {
+		t.Fatalf("resumed = %#v", resumed)
+	}
+}
+
 func TestDatasetsUploadFileTypedUsesMultipart(t *testing.T) {
 	t.Setenv("FIREWORKS_API_KEY", "test-key")
 
