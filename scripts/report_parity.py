@@ -86,7 +86,7 @@ def expected_type_names() -> set[str]:
     assert spec.loader is not None
     sys.modules["generate_types"] = module
     spec.loader.exec_module(module)
-    refs = module.collect_classes()
+    refs = module.collect_type_refs()
     return {ref.go_name for ref in refs.values()}
 
 
@@ -120,7 +120,7 @@ def main() -> None:
 
     missing_types = sorted(expected_types - actual_types)
     print("\n## Type Catalog\n")
-    print(f"- Python classes expected by generator: {len(expected_types)}")
+    print(f"- Python classes and exported aliases expected by generator: {len(expected_types)}")
     print(f"- Go generated/alias type names: {len(actual_types)}")
     print(f"- Missing expected Go names: {', '.join(missing_types) if missing_types else 'none'}")
     print("- Extra Go names are helper aliases and pagination wrappers.")
@@ -128,4 +128,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

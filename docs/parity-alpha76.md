@@ -41,7 +41,7 @@ Status values:
 
 | Area | Status | Notes |
 | --- | --- | --- |
-| Generated top-level resources/types | ported | Go has resource clients, typed aliases, generated types, Python `PropertyInfo`/`FieldInfo` JSON alias parity, inherited `TypedDict` params, `Required[...]` non-omitempty parity, version parity, smoke tests, and a checked-in alpha.76 resource/type report at `docs/resource-type-parity-alpha76.md`. |
+| Generated top-level resources/types | ported | Go has resource clients, typed aliases, generated types, exported Python `TypeAlias` parity, Python `PropertyInfo`/`FieldInfo` JSON alias parity, inherited `TypedDict` params, `Required[...]` non-omitempty parity, version parity, smoke tests, and a checked-in alpha.76 resource/type report at `docs/resource-type-parity-alpha76.md`. |
 | Streaming/text/image/file primitives | partial | Core HTTP, file, stream, typed resource helpers, Python-style query aliases for struct/map list and get params, typed struct/map/JSON body normalization, typed create/update/delete body-vs-query splitting, typed object-response casts, optional primitive request params preserving explicit `false`/`0`, boolean stream literal params, path argument validation, and multipart upload helpers with typed account extraction exist. Stream helpers inject `stream: true`; SSE framing now mirrors Python for comments, multi-line data, ping filtering, `[DONE]` prefixes, `message_stop`, and terminal response close. Needs remaining endpoint-by-endpoint parity audit outside `training/sdk`. |
 
 ## Python-only behavior

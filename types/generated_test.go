@@ -138,6 +138,27 @@ func TestGeneratedInheritedTypedDictParams(t *testing.T) {
 	assertJSONField(t, payload, "stream", true)
 }
 
+func TestGeneratedTypeAliases(t *testing.T) {
+	var content ContentBlock = ResponseTextBlock{Type: "text", Text: "hello"}
+	var prediction CompletionCreateParamsPrediction = "predicted"
+	var messageContent MessageCreateParamsContent = RequestTextBlockParam{Type: "text", Text: "hello"}
+	var imageSource RequestImageBlockParamSource = RequestImageBlockParamSourceAnthropicURLImageSource{
+		Type: "url",
+		URL:  "https://example.test/image.png",
+	}
+	var citation ResponseTextBlockCitation = ResponseCharLocationCitation{Type: "char_location"}
+	var logprobs SharedChoiceLogprobs = SharedNewLogProbs{}
+	_, _, _, _, _, _ = content, prediction, messageContent, imageSource, citation, logprobs
+
+	field, ok := reflect.TypeOf(CompletionChunkChoice{}).FieldByName("Logprobs")
+	if !ok {
+		t.Fatal("CompletionChunkChoice.Logprobs missing")
+	}
+	if got, want := field.Type.String(), "*interface {}"; got != want {
+		t.Fatalf("CompletionChunkChoice.Logprobs type = %s, want %s", got, want)
+	}
+}
+
 func TestGeneratedOptionalParamsOmitEmpty(t *testing.T) {
 	payload, err := json.Marshal(AccountListParams{})
 	if err != nil {
