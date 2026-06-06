@@ -2385,6 +2385,207 @@ func TestMessagesCreateTyped(t *testing.T) {
 	}
 }
 
+func TestMessagesCreateTypedPreservesAllPythonOptionalParams(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+
+	var body map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Path; got != "/v1/messages" {
+			t.Errorf("path = %q", got)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode request body: %v", err)
+		}
+		_ = json.NewEncoder(w).Encode(JSON{
+			"id":    "msg-1",
+			"model": "claude-opus-4-6",
+			"role":  "assistant",
+			"type":  "message",
+			"content": []JSON{
+				{"type": "text", "text": "hello"},
+			},
+			"stop_reason": "end_turn",
+		})
+	}))
+	defer server.Close()
+
+	toolType := "custom"
+	client, err := NewClient(WithBaseURL(server.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := client.Messages.CreateTyped(context.Background(), fwtypes.MessageCreateParams{
+		Messages: []fwtypes.MessageCreateParamsMessage{
+			{Role: "user", Content: "Hello, world"},
+		},
+		Model:     "claude-opus-4-6",
+		MaxTokens: 1024,
+		Metadata: fwtypes.MessageCreateParamsMetadata{
+			UserID: testStringPtr("13803d75-b4b5-4c3e-b2a2-6f21399b021b"),
+		},
+		OutputConfig: fwtypes.MessageCreateParamsOutputConfig{
+			Effort: testStringPtr("low"),
+			Format: &fwtypes.MessageCreateParamsOutputConfigFormat{
+				Schema: map[string]any{"foo": "bar"},
+				Type:   "json_schema",
+			},
+		},
+		RawOutput:     testBoolPtr(true),
+		StopSequences: []string{"string"},
+		Stream:        true,
+		System: []fwtypes.RequestTextBlockParam{
+			{
+				Text: "Today's date is 2024-06-01.",
+				Type: "text",
+				CacheControl: &fwtypes.CacheControlEphemeralParam{
+					Type: "ephemeral",
+					Ttl:  "5m",
+				},
+				Citations: []fwtypes.RequestTextBlockParamCitation{
+					map[string]any{
+						"cited_text":       "cited_text",
+						"document_index":   0,
+						"document_title":   "x",
+						"end_char_index":   0,
+						"start_char_index": 0,
+						"type":             "char_location",
+					},
+				},
+			},
+		},
+		Temperature: 1,
+		Thinking: fwtypes.MessageCreateParamsThinking(map[string]any{
+			"budget_tokens": 1024,
+			"type":          "enabled",
+		}),
+		ToolChoice: fwtypes.MessageCreateParamsToolChoice(map[string]any{
+			"type":                      "auto",
+			"disable_parallel_tool_use": true,
+		}),
+		Tools: []fwtypes.MessageCreateParamsTool{
+			{
+				InputSchema: fwtypes.MessageCreateParamsToolInputSchema{
+					Type: "object",
+					Properties: map[string]any{
+						"location": "bar",
+						"unit":     "bar",
+					},
+					Required: []string{"location"},
+				},
+				Name:        "name",
+				Description: "Get the current weather in a given location",
+				Strict:      true,
+				Type:        &toolType,
+			},
+		},
+		TopK: 5,
+		TopP: 0.7,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.ID != "msg-1" || out.Role != "assistant" {
+		t.Fatalf("response = %#v", out)
+	}
+
+	for _, key := range []string{
+		"messages",
+		"model",
+		"max_tokens",
+		"metadata",
+		"output_config",
+		"raw_output",
+		"stop_sequences",
+		"stream",
+		"system",
+		"temperature",
+		"thinking",
+		"tool_choice",
+		"tools",
+		"top_k",
+		"top_p",
+	} {
+		if _, ok := body[key]; !ok {
+			t.Fatalf("%q missing from body %#v", key, body)
+		}
+	}
+	for _, key := range []string{"maxTokens", "outputConfig", "rawOutput", "stopSequences", "toolChoice", "topK", "topP"} {
+		if _, ok := body[key]; ok {
+			t.Fatalf("unexpected camel key %q in body %#v", key, body)
+		}
+	}
+	if body["max_tokens"] != float64(1024) || body["raw_output"] != true || body["stream"] != true || body["top_k"] != float64(5) || body["top_p"] != 0.7 {
+		t.Fatalf("primitive params = %#v", body)
+	}
+
+	messages, ok := body["messages"].([]any)
+	if !ok || len(messages) != 1 {
+		t.Fatalf("messages = %#v", body["messages"])
+	}
+	message, ok := messages[0].(map[string]any)
+	if !ok || message["role"] != "user" || message["content"] != "Hello, world" {
+		t.Fatalf("message = %#v", messages[0])
+	}
+
+	metadata, ok := body["metadata"].(map[string]any)
+	if !ok || metadata["user_id"] != "13803d75-b4b5-4c3e-b2a2-6f21399b021b" {
+		t.Fatalf("metadata = %#v", body["metadata"])
+	}
+	outputConfig, ok := body["output_config"].(map[string]any)
+	if !ok || outputConfig["effort"] != "low" {
+		t.Fatalf("output_config = %#v", body["output_config"])
+	}
+	format, ok := outputConfig["format"].(map[string]any)
+	if !ok || format["type"] != "json_schema" {
+		t.Fatalf("format = %#v", outputConfig["format"])
+	}
+	schema, ok := format["schema"].(map[string]any)
+	if !ok || schema["foo"] != "bar" {
+		t.Fatalf("schema = %#v", format["schema"])
+	}
+
+	system, ok := body["system"].([]any)
+	if !ok || len(system) != 1 {
+		t.Fatalf("system = %#v", body["system"])
+	}
+	systemBlock, ok := system[0].(map[string]any)
+	if !ok || systemBlock["type"] != "text" || systemBlock["text"] != "Today's date is 2024-06-01." {
+		t.Fatalf("system block = %#v", system[0])
+	}
+	cacheControl, ok := systemBlock["cache_control"].(map[string]any)
+	if !ok || cacheControl["type"] != "ephemeral" || cacheControl["ttl"] != "5m" {
+		t.Fatalf("cache_control = %#v", systemBlock["cache_control"])
+	}
+	citations, ok := systemBlock["citations"].([]any)
+	if !ok || len(citations) != 1 {
+		t.Fatalf("citations = %#v", systemBlock["citations"])
+	}
+	citation, ok := citations[0].(map[string]any)
+	if !ok || citation["cited_text"] != "cited_text" || citation["start_char_index"] != float64(0) {
+		t.Fatalf("citation = %#v", citations[0])
+	}
+
+	toolChoice, ok := body["tool_choice"].(map[string]any)
+	if !ok || toolChoice["type"] != "auto" || toolChoice["disable_parallel_tool_use"] != true {
+		t.Fatalf("tool_choice = %#v", body["tool_choice"])
+	}
+	tools, ok := body["tools"].([]any)
+	if !ok || len(tools) != 1 {
+		t.Fatalf("tools = %#v", body["tools"])
+	}
+	tool, ok := tools[0].(map[string]any)
+	if !ok || tool["type"] != "custom" || tool["strict"] != true || tool["name"] != "name" {
+		t.Fatalf("tool = %#v", tools[0])
+	}
+	inputSchema, ok := tool["input_schema"].(map[string]any)
+	if !ok || inputSchema["type"] != "object" {
+		t.Fatalf("input_schema = %#v", tool["input_schema"])
+	}
+	if _, ok := tool["inputSchema"]; ok {
+		t.Fatalf("unexpected camel inputSchema in tool %#v", tool)
+	}
+}
+
 func TestModelsListTypedUsesPythonPaginationShape(t *testing.T) {
 	t.Setenv("FIREWORKS_API_KEY", "test-key")
 	t.Setenv("FIREWORKS_ACCOUNT_ID", "acct")
