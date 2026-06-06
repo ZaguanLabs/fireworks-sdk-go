@@ -95,6 +95,14 @@ func TestGeneratedJSONAliases(t *testing.T) {
 	if got, want := paramsField.Tag.Get("json"), "pageToken,omitempty"; got != want {
 		t.Fatalf("AccountListParams.PageToken json tag = %q, want %q", got, want)
 	}
+
+	streamField, ok := reflect.TypeOf(CompletionCreateParamsCompletionCreateParamsStreaming{}).FieldByName("Stream")
+	if !ok {
+		t.Fatal("CompletionCreateParamsCompletionCreateParamsStreaming.Stream missing")
+	}
+	if got, want := streamField.Type.Kind(), reflect.Bool; got != want {
+		t.Fatalf("CompletionCreateParamsCompletionCreateParamsStreaming.Stream kind = %s, want %s", got, want)
+	}
 }
 
 func TestGeneratedOptionalParamsOmitEmpty(t *testing.T) {

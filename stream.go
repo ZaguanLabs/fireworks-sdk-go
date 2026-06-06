@@ -29,6 +29,13 @@ type TypedStream[T any] struct {
 
 func newStream(ctx context.Context, client *Client, path string, body any, opts ...RequestOption) (*Stream, error) {
 	ctx, cancel := contextWithRequestTimeout(ctx, opts)
+	body, err := mergeExtraBody(body, map[string]any{"stream": true})
+	if err != nil {
+		if cancel != nil {
+			cancel()
+		}
+		return nil, err
+	}
 	req, err := client.NewRequest(ctx, http.MethodPost, path, body, opts...)
 	if err != nil {
 		if cancel != nil {

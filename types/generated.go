@@ -364,12 +364,12 @@ type ChatCompletionCreateParamsToolChoiceFunctionSelection struct {
 
 // ChatCompletionCreateParamsCompletionCreateParamsNonStreaming mirrors fireworks.types.chat.completion_create_params.CompletionCreateParamsNonStreaming.
 type ChatCompletionCreateParamsCompletionCreateParamsNonStreaming struct {
-	Stream *string `json:"stream,omitempty"`
+	Stream *bool `json:"stream,omitempty"`
 }
 
 // ChatCompletionCreateParamsCompletionCreateParamsStreaming mirrors fireworks.types.chat.completion_create_params.CompletionCreateParamsStreaming.
 type ChatCompletionCreateParamsCompletionCreateParamsStreaming struct {
-	Stream string `json:"stream"`
+	Stream bool `json:"stream"`
 }
 
 // ChatCompletionCreateResponseChoice mirrors fireworks.types.chat.completion_create_response.Choice.
@@ -509,12 +509,12 @@ type CompletionCreateParamsThinkingThinkingConfigDisabled struct {
 
 // CompletionCreateParamsCompletionCreateParamsNonStreaming mirrors fireworks.types.completion_create_params.CompletionCreateParamsNonStreaming.
 type CompletionCreateParamsCompletionCreateParamsNonStreaming struct {
-	Stream *string `json:"stream,omitempty"`
+	Stream *bool `json:"stream,omitempty"`
 }
 
 // CompletionCreateParamsCompletionCreateParamsStreaming mirrors fireworks.types.completion_create_params.CompletionCreateParamsStreaming.
 type CompletionCreateParamsCompletionCreateParamsStreaming struct {
-	Stream string `json:"stream"`
+	Stream bool `json:"stream"`
 }
 
 // CompletionCreateResponse mirrors fireworks.types.completion_create_response.CompletionCreateResponse.

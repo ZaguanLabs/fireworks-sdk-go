@@ -1425,7 +1425,14 @@ func TestWithExtraBodyMergesIntoJSONRequest(t *testing.T) {
 func TestCompletionCreateTypedStream(t *testing.T) {
 	t.Setenv("FIREWORKS_API_KEY", "test-key")
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode request body: %v", err)
+		}
+		if got := body["stream"]; got != true {
+			t.Errorf("stream = %#v", got)
+		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = w.Write([]byte("data: {\"id\":\"cmpl-1\",\"created\":123,\"model\":\"m\",\"choices\":[{\"index\":0,\"text\":\"hi\"}]}\n\n"))
 		_, _ = w.Write([]byte("data: [DONE]\n\n"))

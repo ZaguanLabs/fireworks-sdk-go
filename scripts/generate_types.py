@@ -233,7 +233,16 @@ def go_type(
                     return typ, True
                 return "*" + typ, True
             return "any", True
-        if name in {"Literal", "TypeAlias"}:
+        if name == "Literal":
+            values = [arg.value for arg in args if isinstance(arg, ast.Constant)]
+            if values and all(isinstance(value, bool) for value in values):
+                return "bool", False
+            if values and all(isinstance(value, int) and not isinstance(value, bool) for value in values):
+                return "int", False
+            if values and all(isinstance(value, float) for value in values):
+                return "float64", False
+            return "string", False
+        if name in {"TypeAlias"}:
             return "string", False
 
     if name in {"str"}:
