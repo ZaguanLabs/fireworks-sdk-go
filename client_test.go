@@ -3327,6 +3327,179 @@ func TestDeploymentsTypedAllParamsUsePythonAliases(t *testing.T) {
 	}
 }
 
+func TestDeploymentShapesTypedAllParamsUsePythonAliases(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/accounts/acct/deploymentShapes":
+			query := r.URL.Query()
+			if got := query.Get("filter"); got != "accelerator_type=A100" {
+				t.Errorf("filter = %q", got)
+			}
+			if got := query.Get("orderBy"); got != "name desc" {
+				t.Errorf("orderBy = %q", got)
+			}
+			if got := query.Get("pageSize"); got != "0" {
+				t.Errorf("pageSize = %q", got)
+			}
+			if got := query.Get("pageToken"); got != "cursor-1" {
+				t.Errorf("pageToken = %q", got)
+			}
+			if got := query.Get("readMask"); got != "name,displayName" {
+				t.Errorf("readMask = %q", got)
+			}
+			if got := query.Get("targetModel"); got != "accounts/acct/models/model-1" {
+				t.Errorf("targetModel = %q", got)
+			}
+			for _, key := range []string{"account_id", "order_by", "page_size", "page_token", "read_mask", "target_model"} {
+				if got := query.Get(key); got != "" {
+					t.Errorf("unexpected query %s=%q", key, got)
+				}
+			}
+			_ = json.NewEncoder(w).Encode(JSON{
+				"deploymentShapes": []JSON{
+					{
+						"name":             "accounts/acct/deploymentShapes/shape-1",
+						"baseModel":        "accounts/fireworks/models/base",
+						"displayName":      "Shape One",
+						"acceleratorCount": 1,
+					},
+				},
+				"nextPageToken": "cursor-2",
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/accounts/acct/deploymentShapes/shape-1":
+			if got := r.URL.Query().Get("readMask"); got != "name,displayName" {
+				t.Errorf("readMask = %q", got)
+			}
+			if got := r.URL.Query().Get("read_mask"); got != "" {
+				t.Errorf("unexpected read_mask = %q", got)
+			}
+			_ = json.NewEncoder(w).Encode(JSON{
+				"name":             "accounts/acct/deploymentShapes/shape-1",
+				"baseModel":        "accounts/fireworks/models/base",
+				"displayName":      "Shape One",
+				"acceleratorCount": 1,
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/accounts/acct/deploymentShapes/shape-1/versions":
+			query := r.URL.Query()
+			if got := query.Get("filter"); got != "validated=true" {
+				t.Errorf("filter = %q", got)
+			}
+			if got := query.Get("orderBy"); got != "create_time desc" {
+				t.Errorf("orderBy = %q", got)
+			}
+			if got := query.Get("pageSize"); got != "0" {
+				t.Errorf("pageSize = %q", got)
+			}
+			if got := query.Get("pageToken"); got != "version-cursor-1" {
+				t.Errorf("pageToken = %q", got)
+			}
+			if got := query.Get("readMask"); got != "name,validated" {
+				t.Errorf("readMask = %q", got)
+			}
+			for _, key := range []string{"account_id", "deployment_shape_id", "order_by", "page_size", "page_token", "read_mask"} {
+				if got := query.Get(key); got != "" {
+					t.Errorf("unexpected query %s=%q", key, got)
+				}
+			}
+			_ = json.NewEncoder(w).Encode(JSON{
+				"deploymentShapeVersions": []JSON{
+					{
+						"name":      "accounts/acct/deploymentShapes/shape-1/versions/version-1",
+						"validated": true,
+						"snapshot":  JSON{"name": "accounts/acct/deploymentShapes/shape-1"},
+					},
+				},
+				"nextPageToken": "version-cursor-2",
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/accounts/acct/deploymentShapes/shape-1/versions/version-1":
+			if got := r.URL.Query().Get("readMask"); got != "name,validated" {
+				t.Errorf("readMask = %q", got)
+			}
+			for _, key := range []string{"account_id", "deployment_shape_id", "read_mask"} {
+				if got := r.URL.Query().Get(key); got != "" {
+					t.Errorf("unexpected query %s=%q", key, got)
+				}
+			}
+			_ = json.NewEncoder(w).Encode(JSON{
+				"name":      "accounts/acct/deploymentShapes/shape-1/versions/version-1",
+				"validated": true,
+				"snapshot":  JSON{"name": "accounts/acct/deploymentShapes/shape-1"},
+			})
+
+		default:
+			t.Errorf("unexpected request %s %s?%s", r.Method, r.URL.Path, r.URL.RawQuery)
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client, err := NewClient(WithBaseURL(server.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	shapes, err := client.DeploymentShapes.ListTyped(context.Background(), fwtypes.DeploymentShapeListParams{
+		AccountID:   "acct",
+		Filter:      "accelerator_type=A100",
+		OrderBy:     "name desc",
+		PageSize:    0,
+		PageToken:   "cursor-1",
+		ReadMask:    "name,displayName",
+		TargetModel: "accounts/acct/models/model-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var _ *fwtypes.DeploymentShapesPage = shapes
+	if len(shapes.DeploymentShapes) != 1 || shapes.NextPageToken == nil || *shapes.NextPageToken != "cursor-2" {
+		t.Fatalf("shapes = %#v", shapes)
+	}
+
+	shape, err := client.DeploymentShapes.GetTyped(context.Background(), "shape-1", fwtypes.DeploymentShapeGetParams{
+		AccountID: "acct",
+		ReadMask:  "name,displayName",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if shape.Name == nil || *shape.Name != "accounts/acct/deploymentShapes/shape-1" {
+		t.Fatalf("shape = %#v", shape)
+	}
+
+	versions, err := client.DeploymentShapeVersions.ListTyped(context.Background(), "shape-1", fwtypes.DeploymentShapeVersionListParams{
+		AccountID: "acct",
+		Filter:    "validated=true",
+		OrderBy:   "create_time desc",
+		PageSize:  0,
+		PageToken: "version-cursor-1",
+		ReadMask:  "name,validated",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var _ *fwtypes.DeploymentShapeVersionsPage = versions
+	if len(versions.DeploymentShapeVersions) != 1 || versions.NextPageToken == nil || *versions.NextPageToken != "version-cursor-2" {
+		t.Fatalf("versions = %#v", versions)
+	}
+
+	version, err := client.DeploymentShapeVersions.GetTyped(context.Background(), "shape-1", "version-1", fwtypes.DeploymentShapeVersionGetParams{
+		AccountID:         "acct",
+		DeploymentShapeID: "shape-1",
+		ReadMask:          "name,validated",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if version.Name == nil || *version.Name != "accounts/acct/deploymentShapes/shape-1/versions/version-1" {
+		t.Fatalf("version = %#v", version)
+	}
+}
+
 func TestBatchInferenceJobsTypedAllParamsUsePythonAliases(t *testing.T) {
 	t.Setenv("FIREWORKS_API_KEY", "test-key")
 
