@@ -4792,6 +4792,314 @@ func TestEvaluationJobsTypedAllParamsUsePythonAliases(t *testing.T) {
 	}
 }
 
+func TestEvaluatorsTypedAllParamsUsePythonAliases(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/accounts/acct/evaluatorsV2":
+			if got := r.URL.RawQuery; got != "" {
+				t.Errorf("create query = %q", got)
+			}
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("decode create body: %v", err)
+			}
+			if _, ok := body["account_id"]; ok {
+				t.Errorf("create body should not contain account_id: %#v", body)
+			}
+			if body["evaluatorId"] != "eval-1" {
+				t.Errorf("evaluatorId = %#v", body["evaluatorId"])
+			}
+			if _, ok := body["evaluator_id"]; ok {
+				t.Errorf("unexpected evaluator_id body key: %#v", body)
+			}
+			evaluator, ok := body["evaluator"].(map[string]any)
+			if !ok {
+				t.Fatalf("evaluator = %#v", body["evaluator"])
+			}
+			assertEvaluatorPayloadUsesAliases(t, evaluator)
+			_ = json.NewEncoder(w).Encode(JSON{
+				"name":        "accounts/acct/evaluators/eval-1",
+				"displayName": "Display Name",
+				"state":       "EVALUATOR_STATE_ACTIVE",
+			})
+
+		case r.Method == http.MethodPatch && r.URL.Path == "/v1/accounts/acct/evaluators/eval-1":
+			query := r.URL.Query()
+			if got := query.Get("prepareCodeUpload"); got != "true" {
+				t.Errorf("prepareCodeUpload = %q", got)
+			}
+			if got := query.Get("prepare_code_upload"); got != "" {
+				t.Errorf("unexpected prepare_code_upload = %q", got)
+			}
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("decode update body: %v", err)
+			}
+			for _, key := range []string{"account_id", "prepareCodeUpload", "prepare_code_upload"} {
+				if _, ok := body[key]; ok {
+					t.Errorf("update body should not contain %q: %#v", key, body)
+				}
+			}
+			assertEvaluatorPayloadUsesAliases(t, body)
+			_ = json.NewEncoder(w).Encode(JSON{
+				"name":        "accounts/acct/evaluators/eval-1",
+				"displayName": "Updated Display Name",
+				"state":       "EVALUATOR_STATE_BUILDING",
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/accounts/acct/evaluators":
+			query := r.URL.Query()
+			if got := query.Get("filter"); got != "state=active" {
+				t.Errorf("filter = %q", got)
+			}
+			if got := query.Get("orderBy"); got != "create_time desc" {
+				t.Errorf("orderBy = %q", got)
+			}
+			if got := query.Get("pageSize"); got != "0" {
+				t.Errorf("pageSize = %q", got)
+			}
+			if got := query.Get("pageToken"); got != "cursor-1" {
+				t.Errorf("pageToken = %q", got)
+			}
+			if got := query.Get("readMask"); got != "name,state" {
+				t.Errorf("readMask = %q", got)
+			}
+			if got := query.Get("account_id"); got != "" {
+				t.Errorf("account_id should not be query param, got %q", got)
+			}
+			_ = json.NewEncoder(w).Encode(JSON{
+				"evaluators": []JSON{
+					{"name": "accounts/acct/evaluators/eval-1", "displayName": "Display Name", "state": "EVALUATOR_STATE_ACTIVE"},
+				},
+				"nextPageToken": "cursor-2",
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/accounts/acct/evaluators/eval-1":
+			if got := r.URL.Query().Get("readMask"); got != "name,state" {
+				t.Errorf("readMask = %q", got)
+			}
+			_ = json.NewEncoder(w).Encode(JSON{
+				"name":        "accounts/acct/evaluators/eval-1",
+				"displayName": "Display Name",
+				"state":       "EVALUATOR_STATE_ACTIVE",
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/accounts/acct/evaluators/eval-1:getBuildLogEndpoint":
+			if got := r.URL.Query().Get("readMask"); got != "buildLogSignedUri" {
+				t.Errorf("readMask = %q", got)
+			}
+			_ = json.NewEncoder(w).Encode(JSON{"buildLogSignedUri": "gs://logs/build.txt"})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/accounts/acct/evaluators/eval-1:getSourceCodeSignedUrl":
+			if got := r.URL.Query().Get("readMask"); got != "filenameToSignedUrls" {
+				t.Errorf("readMask = %q", got)
+			}
+			_ = json.NewEncoder(w).Encode(JSON{
+				"filenameToSignedUrls": map[string]string{"main.py": "gs://src/main.py"},
+			})
+
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/accounts/acct/evaluators/eval-1:getUploadEndpoint":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("decode get upload body: %v", err)
+			}
+			for _, key := range []string{"account_id", "filename_to_size", "read_mask"} {
+				if _, ok := body[key]; ok {
+					t.Errorf("get upload body should not contain %q: %#v", key, body)
+				}
+			}
+			filenameToSize, ok := body["filenameToSize"].(map[string]any)
+			if !ok || filenameToSize["main.py"] != "123" {
+				t.Errorf("filenameToSize = %#v", body["filenameToSize"])
+			}
+			if body["readMask"] != "filenameToSignedUrls" {
+				t.Errorf("readMask body = %#v", body["readMask"])
+			}
+			_ = json.NewEncoder(w).Encode(JSON{
+				"filenameToSignedUrls": map[string]string{"main.py": "gs://upload/main.py"},
+			})
+
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/accounts/acct/evaluators/eval-1:validateUpload":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("decode validate body: %v", err)
+			}
+			if _, ok := body["account_id"]; ok {
+				t.Errorf("validate body should not contain account_id: %#v", body)
+			}
+			files, ok := body["files"].([]any)
+			if !ok || len(files) != 1 || files[0] != "main.py" {
+				t.Errorf("files = %#v", body["files"])
+			}
+			_ = json.NewEncoder(w).Encode(JSON{"valid": true})
+
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/accounts/acct/evaluators/eval-1":
+			_ = json.NewEncoder(w).Encode(JSON{"deleted": true})
+
+		default:
+			t.Errorf("unexpected request %s %s?%s", r.Method, r.URL.Path, r.URL.RawQuery)
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client, err := NewClient(WithBaseURL(server.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := client.Evaluators.CreateTyped(context.Background(), fwtypes.EvaluatorCreateParams{
+		AccountID:   "acct",
+		EvaluatorID: "eval-1",
+		Evaluator: fwtypes.EvaluatorCreateParamsEvaluator{
+			CommitHash:     "abc123",
+			DefaultDataset: "dataset-1",
+			Description:    "description",
+			DisplayName:    "Display Name",
+			EntryPoint:     "main:evaluate",
+			Requirements:   "fireworks-ai",
+			Source: fwtypes.EvaluatorSourceParam{
+				GithubRepositoryName: "owner/repo",
+				Type:                 "GITHUB",
+			},
+			Criteria: []fwtypes.EvaluatorCreateParamsEvaluatorCriterion{
+				{
+					CodeSnippets: fwtypes.EvaluatorCreateParamsEvaluatorCriterionCodeSnippets{
+						EntryFile:    "main.py",
+						EntryFunc:    "evaluate",
+						FileContents: map[string]string{"main.py": "def evaluate(): pass"},
+						Language:     "python",
+					},
+					Description: "quality score",
+					Name:        "quality",
+					Type:        "TYPE_UNSPECIFIED",
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.Name == nil || *created.Name != "accounts/acct/evaluators/eval-1" {
+		t.Fatalf("created = %#v", created)
+	}
+
+	updated, err := client.Evaluators.UpdateTyped(context.Background(), "eval-1", fwtypes.EvaluatorUpdateParams{
+		AccountID:         "acct",
+		PrepareCodeUpload: true,
+		CommitHash:        "def456",
+		DefaultDataset:    "dataset-2",
+		Description:       "updated description",
+		DisplayName:       "Updated Display Name",
+		EntryPoint:        "main:evaluate",
+		Requirements:      "fireworks-ai>=1.0",
+		Source: fwtypes.EvaluatorSourceParam{
+			GithubRepositoryName: "owner/repo",
+			Type:                 "GITHUB",
+		},
+		Criteria: []fwtypes.EvaluatorUpdateParamsCriterion{
+			{
+				CodeSnippets: fwtypes.EvaluatorUpdateParamsCriterionCodeSnippets{
+					EntryFile:    "main.py",
+					EntryFunc:    "evaluate",
+					FileContents: map[string]string{"main.py": "def evaluate(): pass"},
+					Language:     "python",
+				},
+				Description: "quality score",
+				Name:        "quality",
+				Type:        "TYPE_UNSPECIFIED",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.DisplayName == nil || *updated.DisplayName != "Updated Display Name" {
+		t.Fatalf("updated = %#v", updated)
+	}
+
+	page, err := client.Evaluators.ListTyped(context.Background(), fwtypes.EvaluatorListParams{
+		AccountID: "acct",
+		Filter:    "state=active",
+		OrderBy:   "create_time desc",
+		PageSize:  0,
+		PageToken: "cursor-1",
+		ReadMask:  "name,state",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var _ *fwtypes.EvaluatorsPage = page
+	if len(page.Evaluators) != 1 || page.NextPageToken == nil || *page.NextPageToken != "cursor-2" {
+		t.Fatalf("page = %#v", page)
+	}
+
+	got, err := client.Evaluators.GetTyped(context.Background(), "eval-1", fwtypes.EvaluatorGetParams{
+		AccountID: "acct",
+		ReadMask:  "name,state",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Name == nil || *got.Name != "accounts/acct/evaluators/eval-1" {
+		t.Fatalf("got = %#v", got)
+	}
+
+	buildLog, err := client.Evaluators.GetBuildLogEndpointTyped(context.Background(), "eval-1", fwtypes.EvaluatorGetBuildLogEndpointParams{
+		AccountID: "acct",
+		ReadMask:  "buildLogSignedUri",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if buildLog.BuildLogSignedURI == nil || *buildLog.BuildLogSignedURI != "gs://logs/build.txt" {
+		t.Fatalf("buildLog = %#v", buildLog)
+	}
+
+	sourceCode, err := client.Evaluators.GetSourceCodeEndpointTyped(context.Background(), "eval-1", fwtypes.EvaluatorGetSourceCodeEndpointParams{
+		AccountID: "acct",
+		ReadMask:  "filenameToSignedUrls",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sourceCode.FilenameToSignedUrls["main.py"] != "gs://src/main.py" {
+		t.Fatalf("sourceCode = %#v", sourceCode)
+	}
+
+	upload, err := client.Evaluators.GetUploadEndpointTyped(context.Background(), "eval-1", fwtypes.EvaluatorGetUploadEndpointParams{
+		AccountID:      "acct",
+		FilenameToSize: map[string]string{"main.py": "123"},
+		ReadMask:       "filenameToSignedUrls",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if upload.FilenameToSignedUrls["main.py"] != "gs://upload/main.py" {
+		t.Fatalf("upload = %#v", upload)
+	}
+
+	validated, err := client.Evaluators.ValidateUploadTyped(context.Background(), "eval-1", JSON{
+		"account_id": "acct",
+		"files":      []string{"main.py"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if validated["valid"] != true {
+		t.Fatalf("validated = %#v", validated)
+	}
+
+	deleted, err := client.Evaluators.DeleteTyped(context.Background(), "eval-1", WithAccountID("acct"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deleted["deleted"] != true {
+		t.Fatalf("deleted = %#v", deleted)
+	}
+}
+
 func TestDatasetsUploadFileTypedUsesMultipart(t *testing.T) {
 	t.Setenv("FIREWORKS_API_KEY", "test-key")
 
@@ -4871,28 +5179,69 @@ func TestDatasetsUploadFileTypedUsesMultipart(t *testing.T) {
 	}
 }
 
-func TestEvaluatorBuildLogEndpointTyped(t *testing.T) {
-	t.Setenv("FIREWORKS_API_KEY", "test-key")
+func assertEvaluatorPayloadUsesAliases(t *testing.T, payload map[string]any) {
+	t.Helper()
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if got := r.URL.Path; got != "/v1/accounts/acct/evaluators/eval-1:getBuildLogEndpoint" {
-			t.Errorf("path = %q", got)
+	for _, key := range []string{"commitHash", "criteria", "defaultDataset", "description", "displayName", "entryPoint", "requirements", "source"} {
+		if _, ok := payload[key]; !ok {
+			t.Errorf("evaluator payload missing %q: %#v", key, payload)
 		}
-		_ = json.NewEncoder(w).Encode(JSON{"buildLogSignedUri": "gs://logs/build.txt"})
-	}))
-	defer server.Close()
+	}
+	for _, key := range []string{"commit_hash", "default_dataset", "display_name", "entry_point"} {
+		if _, ok := payload[key]; ok {
+			t.Errorf("unexpected snake evaluator key %q: %#v", key, payload)
+		}
+	}
+	if payload["commitHash"] == "" || payload["defaultDataset"] == "" || payload["displayName"] == "" || payload["entryPoint"] == "" {
+		t.Errorf("evaluator scalar aliases = %#v", payload)
+	}
 
-	client, err := NewClient(WithBaseURL(server.URL), WithDefaultAccountID("acct"))
-	if err != nil {
-		t.Fatal(err)
+	criteria, ok := payload["criteria"].([]any)
+	if !ok || len(criteria) != 1 {
+		t.Fatalf("criteria = %#v", payload["criteria"])
 	}
-	endpoint, err := client.Evaluators.GetBuildLogEndpointTyped(context.Background(), "eval-1", nil)
-	if err != nil {
-		t.Fatal(err)
+	criterion, ok := criteria[0].(map[string]any)
+	if !ok {
+		t.Fatalf("criterion = %#v", criteria[0])
 	}
-	var _ *fwtypes.EvaluatorGetBuildLogEndpointResponse = endpoint
-	if endpoint.BuildLogSignedURI == nil || *endpoint.BuildLogSignedURI != "gs://logs/build.txt" {
-		t.Fatalf("endpoint = %#v", endpoint)
+	for _, key := range []string{"codeSnippets", "description", "name", "type"} {
+		if _, ok := criterion[key]; !ok {
+			t.Errorf("criterion missing %q: %#v", key, criterion)
+		}
+	}
+	for _, key := range []string{"code_snippets"} {
+		if _, ok := criterion[key]; ok {
+			t.Errorf("unexpected snake criterion key %q: %#v", key, criterion)
+		}
+	}
+	codeSnippets, ok := criterion["codeSnippets"].(map[string]any)
+	if !ok {
+		t.Fatalf("codeSnippets = %#v", criterion["codeSnippets"])
+	}
+	for _, key := range []string{"entryFile", "entryFunc", "fileContents", "language"} {
+		if _, ok := codeSnippets[key]; !ok {
+			t.Errorf("codeSnippets missing %q: %#v", key, codeSnippets)
+		}
+	}
+	for _, key := range []string{"entry_file", "entry_func", "file_contents"} {
+		if _, ok := codeSnippets[key]; ok {
+			t.Errorf("unexpected snake codeSnippets key %q: %#v", key, codeSnippets)
+		}
+	}
+	fileContents, ok := codeSnippets["fileContents"].(map[string]any)
+	if !ok || fileContents["main.py"] == "" {
+		t.Errorf("fileContents = %#v", codeSnippets["fileContents"])
+	}
+
+	source, ok := payload["source"].(map[string]any)
+	if !ok {
+		t.Fatalf("source = %#v", payload["source"])
+	}
+	if source["githubRepositoryName"] != "owner/repo" || source["type"] != "GITHUB" {
+		t.Errorf("source = %#v", source)
+	}
+	if _, ok := source["github_repository_name"]; ok {
+		t.Errorf("unexpected snake source key: %#v", source)
 	}
 }
 
