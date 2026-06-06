@@ -237,35 +237,24 @@ type UsersResource struct {
 }
 
 func (r *UsersResource) Create(ctx context.Context, body any, opts ...RequestOption) (Response, error) {
-	res := resource{r.client}
-	path, err := res.accountPath(opts, func(accountID string) string { return "/v1/accounts/" + accountID + "/users" })
-	if err != nil {
-		return nil, err
-	}
-	return res.post(ctx, path, body, opts...)
+	return createInAccount(ctx, r.client, "/users", body, opts...)
 }
 
 func (r *UsersResource) Update(ctx context.Context, userID string, body any, opts ...RequestOption) (Response, error) {
 	if err := requirePathArgument("user_id", userID); err != nil {
 		return nil, err
 	}
-	res := resource{r.client}
-	path, err := res.accountPath(opts, func(accountID string) string {
-		return "/v1/accounts/" + accountID + "/users/" + pathEscape(userID)
-	})
-	if err != nil {
-		return nil, err
-	}
-	return res.patch(ctx, path, body, opts...)
+	return patchInAccount(ctx, r.client, "/users/"+pathEscape(userID), body, opts...)
 }
 
 func (r *UsersResource) List(ctx context.Context, query map[string]any, opts ...RequestOption) (Response, error) {
+	opts = withQuery(query, opts)
 	res := resource{r.client}
 	path, err := res.accountPath(opts, func(accountID string) string { return "/v1/accounts/" + accountID + "/users" })
 	if err != nil {
 		return nil, err
 	}
-	return res.get(ctx, path, withQuery(query, opts)...)
+	return res.get(ctx, path, opts...)
 }
 
 func (r *UsersResource) Get(ctx context.Context, userID string, opts ...RequestOption) (Response, error) {
@@ -290,6 +279,7 @@ func (r *APIKeysResource) Create(ctx context.Context, userID string, body any, o
 	if err := requirePathArgument("user_id", userID); err != nil {
 		return nil, err
 	}
+	opts = withAccountFromBody(body, opts)
 	res := resource{r.client}
 	path, err := res.accountPath(opts, func(accountID string) string {
 		return "/v1/accounts/" + accountID + "/users/" + pathEscape(userID) + "/apiKeys"
@@ -297,13 +287,14 @@ func (r *APIKeysResource) Create(ctx context.Context, userID string, body any, o
 	if err != nil {
 		return nil, err
 	}
-	return res.post(ctx, path, body, opts...)
+	return res.post(ctx, path, normalizeManagementBody(body), opts...)
 }
 
 func (r *APIKeysResource) List(ctx context.Context, userID string, query map[string]any, opts ...RequestOption) (Response, error) {
 	if err := requirePathArgument("user_id", userID); err != nil {
 		return nil, err
 	}
+	opts = withQuery(query, opts)
 	res := resource{r.client}
 	path, err := res.accountPath(opts, func(accountID string) string {
 		return "/v1/accounts/" + accountID + "/users/" + pathEscape(userID) + "/apiKeys"
@@ -311,13 +302,14 @@ func (r *APIKeysResource) List(ctx context.Context, userID string, query map[str
 	if err != nil {
 		return nil, err
 	}
-	return res.get(ctx, path, withQuery(query, opts)...)
+	return res.get(ctx, path, opts...)
 }
 
 func (r *APIKeysResource) Delete(ctx context.Context, userID string, body any, opts ...RequestOption) (Response, error) {
 	if err := requirePathArgument("user_id", userID); err != nil {
 		return nil, err
 	}
+	opts = withAccountFromBody(body, opts)
 	res := resource{r.client}
 	path, err := res.accountPath(opts, func(accountID string) string {
 		return "/v1/accounts/" + accountID + "/users/" + pathEscape(userID) + "/apiKeys:delete"
@@ -325,7 +317,7 @@ func (r *APIKeysResource) Delete(ctx context.Context, userID string, body any, o
 	if err != nil {
 		return nil, err
 	}
-	return res.post(ctx, path, body, opts...)
+	return res.post(ctx, path, normalizeManagementBody(body), opts...)
 }
 
 type BatchInferenceJobsResource struct {
@@ -737,21 +729,23 @@ func getInAccount(ctx context.Context, client *Client, suffix string, opts ...Re
 }
 
 func postInAccount(ctx context.Context, client *Client, suffix string, body any, opts ...RequestOption) (Response, error) {
+	opts = withAccountFromBody(body, opts)
 	res := resource{client}
 	path, err := accountSuffixPath(res, opts, suffix)
 	if err != nil {
 		return nil, err
 	}
-	return res.post(ctx, path, body, opts...)
+	return res.post(ctx, path, normalizeManagementBody(body), opts...)
 }
 
 func patchInAccount(ctx context.Context, client *Client, suffix string, body any, opts ...RequestOption) (Response, error) {
+	opts = withAccountFromBody(body, opts)
 	res := resource{client}
 	path, err := accountSuffixPath(res, opts, suffix)
 	if err != nil {
 		return nil, err
 	}
-	return res.patch(ctx, path, body, opts...)
+	return res.patch(ctx, path, normalizeManagementBody(body), opts...)
 }
 
 func deleteInAccount(ctx context.Context, client *Client, suffix string, opts ...RequestOption) (Response, error) {

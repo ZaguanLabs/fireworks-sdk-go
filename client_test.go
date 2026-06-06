@@ -2817,6 +2817,458 @@ func TestDeploymentsScaleTypedUsesActionPath(t *testing.T) {
 	}
 }
 
+func TestBatchInferenceJobsTypedAllParamsUsePythonAliases(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/accounts/acct/batchInferenceJobs":
+			query := r.URL.Query()
+			if got := query.Get("batchInferenceJobId"); got != "batch-job-1" {
+				t.Errorf("batchInferenceJobId = %q", got)
+			}
+			if got := query.Get("batch_inference_job_id"); got != "" {
+				t.Errorf("unexpected snake query = %q", got)
+			}
+
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("decode create body: %v", err)
+			}
+			for _, key := range []string{"account_id", "batchInferenceJobId", "batch_inference_job_id"} {
+				if _, ok := body[key]; ok {
+					t.Errorf("create body should not contain %q: %#v", key, body)
+				}
+			}
+			if got := body["continuedFromJobName"]; got != "accounts/acct/batchInferenceJobs/previous" {
+				t.Errorf("continuedFromJobName = %q", got)
+			}
+			if got := body["displayName"]; got != "Display Name" {
+				t.Errorf("displayName = %q", got)
+			}
+			inferenceParams, ok := body["inferenceParameters"].(map[string]any)
+			if !ok {
+				t.Fatalf("inferenceParameters = %#v", body["inferenceParameters"])
+			}
+			for _, key := range []string{"extraBody", "maxTokens", "n", "temperature", "topK", "topP"} {
+				if _, ok := inferenceParams[key]; !ok {
+					t.Errorf("inferenceParameters missing %q: %#v", key, inferenceParams)
+				}
+			}
+			if inferenceParams["maxTokens"] != float64(0) || inferenceParams["temperature"] != float64(0) || inferenceParams["topK"] != float64(0) {
+				t.Errorf("zero inference params were not preserved: %#v", inferenceParams)
+			}
+			_ = json.NewEncoder(w).Encode(JSON{
+				"name":        "accounts/acct/batchInferenceJobs/batch-job-1",
+				"displayName": "Display Name",
+				"state":       "JOB_STATE_RUNNING",
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/accounts/acct/batchInferenceJobs":
+			query := r.URL.Query()
+			if got := query.Get("filter"); got != "state=running" {
+				t.Errorf("filter = %q", got)
+			}
+			if got := query.Get("orderBy"); got != "create_time desc" {
+				t.Errorf("orderBy = %q", got)
+			}
+			if got := query.Get("pageSize"); got != "0" {
+				t.Errorf("pageSize = %q", got)
+			}
+			if got := query.Get("pageToken"); got != "cursor-1" {
+				t.Errorf("pageToken = %q", got)
+			}
+			if got := query.Get("readMask"); got != "name,state" {
+				t.Errorf("readMask = %q", got)
+			}
+			if got := query.Get("account_id"); got != "" {
+				t.Errorf("account_id should not be query param, got %q", got)
+			}
+			_ = json.NewEncoder(w).Encode(JSON{
+				"batchInferenceJobs": []JSON{
+					{"name": "accounts/acct/batchInferenceJobs/batch-job-1", "state": "JOB_STATE_RUNNING"},
+				},
+				"nextPageToken": "cursor-2",
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/accounts/acct/batchInferenceJobs/batch-job-1":
+			query := r.URL.Query()
+			if got := query.Get("readMask"); got != "name,state" {
+				t.Errorf("readMask = %q", got)
+			}
+			if got := query.Get("account_id"); got != "" {
+				t.Errorf("account_id should not be query param, got %q", got)
+			}
+			_ = json.NewEncoder(w).Encode(JSON{
+				"name":  "accounts/acct/batchInferenceJobs/batch-job-1",
+				"state": "JOB_STATE_RUNNING",
+			})
+
+		default:
+			t.Errorf("unexpected request %s %s?%s", r.Method, r.URL.Path, r.URL.RawQuery)
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client, err := NewClient(WithBaseURL(server.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := client.BatchInferenceJobs.CreateTyped(context.Background(), fwtypes.BatchInferenceJobCreateParams{
+		AccountID:            "acct",
+		BatchInferenceJobID:  "batch-job-1",
+		ContinuedFromJobName: "accounts/acct/batchInferenceJobs/previous",
+		DisplayName:          "Display Name",
+		InferenceParameters: fwtypes.BatchInferenceJobCreateParamsInferenceParameters{
+			ExtraBody:   "extra",
+			MaxTokens:   0,
+			N:           0,
+			Temperature: 0,
+			TopK:        0,
+			TopP:        0,
+		},
+		InputDatasetID:  "input-dataset",
+		Model:           "accounts/fireworks/models/model",
+		OutputDatasetID: "output-dataset",
+		Precision:       "PRECISION_UNSPECIFIED",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.Name == nil || *created.Name != "accounts/acct/batchInferenceJobs/batch-job-1" {
+		t.Fatalf("created = %#v", created)
+	}
+
+	page, err := client.BatchInferenceJobs.ListTyped(context.Background(), fwtypes.BatchInferenceJobListParams{
+		AccountID: "acct",
+		Filter:    "state=running",
+		OrderBy:   "create_time desc",
+		PageSize:  0,
+		PageToken: "cursor-1",
+		ReadMask:  "name,state",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var _ *fwtypes.BatchInferenceJobsPage = page
+	if len(page.BatchInferenceJobs) != 1 {
+		t.Fatalf("batchInferenceJobs = %#v", page.BatchInferenceJobs)
+	}
+	if page.BatchInferenceJobs[0].Name == nil || *page.BatchInferenceJobs[0].Name != "accounts/acct/batchInferenceJobs/batch-job-1" {
+		t.Fatalf("batch job name = %#v", page.BatchInferenceJobs[0].Name)
+	}
+	if page.NextPageToken == nil || *page.NextPageToken != "cursor-2" {
+		t.Fatalf("nextPageToken = %#v", page.NextPageToken)
+	}
+
+	got, err := client.BatchInferenceJobs.GetTyped(context.Background(), "batch-job-1", fwtypes.BatchInferenceJobGetParams{
+		AccountID: "acct",
+		ReadMask:  "name,state",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Name == nil || *got.Name != "accounts/acct/batchInferenceJobs/batch-job-1" {
+		t.Fatalf("got = %#v", got)
+	}
+}
+
+func TestUsersTypedAllParamsUsePythonAliases(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/accounts/acct/users":
+			query := r.URL.Query()
+			if got := query.Get("userId"); got != "user-1" {
+				t.Errorf("userId = %q", got)
+			}
+			if got := query.Get("user_id"); got != "" {
+				t.Errorf("unexpected snake query = %q", got)
+			}
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("decode create body: %v", err)
+			}
+			for _, key := range []string{"account_id", "userId", "user_id"} {
+				if _, ok := body[key]; ok {
+					t.Errorf("create body should not contain %q: %#v", key, body)
+				}
+			}
+			if body["role"] != "admin" || body["displayName"] != "Display Name" || body["email"] != "user@example.com" || body["serviceAccount"] != true {
+				t.Errorf("create body = %#v", body)
+			}
+			_ = json.NewEncoder(w).Encode(JSON{
+				"name":           "accounts/acct/users/user-1",
+				"role":           "admin",
+				"displayName":    "Display Name",
+				"serviceAccount": true,
+			})
+
+		case r.Method == http.MethodPatch && r.URL.Path == "/v1/accounts/acct/users/user-1":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("decode update body: %v", err)
+			}
+			if _, ok := body["account_id"]; ok {
+				t.Errorf("update body should not contain account_id: %#v", body)
+			}
+			if body["role"] != "viewer" || body["displayName"] != "Updated Name" || body["email"] != "updated@example.com" || body["serviceAccount"] != false {
+				t.Errorf("update body = %#v", body)
+			}
+			_ = json.NewEncoder(w).Encode(JSON{
+				"name":        "accounts/acct/users/user-1",
+				"role":        "viewer",
+				"displayName": "Updated Name",
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/accounts/acct/users":
+			query := r.URL.Query()
+			if got := query.Get("filter"); got != "role=viewer" {
+				t.Errorf("filter = %q", got)
+			}
+			if got := query.Get("orderBy"); got != "create_time desc" {
+				t.Errorf("orderBy = %q", got)
+			}
+			if got := query.Get("pageSize"); got != "0" {
+				t.Errorf("pageSize = %q", got)
+			}
+			if got := query.Get("pageToken"); got != "cursor-1" {
+				t.Errorf("pageToken = %q", got)
+			}
+			if got := query.Get("readMask"); got != "name,role" {
+				t.Errorf("readMask = %q", got)
+			}
+			_ = json.NewEncoder(w).Encode(JSON{
+				"users":         []JSON{{"name": "accounts/acct/users/user-1", "role": "viewer"}},
+				"nextPageToken": "cursor-2",
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/accounts/acct/users/user-1":
+			if got := r.URL.Query().Get("readMask"); got != "name,role" {
+				t.Errorf("readMask = %q", got)
+			}
+			_ = json.NewEncoder(w).Encode(JSON{"name": "accounts/acct/users/user-1", "role": "viewer"})
+
+		default:
+			t.Errorf("unexpected request %s %s?%s", r.Method, r.URL.Path, r.URL.RawQuery)
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client, err := NewClient(WithBaseURL(server.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := client.Users.CreateTyped(context.Background(), fwtypes.UserCreateParams{
+		AccountID:      "acct",
+		Role:           "admin",
+		UserID:         "user-1",
+		DisplayName:    "Display Name",
+		Email:          "user@example.com",
+		ServiceAccount: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.Name == nil || *created.Name != "accounts/acct/users/user-1" {
+		t.Fatalf("created = %#v", created)
+	}
+
+	updated, err := client.Users.UpdateTyped(context.Background(), "user-1", fwtypes.UserUpdateParams{
+		AccountID:      "acct",
+		Role:           "viewer",
+		DisplayName:    "Updated Name",
+		Email:          "updated@example.com",
+		ServiceAccount: false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Role != "viewer" {
+		t.Fatalf("updated = %#v", updated)
+	}
+
+	page, err := client.Users.ListTyped(context.Background(), fwtypes.UserListParams{
+		AccountID: "acct",
+		Filter:    "role=viewer",
+		OrderBy:   "create_time desc",
+		PageSize:  0,
+		PageToken: "cursor-1",
+		ReadMask:  "name,role",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var _ *fwtypes.UsersPage = page
+	if len(page.Users) != 1 || page.NextPageToken == nil || *page.NextPageToken != "cursor-2" {
+		t.Fatalf("page = %#v", page)
+	}
+
+	got, err := client.Users.GetTyped(context.Background(), "user-1", fwtypes.UserGetParams{
+		AccountID: "acct",
+		ReadMask:  "name,role",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Name == nil || *got.Name != "accounts/acct/users/user-1" {
+		t.Fatalf("got = %#v", got)
+	}
+}
+
+func TestAPIKeysTypedAndGenericAllParamsUsePythonAliases(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/accounts/acct/users/user-1/apiKeys":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("decode create body: %v", err)
+			}
+			if _, ok := body["account_id"]; ok {
+				t.Errorf("create body should not contain account_id: %#v", body)
+			}
+			apiKey, ok := body["apiKey"].(map[string]any)
+			if !ok {
+				t.Fatalf("apiKey body = %#v", body["apiKey"])
+			}
+			if _, ok := body["api_key"]; ok {
+				t.Errorf("unexpected api_key body key: %#v", body)
+			}
+			displayName, _ := apiKey["displayName"].(string)
+			if displayName != "Typed Key" && displayName != "Generic Key" {
+				t.Errorf("displayName = %q", displayName)
+			}
+			if _, ok := apiKey["display_name"]; ok {
+				t.Errorf("unexpected display_name body key: %#v", apiKey)
+			}
+			if _, ok := apiKey["expireTime"]; !ok {
+				t.Errorf("expireTime missing: %#v", apiKey)
+			}
+			_ = json.NewEncoder(w).Encode(JSON{
+				"keyId":       "key-1",
+				"displayName": displayName,
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/accounts/acct/users/user-1/apiKeys":
+			query := r.URL.Query()
+			if got := query.Get("filter"); got != "secure=true" {
+				t.Errorf("filter = %q", got)
+			}
+			if got := query.Get("orderBy"); got != "create_time desc" {
+				t.Errorf("orderBy = %q", got)
+			}
+			if got := query.Get("pageSize"); got != "0" {
+				t.Errorf("pageSize = %q", got)
+			}
+			if got := query.Get("pageToken"); got != "cursor-1" {
+				t.Errorf("pageToken = %q", got)
+			}
+			if got := query.Get("readMask"); got != "keyId,displayName" {
+				t.Errorf("readMask = %q", got)
+			}
+			_ = json.NewEncoder(w).Encode(JSON{
+				"apiKeys":       []JSON{{"keyId": "key-1", "displayName": "Typed Key"}},
+				"nextPageToken": "cursor-2",
+			})
+
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/accounts/acct/users/user-1/apiKeys:delete":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("decode delete body: %v", err)
+			}
+			if body["keyId"] != "key-1" {
+				t.Errorf("keyId = %#v", body["keyId"])
+			}
+			for _, key := range []string{"account_id", "key_id"} {
+				if _, ok := body[key]; ok {
+					t.Errorf("delete body should not contain %q: %#v", key, body)
+				}
+			}
+			_ = json.NewEncoder(w).Encode(JSON{"deleted": true})
+
+		default:
+			t.Errorf("unexpected request %s %s?%s", r.Method, r.URL.Path, r.URL.RawQuery)
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client, err := NewClient(WithBaseURL(server.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	typedKey, err := client.APIKeys.CreateTyped(context.Background(), "user-1", fwtypes.APIKeyCreateParams{
+		AccountID: "acct",
+		APIKey: fwtypes.APIKeyParam{
+			DisplayName: "Typed Key",
+			ExpireTime:  "2019-12-27T18:11:19.117Z",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if typedKey.KeyID == nil || *typedKey.KeyID != "key-1" {
+		t.Fatalf("typedKey = %#v", typedKey)
+	}
+
+	genericKey, err := client.APIKeys.Create(context.Background(), "user-1", JSON{
+		"account_id": "acct",
+		"api_key": JSON{
+			"display_name": "Generic Key",
+			"expire_time":  "2019-12-27T18:11:19.117Z",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if genericKey["keyId"] != "key-1" {
+		t.Fatalf("genericKey = %#v", genericKey)
+	}
+
+	page, err := client.APIKeys.ListTyped(context.Background(), "user-1", fwtypes.APIKeyListParams{
+		AccountID: "acct",
+		Filter:    "secure=true",
+		OrderBy:   "create_time desc",
+		PageSize:  0,
+		PageToken: "cursor-1",
+		ReadMask:  "keyId,displayName",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var _ *fwtypes.APIKeysPage = page
+	if len(page.APIKeys) != 1 || page.NextPageToken == nil || *page.NextPageToken != "cursor-2" {
+		t.Fatalf("page = %#v", page)
+	}
+
+	deleted, err := client.APIKeys.DeleteTyped(context.Background(), "user-1", fwtypes.APIKeyDeleteParams{
+		AccountID: "acct",
+		KeyID:     "key-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deleted["deleted"] != true {
+		t.Fatalf("deleted = %#v", deleted)
+	}
+
+	deleted, err = client.APIKeys.Delete(context.Background(), "user-1", JSON{
+		"account_id": "acct",
+		"key_id":     "key-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deleted["deleted"] != true {
+		t.Fatalf("generic deleted = %#v", deleted)
+	}
+}
+
 func TestDatasetsUploadFileTypedUsesMultipart(t *testing.T) {
 	t.Setenv("FIREWORKS_API_KEY", "test-key")
 

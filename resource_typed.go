@@ -74,6 +74,7 @@ func (r *UsersResource) UpdateTyped(ctx context.Context, userID string, body any
 	if err := requirePathArgument("user_id", userID); err != nil {
 		return nil, err
 	}
+	opts = withAccountFromBody(body, opts)
 	path, err := typedAccountPath(r.client, "/users/"+pathEscape(userID), opts)
 	if err != nil {
 		return nil, err
@@ -82,11 +83,12 @@ func (r *UsersResource) UpdateTyped(ctx context.Context, userID string, body any
 }
 
 func (r *UsersResource) ListTyped(ctx context.Context, query any, opts ...RequestOption) (*fwtypes.UsersPage, error) {
+	opts = withQuery(query, opts)
 	path, err := typedAccountPath(r.client, "/users", opts)
 	if err != nil {
 		return nil, err
 	}
-	return typedGet[fwtypes.UsersPage](ctx, r.client, path, withQuery(query, opts)...)
+	return typedGet[fwtypes.UsersPage](ctx, r.client, path, opts...)
 }
 
 func (r *UsersResource) GetTyped(ctx context.Context, userID string, query any, opts ...RequestOption) (*fwtypes.User, error) {
@@ -105,6 +107,7 @@ func (r *APIKeysResource) CreateTyped(ctx context.Context, userID string, body a
 	if err := requirePathArgument("user_id", userID); err != nil {
 		return nil, err
 	}
+	opts = withAccountFromBody(body, opts)
 	path, err := typedAccountPath(r.client, "/users/"+pathEscape(userID)+"/apiKeys", opts)
 	if err != nil {
 		return nil, err
@@ -116,17 +119,19 @@ func (r *APIKeysResource) ListTyped(ctx context.Context, userID string, query an
 	if err := requirePathArgument("user_id", userID); err != nil {
 		return nil, err
 	}
+	opts = withQuery(query, opts)
 	path, err := typedAccountPath(r.client, "/users/"+pathEscape(userID)+"/apiKeys", opts)
 	if err != nil {
 		return nil, err
 	}
-	return typedGet[fwtypes.APIKeysPage](ctx, r.client, path, withQuery(query, opts)...)
+	return typedGet[fwtypes.APIKeysPage](ctx, r.client, path, opts...)
 }
 
 func (r *APIKeysResource) DeleteTyped(ctx context.Context, userID string, body any, opts ...RequestOption) (Response, error) {
 	if err := requirePathArgument("user_id", userID); err != nil {
 		return nil, err
 	}
+	opts = withAccountFromBody(body, opts)
 	path, err := typedAccountPath(r.client, "/users/"+pathEscape(userID)+"/apiKeys:delete", opts)
 	if err != nil {
 		return nil, err
@@ -684,6 +689,8 @@ func normalizeManagementValue(value any) any {
 			out[managementBodyAlias(key)] = normalizeManagementValue(item)
 		}
 		return out
+	case JSON:
+		return normalizeManagementValue(map[string]any(v))
 	case []any:
 		out := make([]any, 0, len(v))
 		for _, item := range v {
