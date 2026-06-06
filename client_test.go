@@ -1628,6 +1628,103 @@ func TestTypedGetUsesPythonQueryAliases(t *testing.T) {
 	}
 }
 
+func TestTypedCreateSplitsPythonQueryFields(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Method; got != http.MethodPost {
+			t.Errorf("method = %q", got)
+		}
+		if got := r.URL.Path; got != "/v1/accounts/acct-from-create/deployments" {
+			t.Errorf("path = %q", got)
+		}
+		query := r.URL.Query()
+		if got := query.Get("deploymentId"); got != "dep-1" {
+			t.Errorf("deploymentId = %q", got)
+		}
+		if got := query.Get("skipShapeValidation"); got != "true" {
+			t.Errorf("skipShapeValidation = %q", got)
+		}
+		if got := query.Get("validateOnly"); got != "true" {
+			t.Errorf("validateOnly = %q", got)
+		}
+
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode body: %v", err)
+		}
+		if got := body["baseModel"]; got != "accounts/fireworks/models/base" {
+			t.Errorf("baseModel = %q", got)
+		}
+		for _, key := range []string{"account_id", "deploymentId", "deployment_id", "skipShapeValidation", "skip_shape_validation", "validateOnly", "validate_only"} {
+			if _, ok := body[key]; ok {
+				t.Errorf("body should not contain %q: %#v", key, body)
+			}
+		}
+		_ = json.NewEncoder(w).Encode(JSON{"name": "accounts/acct-from-create/deployments/dep-1"})
+	}))
+	defer server.Close()
+
+	client, err := NewClient(WithBaseURL(server.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := client.Deployments.CreateTyped(context.Background(), fwtypes.DeploymentCreateParams{
+		AccountID:           "acct-from-create",
+		BaseModel:           "accounts/fireworks/models/base",
+		DeploymentID:        "dep-1",
+		SkipShapeValidation: true,
+		ValidateOnly:        true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Name == nil || *out.Name != "accounts/acct-from-create/deployments/dep-1" {
+		t.Fatalf("deployment = %#v", out)
+	}
+}
+
+func TestTypedDeleteUsesPythonQueryAliases(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Method; got != http.MethodDelete {
+			t.Errorf("method = %q", got)
+		}
+		if got := r.URL.Path; got != "/v1/accounts/acct-from-delete/deployments/dep-1" {
+			t.Errorf("path = %q", got)
+		}
+		query := r.URL.Query()
+		if got := query.Get("hard"); got != "true" {
+			t.Errorf("hard = %q", got)
+		}
+		if got := query.Get("ignoreChecks"); got != "true" {
+			t.Errorf("ignoreChecks = %q", got)
+		}
+		if got := query.Get("account_id"); got != "" {
+			t.Errorf("account_id should not be query param, got %q", got)
+		}
+		_ = json.NewEncoder(w).Encode(JSON{"name": "accounts/acct-from-delete/deployments/dep-1"})
+	}))
+	defer server.Close()
+
+	client, err := NewClient(WithBaseURL(server.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := client.Deployments.DeleteTyped(context.Background(), "dep-1", fwtypes.DeploymentDeleteParams{
+		AccountID:    "acct-from-delete",
+		Hard:         true,
+		IgnoreChecks: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Name == nil || *out.Name != "accounts/acct-from-delete/deployments/dep-1" {
+		t.Fatalf("deployment = %#v", out)
+	}
+}
+
 func TestTypedManagementActionParity(t *testing.T) {
 	t.Setenv("FIREWORKS_API_KEY", "test-key")
 

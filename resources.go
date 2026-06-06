@@ -146,7 +146,7 @@ func queryAlias(key string) string {
 	case "trust_remote_code":
 		return "trustRemoteCode"
 	default:
-		return key
+		return managementBodyAlias(key)
 	}
 }
 

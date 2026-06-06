@@ -49,11 +49,7 @@ func (r *AccountsResource) GetTyped(ctx context.Context, accountID string, query
 }
 
 func (r *UsersResource) CreateTyped(ctx context.Context, body any, opts ...RequestOption) (*fwtypes.User, error) {
-	path, err := typedAccountPath(r.client, "/users", opts)
-	if err != nil {
-		return nil, err
-	}
-	return typedPost[fwtypes.User](ctx, r.client, path, body, opts...)
+	return typedPostInAccountWithQuery[fwtypes.User](ctx, r.client, "/users", body, []string{"user_id"}, opts...)
 }
 
 func (r *UsersResource) UpdateTyped(ctx context.Context, userID string, body any, opts ...RequestOption) (*fwtypes.User, error) {
@@ -205,11 +201,18 @@ func (r *DatasetsResource) ValidateUploadTyped(ctx context.Context, datasetID st
 }
 
 func (r *DeploymentsResource) CreateTyped(ctx context.Context, body any, opts ...RequestOption) (*fwtypes.Deployment, error) {
-	return typedPostInAccount[fwtypes.Deployment](ctx, r.client, "/deployments", body, opts...)
+	return typedPostInAccountWithQuery[fwtypes.Deployment](ctx, r.client, "/deployments", body, []string{
+		"deployment_id",
+		"disable_auto_deploy",
+		"disable_speculative_decoding",
+		"skip_image_tag_validation",
+		"skip_shape_validation",
+		"validate_only",
+	}, opts...)
 }
 
 func (r *DeploymentsResource) UpdateTyped(ctx context.Context, deploymentID string, body any, opts ...RequestOption) (*fwtypes.Deployment, error) {
-	return typedPatchInAccount[fwtypes.Deployment](ctx, r.client, "/deployments/"+pathEscape(deploymentID), body, opts...)
+	return typedPatchInAccountWithQuery[fwtypes.Deployment](ctx, r.client, "/deployments/"+pathEscape(deploymentID), body, []string{"skip_shape_validation"}, opts...)
 }
 
 func (r *DeploymentsResource) ListTyped(ctx context.Context, query any, opts ...RequestOption) (*fwtypes.DeploymentsPage, error) {
@@ -220,8 +223,8 @@ func (r *DeploymentsResource) GetTyped(ctx context.Context, deploymentID string,
 	return typedGetInAccount[fwtypes.Deployment](ctx, r.client, "/deployments/"+pathEscape(deploymentID), withQuery(query, opts)...)
 }
 
-func (r *DeploymentsResource) DeleteTyped(ctx context.Context, deploymentID string, opts ...RequestOption) (*fwtypes.Deployment, error) {
-	return typedDeleteInAccount[fwtypes.Deployment](ctx, r.client, "/deployments/"+pathEscape(deploymentID), opts...)
+func (r *DeploymentsResource) DeleteTyped(ctx context.Context, deploymentID string, query any, opts ...RequestOption) (*fwtypes.Deployment, error) {
+	return typedDeleteInAccount[fwtypes.Deployment](ctx, r.client, "/deployments/"+pathEscape(deploymentID), withQuery(query, opts)...)
 }
 
 func (r *DeploymentsResource) ScaleTyped(ctx context.Context, deploymentID string, body any, opts ...RequestOption) (*fwtypes.Deployment, error) {
@@ -261,7 +264,7 @@ func (r *LoraResource) GetTyped(ctx context.Context, deployedModelID string, que
 }
 
 func (r *LoraResource) LoadTyped(ctx context.Context, body any, opts ...RequestOption) (*fwtypes.SharedDeployedModel, error) {
-	return typedPostInAccount[fwtypes.SharedDeployedModel](ctx, r.client, "/deployedModels", body, opts...)
+	return typedPostInAccountWithQuery[fwtypes.SharedDeployedModel](ctx, r.client, "/deployedModels", body, []string{"replace_merged_addon"}, opts...)
 }
 
 func (r *LoraResource) UnloadTyped(ctx context.Context, deployedModelID string, opts ...RequestOption) (*fwtypes.SharedDeployedModel, error) {
@@ -269,7 +272,7 @@ func (r *LoraResource) UnloadTyped(ctx context.Context, deployedModelID string, 
 }
 
 func (r *BatchInferenceJobsResource) CreateTyped(ctx context.Context, body any, opts ...RequestOption) (*fwtypes.BatchInferenceJob, error) {
-	return typedPostInAccount[fwtypes.BatchInferenceJob](ctx, r.client, "/batchInferenceJobs", body, opts...)
+	return typedPostInAccountWithQuery[fwtypes.BatchInferenceJob](ctx, r.client, "/batchInferenceJobs", body, []string{"batch_inference_job_id"}, opts...)
 }
 
 func (r *BatchInferenceJobsResource) ListTyped(ctx context.Context, query any, opts ...RequestOption) (*fwtypes.BatchInferenceJobsPage, error) {
@@ -305,7 +308,7 @@ func (r *SecretsResource) DeleteTyped(ctx context.Context, secretID string, opts
 }
 
 func (r *SupervisedFineTuningJobsResource) CreateTyped(ctx context.Context, body any, opts ...RequestOption) (*fwtypes.SupervisedFineTuningJob, error) {
-	return typedPostInAccount[fwtypes.SupervisedFineTuningJob](ctx, r.client, "/supervisedFineTuningJobs", body, opts...)
+	return typedPostInAccountWithQuery[fwtypes.SupervisedFineTuningJob](ctx, r.client, "/supervisedFineTuningJobs", body, []string{"supervised_fine_tuning_job_id"}, opts...)
 }
 
 func (r *SupervisedFineTuningJobsResource) ListTyped(ctx context.Context, query any, opts ...RequestOption) (*fwtypes.SupervisedFineTuningJobsPage, error) {
@@ -325,7 +328,7 @@ func (r *SupervisedFineTuningJobsResource) ResumeTyped(ctx context.Context, jobI
 }
 
 func (r *ReinforcementFineTuningJobsResource) CreateTyped(ctx context.Context, body any, opts ...RequestOption) (*fwtypes.ReinforcementFineTuningJob, error) {
-	return typedPostInAccount[fwtypes.ReinforcementFineTuningJob](ctx, r.client, "/reinforcementFineTuningJobs", body, opts...)
+	return typedPostInAccountWithQuery[fwtypes.ReinforcementFineTuningJob](ctx, r.client, "/reinforcementFineTuningJobs", body, []string{"reinforcement_fine_tuning_job_id"}, opts...)
 }
 
 func (r *ReinforcementFineTuningJobsResource) ListTyped(ctx context.Context, query any, opts ...RequestOption) (*fwtypes.ReinforcementFineTuningJobsPage, error) {
@@ -349,7 +352,7 @@ func (r *ReinforcementFineTuningJobsResource) ResumeTyped(ctx context.Context, j
 }
 
 func (r *ReinforcementFineTuningStepsResource) CreateTyped(ctx context.Context, body any, opts ...RequestOption) (*fwtypes.ReinforcementFineTuningStep, error) {
-	return typedPostInAccount[fwtypes.ReinforcementFineTuningStep](ctx, r.client, "/rlorTrainerJobs", body, opts...)
+	return typedPostInAccountWithQuery[fwtypes.ReinforcementFineTuningStep](ctx, r.client, "/rlorTrainerJobs", body, []string{"rlor_trainer_job_id"}, opts...)
 }
 
 func (r *ReinforcementFineTuningStepsResource) ListTyped(ctx context.Context, query any, opts ...RequestOption) (*fwtypes.ReinforcementFineTuningStepsPage, error) {
@@ -373,7 +376,7 @@ func (r *ReinforcementFineTuningStepsResource) ResumeTyped(ctx context.Context, 
 }
 
 func (r *DPOJobsResource) CreateTyped(ctx context.Context, body any, opts ...RequestOption) (*fwtypes.DpoJob, error) {
-	return typedPostInAccount[fwtypes.DpoJob](ctx, r.client, "/dpoJobs", body, opts...)
+	return typedPostInAccountWithQuery[fwtypes.DpoJob](ctx, r.client, "/dpoJobs", body, []string{"dpo_job_id"}, opts...)
 }
 
 func (r *DPOJobsResource) ListTyped(ctx context.Context, query any, opts ...RequestOption) (*fwtypes.DPOJobsPage, error) {
@@ -421,7 +424,7 @@ func (r *EvaluatorsResource) CreateTyped(ctx context.Context, body any, opts ...
 }
 
 func (r *EvaluatorsResource) UpdateTyped(ctx context.Context, evaluatorID string, body any, opts ...RequestOption) (*fwtypes.EvaluatorUpdateResponse, error) {
-	return typedPatchInAccount[fwtypes.EvaluatorUpdateResponse](ctx, r.client, "/evaluators/"+pathEscape(evaluatorID), body, opts...)
+	return typedPatchInAccountWithQuery[fwtypes.EvaluatorUpdateResponse](ctx, r.client, "/evaluators/"+pathEscape(evaluatorID), body, []string{"prepare_code_upload"}, opts...)
 }
 
 func (r *EvaluatorsResource) ListTyped(ctx context.Context, query any, opts ...RequestOption) (*fwtypes.EvaluatorsPage, error) {
@@ -473,8 +476,30 @@ func typedPostInAccount[T any](ctx context.Context, client *Client, suffix strin
 	return typedPost[T](ctx, client, path, body, opts...)
 }
 
+func typedPostInAccountWithQuery[T any](ctx context.Context, client *Client, suffix string, body any, queryKeys []string, opts ...RequestOption) (*T, error) {
+	opts = withAccountFromBody(body, opts)
+	body, query := splitBodyQuery(body, queryKeys...)
+	opts = withQuery(query, opts)
+	path, err := typedAccountPath(client, suffix, opts)
+	if err != nil {
+		return nil, err
+	}
+	return typedPost[T](ctx, client, path, body, opts...)
+}
+
 func typedPatchInAccount[T any](ctx context.Context, client *Client, suffix string, body any, opts ...RequestOption) (*T, error) {
 	opts = withAccountFromBody(body, opts)
+	path, err := typedAccountPath(client, suffix, opts)
+	if err != nil {
+		return nil, err
+	}
+	return typedPatch[T](ctx, client, path, body, opts...)
+}
+
+func typedPatchInAccountWithQuery[T any](ctx context.Context, client *Client, suffix string, body any, queryKeys []string, opts ...RequestOption) (*T, error) {
+	opts = withAccountFromBody(body, opts)
+	body, query := splitBodyQuery(body, queryKeys...)
+	opts = withQuery(query, opts)
 	path, err := typedAccountPath(client, suffix, opts)
 	if err != nil {
 		return nil, err
@@ -539,6 +564,42 @@ func normalizeManagementBody(body any) any {
 		}
 		return normalizeManagementValue(values)
 	}
+}
+
+func splitBodyQuery(body any, queryKeys ...string) (any, map[string]any) {
+	body = normalizeManagementBody(body)
+	bodyMap, ok := body.(map[string]any)
+	if !ok {
+		if jsonBody, ok := body.(JSON); ok {
+			bodyMap = map[string]any(jsonBody)
+		} else {
+			return body, nil
+		}
+	}
+
+	out := make(map[string]any, len(bodyMap))
+	for key, value := range bodyMap {
+		out[key] = value
+	}
+	query := make(map[string]any)
+	for _, key := range queryKeys {
+		queryKey := queryAlias(key)
+		for _, candidate := range []string{queryKey, key} {
+			value, ok := out[candidate]
+			if !ok {
+				continue
+			}
+			delete(out, candidate)
+			if value != nil {
+				query[queryKey] = value
+			}
+			break
+		}
+	}
+	if len(query) == 0 {
+		return out, nil
+	}
+	return out, query
 }
 
 func normalizeManagementValue(value any) any {
