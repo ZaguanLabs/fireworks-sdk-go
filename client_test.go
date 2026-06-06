@@ -4607,6 +4607,191 @@ func TestReinforcementFineTuningStepsTypedAllParamsUsePythonAliases(t *testing.T
 	}
 }
 
+func TestEvaluationJobsTypedAllParamsUsePythonAliases(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/accounts/acct/evaluationJobs":
+			if got := r.URL.RawQuery; got != "" {
+				t.Errorf("create query = %q", got)
+			}
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("decode create body: %v", err)
+			}
+			if _, ok := body["account_id"]; ok {
+				t.Errorf("create body should not contain account_id: %#v", body)
+			}
+			if body["evaluationJobId"] != "eval-job-1" {
+				t.Errorf("evaluationJobId = %#v", body["evaluationJobId"])
+			}
+			if _, ok := body["evaluation_job_id"]; ok {
+				t.Errorf("unexpected evaluation_job_id body key: %#v", body)
+			}
+			leaderboardIDs, ok := body["leaderboardIds"].([]any)
+			if !ok || len(leaderboardIDs) != 1 || leaderboardIDs[0] != "leaderboard-1" {
+				t.Errorf("leaderboardIds = %#v", body["leaderboardIds"])
+			}
+			evaluationJob, ok := body["evaluationJob"].(map[string]any)
+			if !ok {
+				t.Fatalf("evaluationJob = %#v", body["evaluationJob"])
+			}
+			for _, key := range []string{"evaluator", "inputDataset", "outputDataset", "awsS3Config", "displayName", "outputStats"} {
+				if _, ok := evaluationJob[key]; !ok {
+					t.Errorf("evaluationJob missing %q: %#v", key, evaluationJob)
+				}
+			}
+			for _, key := range []string{"input_dataset", "output_dataset", "aws_s3_config", "display_name", "output_stats"} {
+				if _, ok := evaluationJob[key]; ok {
+					t.Errorf("unexpected snake evaluationJob key %q: %#v", key, evaluationJob)
+				}
+			}
+			if evaluationJob["evaluator"] != "evaluator-1" || evaluationJob["inputDataset"] != "input-dataset" || evaluationJob["outputDataset"] != "output-dataset" {
+				t.Errorf("evaluationJob scalar fields = %#v", evaluationJob)
+			}
+			aws, ok := evaluationJob["awsS3Config"].(map[string]any)
+			if !ok || aws["credentialsSecret"] != "aws-secret" || aws["iamRoleArn"] != "arn:aws:iam::123:role/fireworks" {
+				t.Errorf("awsS3Config = %#v", evaluationJob["awsS3Config"])
+			}
+			_ = json.NewEncoder(w).Encode(JSON{
+				"name":          "accounts/acct/evaluationJobs/eval-job-1",
+				"evaluator":     "evaluator-1",
+				"inputDataset":  "input-dataset",
+				"outputDataset": "output-dataset",
+				"state":         "JOB_STATE_RUNNING",
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/accounts/acct/evaluationJobs":
+			query := r.URL.Query()
+			if got := query.Get("filter"); got != "state=running" {
+				t.Errorf("filter = %q", got)
+			}
+			if got := query.Get("orderBy"); got != "create_time desc" {
+				t.Errorf("orderBy = %q", got)
+			}
+			if got := query.Get("pageSize"); got != "0" {
+				t.Errorf("pageSize = %q", got)
+			}
+			if got := query.Get("pageToken"); got != "cursor-1" {
+				t.Errorf("pageToken = %q", got)
+			}
+			if got := query.Get("readMask"); got != "name,state" {
+				t.Errorf("readMask = %q", got)
+			}
+			if got := query.Get("account_id"); got != "" {
+				t.Errorf("account_id should not be query param, got %q", got)
+			}
+			_ = json.NewEncoder(w).Encode(JSON{
+				"evaluationJobs": []JSON{
+					{"name": "accounts/acct/evaluationJobs/eval-job-1", "evaluator": "evaluator-1", "state": "JOB_STATE_RUNNING"},
+				},
+				"nextPageToken": "cursor-2",
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/accounts/acct/evaluationJobs/eval-job-1":
+			if got := r.URL.Query().Get("readMask"); got != "name,state" {
+				t.Errorf("readMask = %q", got)
+			}
+			_ = json.NewEncoder(w).Encode(JSON{
+				"name":      "accounts/acct/evaluationJobs/eval-job-1",
+				"evaluator": "evaluator-1",
+				"state":     "JOB_STATE_RUNNING",
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/accounts/acct/evaluationJobs/eval-job-1:getExecutionLogEndpoint":
+			if got := r.URL.Query().Get("readMask"); got != "executionLogSignedUri" {
+				t.Errorf("readMask = %q", got)
+			}
+			_ = json.NewEncoder(w).Encode(JSON{
+				"contentType":           "text/plain",
+				"executionLogSignedUri": "gs://logs/eval.txt",
+			})
+
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/accounts/acct/evaluationJobs/eval-job-1":
+			_ = json.NewEncoder(w).Encode(JSON{"deleted": true})
+
+		default:
+			t.Errorf("unexpected request %s %s?%s", r.Method, r.URL.Path, r.URL.RawQuery)
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client, err := NewClient(WithBaseURL(server.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := client.EvaluationJobs.CreateTyped(context.Background(), fwtypes.EvaluationJobCreateParams{
+		AccountID:       "acct",
+		EvaluationJobID: "eval-job-1",
+		LeaderboardIds:  []string{"leaderboard-1"},
+		EvaluationJob: fwtypes.EvaluationJobCreateParamsEvaluationJob{
+			Evaluator:     "evaluator-1",
+			InputDataset:  "input-dataset",
+			OutputDataset: "output-dataset",
+			AwsS3Config: fwtypes.EvaluationJobCreateParamsEvaluationJobAwsS3Config{
+				CredentialsSecret: "aws-secret",
+				IamRoleArn:        "arn:aws:iam::123:role/fireworks",
+			},
+			DisplayName: "Display Name",
+			OutputStats: "output-stats",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.Name == nil || *created.Name != "accounts/acct/evaluationJobs/eval-job-1" {
+		t.Fatalf("created = %#v", created)
+	}
+
+	page, err := client.EvaluationJobs.ListTyped(context.Background(), fwtypes.EvaluationJobListParams{
+		AccountID: "acct",
+		Filter:    "state=running",
+		OrderBy:   "create_time desc",
+		PageSize:  0,
+		PageToken: "cursor-1",
+		ReadMask:  "name,state",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var _ *fwtypes.EvaluationJobsPage = page
+	if len(page.EvaluationJobs) != 1 || page.NextPageToken == nil || *page.NextPageToken != "cursor-2" {
+		t.Fatalf("page = %#v", page)
+	}
+
+	got, err := client.EvaluationJobs.GetTyped(context.Background(), "eval-job-1", fwtypes.EvaluationJobGetParams{
+		AccountID: "acct",
+		ReadMask:  "name,state",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Name == nil || *got.Name != "accounts/acct/evaluationJobs/eval-job-1" {
+		t.Fatalf("got = %#v", got)
+	}
+
+	logEndpoint, err := client.EvaluationJobs.GetLogEndpointTyped(context.Background(), "eval-job-1", fwtypes.EvaluationJobGetParams{
+		AccountID: "acct",
+		ReadMask:  "executionLogSignedUri",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if logEndpoint.ExecutionLogSignedURI == nil || *logEndpoint.ExecutionLogSignedURI != "gs://logs/eval.txt" {
+		t.Fatalf("logEndpoint = %#v", logEndpoint)
+	}
+
+	deleted, err := client.EvaluationJobs.DeleteTyped(context.Background(), "eval-job-1", WithAccountID("acct"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deleted["deleted"] != true {
+		t.Fatalf("deleted = %#v", deleted)
+	}
+}
+
 func TestDatasetsUploadFileTypedUsesMultipart(t *testing.T) {
 	t.Setenv("FIREWORKS_API_KEY", "test-key")
 
