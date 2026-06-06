@@ -1,8 +1,41 @@
 package sdk
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 const ResponseTokensMetric = "response_tokens"
+
+type LossFn string
+
+const (
+	LossFnCrossEntropy LossFn = "cross_entropy"
+	LossFnDAPO         LossFn = "dapo"
+	LossFnGSPO         LossFn = "gspo"
+)
+
+func FireworksBuiltinLossFns() []LossFn {
+	return []LossFn{LossFnDAPO, LossFnGSPO}
+}
+
+func NormalizeLossFn(lossFn string) (LossFn, error) {
+	normalized := LossFn(strings.ToLower(strings.TrimSpace(lossFn)))
+	switch normalized {
+	case LossFnCrossEntropy, LossFnDAPO, LossFnGSPO:
+		return normalized, nil
+	default:
+		return "", fmt.Errorf("unknown loss_fn %q; expected one of: cross_entropy, dapo, gspo", lossFn)
+	}
+}
+
+func IsFireworksBuiltinLossFn(lossFn string) bool {
+	normalized, err := NormalizeLossFn(lossFn)
+	if err != nil {
+		return false
+	}
+	return normalized == LossFnDAPO || normalized == LossFnGSPO
+}
 
 type TensorData struct {
 	Data  any    `json:"data"`

@@ -1,9 +1,46 @@
 package sdk
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 )
+
+func TestNormalizeLossFnIncludesFireworksBuiltins(t *testing.T) {
+	if !reflect.DeepEqual(FireworksBuiltinLossFns(), []LossFn{LossFnDAPO, LossFnGSPO}) {
+		t.Fatalf("builtins = %#v", FireworksBuiltinLossFns())
+	}
+	tests := map[string]LossFn{
+		"cross_entropy": LossFnCrossEntropy,
+		" DAPO ":        LossFnDAPO,
+		"gspo":          LossFnGSPO,
+	}
+	for input, want := range tests {
+		got, err := NormalizeLossFn(input)
+		if err != nil {
+			t.Fatalf("NormalizeLossFn(%q) error = %v", input, err)
+		}
+		if got != want {
+			t.Fatalf("NormalizeLossFn(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
+func TestIsFireworksBuiltinLossFn(t *testing.T) {
+	if !IsFireworksBuiltinLossFn("dapo") || !IsFireworksBuiltinLossFn("GSPO") {
+		t.Fatal("expected dapo and gspo to be Fireworks built-in losses")
+	}
+	if IsFireworksBuiltinLossFn("cross_entropy") || IsFireworksBuiltinLossFn("unknown") {
+		t.Fatal("unexpected Fireworks built-in loss")
+	}
+}
+
+func TestNormalizeLossFnRejectsUnknown(t *testing.T) {
+	_, err := NormalizeLossFn("orpo")
+	if err == nil || !strings.Contains(err.Error(), "dapo") || !strings.Contains(err.Error(), "gspo") {
+		t.Fatalf("err = %v", err)
+	}
+}
 
 func TestCountResponseTokensPrefersNonZeroWeights(t *testing.T) {
 	got := CountResponseTokens([]TrainingDatum{
