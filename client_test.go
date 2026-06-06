@@ -3500,6 +3500,165 @@ func TestDeploymentShapesTypedAllParamsUsePythonAliases(t *testing.T) {
 	}
 }
 
+func TestLoraTypedAllParamsUsePythonAliases(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPatch && r.URL.Path == "/v1/accounts/acct/deployedModels/lora-1":
+			if got := r.URL.RawQuery; got != "" {
+				t.Errorf("update query = %q", got)
+			}
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("decode update body: %v", err)
+			}
+			if _, ok := body["account_id"]; ok {
+				t.Errorf("update body should not contain account_id: %#v", body)
+			}
+			assertLoraPayloadUsesAliases(t, body)
+			_ = json.NewEncoder(w).Encode(JSON{
+				"name":        "accounts/acct/deployedModels/lora-1",
+				"displayName": "LoRA One Updated",
+				"model":       "accounts/acct/models/lora",
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/accounts/acct/deployedModels":
+			query := r.URL.Query()
+			if got := query.Get("filter"); got != "serverless=true" {
+				t.Errorf("filter = %q", got)
+			}
+			if got := query.Get("orderBy"); got != "create_time desc" {
+				t.Errorf("orderBy = %q", got)
+			}
+			if got := query.Get("pageSize"); got != "0" {
+				t.Errorf("pageSize = %q", got)
+			}
+			if got := query.Get("pageToken"); got != "cursor-1" {
+				t.Errorf("pageToken = %q", got)
+			}
+			if got := query.Get("readMask"); got != "name,model" {
+				t.Errorf("readMask = %q", got)
+			}
+			for _, key := range []string{"account_id", "order_by", "page_size", "page_token", "read_mask"} {
+				if got := query.Get(key); got != "" {
+					t.Errorf("unexpected query %s=%q", key, got)
+				}
+			}
+			_ = json.NewEncoder(w).Encode(JSON{
+				"deployedModels": []JSON{
+					{"name": "accounts/acct/deployedModels/lora-1", "displayName": "LoRA One", "model": "accounts/acct/models/lora"},
+				},
+				"nextPageToken": "cursor-2",
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/accounts/acct/deployedModels/lora-1":
+			if got := r.URL.Query().Get("readMask"); got != "name,model" {
+				t.Errorf("readMask = %q", got)
+			}
+			if got := r.URL.Query().Get("read_mask"); got != "" {
+				t.Errorf("unexpected read_mask = %q", got)
+			}
+			_ = json.NewEncoder(w).Encode(JSON{
+				"name":        "accounts/acct/deployedModels/lora-1",
+				"displayName": "LoRA One",
+				"model":       "accounts/acct/models/lora",
+			})
+
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/accounts/acct/deployedModels":
+			query := r.URL.Query()
+			if got := query.Get("replaceMergedAddon"); got != "true" {
+				t.Errorf("replaceMergedAddon = %q", got)
+			}
+			if got := query.Get("replace_merged_addon"); got != "" {
+				t.Errorf("unexpected replace_merged_addon = %q", got)
+			}
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("decode load body: %v", err)
+			}
+			for _, key := range []string{"account_id", "replaceMergedAddon", "replace_merged_addon"} {
+				if _, ok := body[key]; ok {
+					t.Errorf("load body should not contain %q: %#v", key, body)
+				}
+			}
+			assertLoraPayloadUsesAliases(t, body)
+			_ = json.NewEncoder(w).Encode(JSON{
+				"name":        "accounts/acct/deployedModels/lora-1",
+				"displayName": "LoRA One",
+				"model":       "accounts/acct/models/lora",
+			})
+
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/accounts/acct/deployedModels/lora-1":
+			if got := r.URL.RawQuery; got != "" {
+				t.Errorf("unload query = %q", got)
+			}
+			_ = json.NewEncoder(w).Encode(JSON{"deleted": true})
+
+		default:
+			t.Errorf("unexpected request %s %s?%s", r.Method, r.URL.Path, r.URL.RawQuery)
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client, err := NewClient(WithBaseURL(server.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	updated, err := client.Lora.UpdateTyped(context.Background(), "lora-1", testLoraUpdateParams("acct", "LoRA One Updated"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.DisplayName == nil || *updated.DisplayName != "LoRA One Updated" {
+		t.Fatalf("updated = %#v", updated)
+	}
+
+	page, err := client.Lora.ListTyped(context.Background(), fwtypes.LoraListParams{
+		AccountID: "acct",
+		Filter:    "serverless=true",
+		OrderBy:   "create_time desc",
+		PageSize:  0,
+		PageToken: "cursor-1",
+		ReadMask:  "name,model",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var _ *fwtypes.LoraPage = page
+	if len(page.DeployedModels) != 1 || page.NextPageToken == nil || *page.NextPageToken != "cursor-2" {
+		t.Fatalf("page = %#v", page)
+	}
+
+	got, err := client.Lora.GetTyped(context.Background(), "lora-1", fwtypes.LoraGetParams{
+		AccountID: "acct",
+		ReadMask:  "name,model",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Name == nil || *got.Name != "accounts/acct/deployedModels/lora-1" {
+		t.Fatalf("got = %#v", got)
+	}
+
+	loaded, err := client.Lora.LoadTyped(context.Background(), testLoraLoadParams("acct", "LoRA One"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Name == nil || *loaded.Name != "accounts/acct/deployedModels/lora-1" {
+		t.Fatalf("loaded = %#v", loaded)
+	}
+
+	deleted, err := client.Lora.UnloadTyped(context.Background(), "lora-1", WithAccountID("acct"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deleted["deleted"] != true {
+		t.Fatalf("deleted = %#v", deleted)
+	}
+}
+
 func TestBatchInferenceJobsTypedAllParamsUsePythonAliases(t *testing.T) {
 	t.Setenv("FIREWORKS_API_KEY", "test-key")
 
@@ -6509,6 +6668,56 @@ func assertDeploymentPayloadUsesAliases(t *testing.T, payload map[string]any) {
 	regions, ok := placement["regions"].([]any)
 	if !ok || len(regions) != 1 || regions[0] != "REGION_UNSPECIFIED" {
 		t.Errorf("regions = %#v", placement["regions"])
+	}
+}
+
+func testLoraLoadParams(accountID, displayName string) fwtypes.LoraLoadParams {
+	return fwtypes.LoraLoadParams{
+		AccountID:          accountID,
+		ReplaceMergedAddon: true,
+		Default:            true,
+		Deployment:         "accounts/acct/deployments/dep-1",
+		Description:        "description",
+		DisplayName:        displayName,
+		Model:              "accounts/acct/models/lora",
+		Public:             true,
+		Serverless:         true,
+	}
+}
+
+func testLoraUpdateParams(accountID, displayName string) fwtypes.LoraUpdateParams {
+	return fwtypes.LoraUpdateParams{
+		AccountID:   accountID,
+		Default:     true,
+		Deployment:  "accounts/acct/deployments/dep-1",
+		Description: "description",
+		DisplayName: displayName,
+		Model:       "accounts/acct/models/lora",
+		Public:      true,
+		Serverless:  true,
+	}
+}
+
+func assertLoraPayloadUsesAliases(t *testing.T, payload map[string]any) {
+	t.Helper()
+
+	for _, key := range []string{"default", "deployment", "description", "displayName", "model", "public", "serverless"} {
+		if _, ok := payload[key]; !ok {
+			t.Errorf("lora payload missing %q: %#v", key, payload)
+		}
+	}
+	for _, key := range []string{"account_id", "display_name", "replace_merged_addon"} {
+		if _, ok := payload[key]; ok {
+			t.Errorf("unexpected snake lora key %q: %#v", key, payload)
+		}
+	}
+	for _, key := range []string{"default", "public", "serverless"} {
+		if payload[key] != true {
+			t.Errorf("%s = %#v", key, payload[key])
+		}
+	}
+	if payload["deployment"] != "accounts/acct/deployments/dep-1" || payload["displayName"] == "" || payload["model"] != "accounts/acct/models/lora" {
+		t.Errorf("lora scalar aliases = %#v", payload)
 	}
 }
 
