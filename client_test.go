@@ -1969,6 +1969,142 @@ func TestWithExtraBodyMergesIntoJSONRequest(t *testing.T) {
 	}
 }
 
+func TestCompletionCreateTypedPreservesAllPythonOptionalParams(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+
+	var body map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode request body: %v", err)
+		}
+		_ = json.NewEncoder(w).Encode(JSON{
+			"id":      "cmpl-1",
+			"created": 123,
+			"model":   "model",
+			"choices": []JSON{
+				{"index": 0, "text": "ok"},
+			},
+		})
+	}))
+	defer server.Close()
+
+	prediction := fwtypes.CompletionCreateParamsPrediction(map[string]any{
+		"content": "string",
+		"type":    "content",
+	})
+	thinking := fwtypes.CompletionCreateParamsThinking(map[string]any{
+		"type":          "enabled",
+		"budget_tokens": 0,
+	})
+	client, err := NewClient(WithBaseURL(server.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.Completions.CreateTyped(context.Background(), fwtypes.CompletionCreateParams{
+		Model:                         "model",
+		Prompt:                        "string",
+		ContextLengthExceededBehavior: "error",
+		Echo:                          testBoolPtr(true),
+		EchoLast:                      testIntPtr(0),
+		FrequencyPenalty:              testFloatPtr(0),
+		IgnoreEos:                     true,
+		Images:                        []string{"string"},
+		LogitBias:                     map[string]float64{"foo": 0},
+		Logprobs:                      0,
+		MaxCompletionTokens:           testIntPtr(0),
+		MaxTokens:                     testIntPtr(0),
+		Metadata:                      map[string]string{"foo": "string"},
+		MinP:                          testFloatPtr(0),
+		MirostatLr:                    testFloatPtr(0),
+		MirostatTarget:                testFloatPtr(0),
+		N:                             0,
+		PerfMetricsInResponse:         testBoolPtr(true),
+		Prediction:                    &prediction,
+		PresencePenalty:               testFloatPtr(0),
+		PromptCacheIsolationKey:       testStringPtr("prompt_cache_isolation_key"),
+		PromptCacheKey:                testStringPtr("prompt_cache_key"),
+		RawOutput:                     testBoolPtr(true),
+		ReasoningEffort:               "low",
+		ReasoningHistory:              testStringPtr("disabled"),
+		RepetitionPenalty:             testFloatPtr(0),
+		ResponseFormat: &fwtypes.CompletionCreateParamsResponseFormat{
+			Type:       "json_object",
+			Grammar:    testStringPtr("grammar"),
+			JsonSchema: "string",
+			Schema:     "string",
+		},
+		ReturnTokenIds: testBoolPtr(true),
+		Seed:           testIntPtr(0),
+		ServiceTier:    "auto",
+		Speculation:    "string",
+		Stop:           "string",
+		Temperature:    testFloatPtr(0),
+		Thinking:       &thinking,
+		TopK:           testIntPtr(0),
+		TopLogprobs:    testIntPtr(0),
+		TopP:           testFloatPtr(0),
+		TypicalP:       testFloatPtr(0),
+		User:           testStringPtr("user"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, key := range []string{
+		"context_length_exceeded_behavior",
+		"echo",
+		"echo_last",
+		"frequency_penalty",
+		"ignore_eos",
+		"images",
+		"logit_bias",
+		"logprobs",
+		"max_completion_tokens",
+		"max_tokens",
+		"metadata",
+		"min_p",
+		"mirostat_lr",
+		"mirostat_target",
+		"n",
+		"perf_metrics_in_response",
+		"prediction",
+		"presence_penalty",
+		"prompt_cache_isolation_key",
+		"prompt_cache_key",
+		"raw_output",
+		"reasoning_effort",
+		"reasoning_history",
+		"repetition_penalty",
+		"response_format",
+		"return_token_ids",
+		"seed",
+		"service_tier",
+		"speculation",
+		"stop",
+		"temperature",
+		"thinking",
+		"top_k",
+		"top_logprobs",
+		"top_p",
+		"typical_p",
+		"user",
+	} {
+		if _, ok := body[key]; !ok {
+			t.Fatalf("%q missing from body %#v", key, body)
+		}
+	}
+	if body["echo_last"] != float64(0) || body["temperature"] != float64(0) || body["top_k"] != float64(0) {
+		t.Fatalf("zero-valued params were not preserved: %#v", body)
+	}
+	if body["perf_metrics_in_response"] != true || body["raw_output"] != true || body["return_token_ids"] != true {
+		t.Fatalf("boolean params = %#v", body)
+	}
+	responseFormat, ok := body["response_format"].(map[string]any)
+	if !ok || responseFormat["type"] != "json_object" || responseFormat["grammar"] != "grammar" {
+		t.Fatalf("response_format = %#v", body["response_format"])
+	}
+}
+
 func TestCompletionCreateTypedStream(t *testing.T) {
 	t.Setenv("FIREWORKS_API_KEY", "test-key")
 
@@ -2589,4 +2725,20 @@ func TestEvaluatorBuildLogEndpointTyped(t *testing.T) {
 	if endpoint.BuildLogSignedURI == nil || *endpoint.BuildLogSignedURI != "gs://logs/build.txt" {
 		t.Fatalf("endpoint = %#v", endpoint)
 	}
+}
+
+func testStringPtr(value string) *string {
+	return &value
+}
+
+func testBoolPtr(value bool) *bool {
+	return &value
+}
+
+func testIntPtr(value int) *int {
+	return &value
+}
+
+func testFloatPtr(value float64) *float64 {
+	return &value
 }
