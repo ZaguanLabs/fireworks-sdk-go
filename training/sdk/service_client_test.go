@@ -234,6 +234,98 @@ func TestFiretitanTrainingClientSamplerSyncAndHotload(t *testing.T) {
 	}
 }
 
+func TestFiretitanTrainingClientWeightSyncerSaveWeightsForSampler(t *testing.T) {
+	saver := &fakeSamplerSaver{
+		results: []SaveSamplerResult{{Path: "raw/path", SnapshotName: "step-1-session"}},
+	}
+	syncer := NewWeightSyncer(WeightSyncerConfig{
+		PolicyClient: saver,
+		BaseModel:    "accounts/acct/models/base",
+		LoraRank:     0,
+	})
+	svc, err := NewFiretitanServiceClient(FiretitanServiceClientOptions{
+		Config: FiretitanProvisioningConfig{BaseModel: "accounts/acct/models/base"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := svc.CreateTrainingClient(context.Background(), CreateFiretitanTrainingClientOptions{
+		WeightSyncer: syncer,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := client.NextSamplerCheckpointType("delta"); err != nil || got != SamplerCheckpointTypeDelta {
+		t.Fatalf("checkpoint type = %q err=%v", got, err)
+	}
+	result, err := client.SaveWeightsForSampler(context.Background(), "step-1", "base")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Path != "step-1-session" || result.SnapshotName != "step-1-session" {
+		t.Fatalf("result = %#v", result)
+	}
+	if len(saver.calls) != 1 || saver.calls[0].CheckpointType != "base" {
+		t.Fatalf("save calls = %#v", saver.calls)
+	}
+}
+
+func TestFiretitanTrainingClientSaveWeightsAndHotloadClearsInitialSync(t *testing.T) {
+	saver := &fakeSamplerSaver{
+		results: []SaveSamplerResult{{Path: "raw/path", SnapshotName: "step-1-session"}},
+	}
+	syncer := NewWeightSyncer(WeightSyncerConfig{
+		PolicyClient: saver,
+		BaseModel:    "accounts/acct/models/base",
+	})
+	svc, err := NewFiretitanServiceClient(FiretitanServiceClientOptions{
+		Config: FiretitanProvisioningConfig{BaseModel: "accounts/acct/models/base"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := svc.CreateTrainingClient(context.Background(), CreateFiretitanTrainingClientOptions{
+		WeightSyncer:               syncer,
+		RequiresInitialSamplerSync: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !client.RequiresInitialSamplerSync() {
+		t.Fatal("expected initial sync")
+	}
+	result, err := client.SaveWeightsAndHotload(context.Background(), "step-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Path != "step-1-session" || client.RequiresInitialSamplerSync() {
+		t.Fatalf("result = %#v initialSync=%t", result, client.RequiresInitialSamplerSync())
+	}
+}
+
+func TestFiretitanTrainingClientWeightSyncerUnsupportedAndAttach(t *testing.T) {
+	svc, err := NewFiretitanServiceClient(FiretitanServiceClientOptions{
+		Config: FiretitanProvisioningConfig{BaseModel: "accounts/acct/models/base"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := svc.CreateTrainingClient(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.SaveWeightsForSampler(context.Background(), "step-1"); err == nil || !strings.Contains(err.Error(), "WeightSyncer") {
+		t.Fatalf("save error = %v", err)
+	}
+	syncer := NewWeightSyncer(WeightSyncerConfig{})
+	if client.AttachWeightSyncer(syncer) != client || client.WeightSyncer != syncer {
+		t.Fatal("AttachWeightSyncer should set and return the client")
+	}
+	if _, err := client.SaveWeightsAndGetSamplingClient(context.Background(), "step-1", nil); err == nil || err.Error() != SamplingClientFromTrainerMessage {
+		t.Fatalf("unsupported error = %v", err)
+	}
+}
+
 func TestFiretitanTrainingClientSamplerRequiresBackend(t *testing.T) {
 	svc, err := NewFiretitanServiceClient(FiretitanServiceClientOptions{
 		Config: FiretitanProvisioningConfig{BaseModel: "accounts/acct/models/base"},

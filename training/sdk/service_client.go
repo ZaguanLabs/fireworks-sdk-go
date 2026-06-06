@@ -91,6 +91,7 @@ type CreateFiretitanTrainingClientOptions struct {
 	UserMetadata               map[string]string
 	HandleMetadata             *ManagedHandleMetadata
 	SamplerBackend             *TinkerSamplerBackend
+	WeightSyncer               *WeightSyncer
 	RequiresInitialSamplerSync bool
 }
 
@@ -101,6 +102,7 @@ type FiretitanTrainingClient struct {
 	Warnings       []string
 	HandleMetadata ManagedHandleMetadata
 	SamplerBackend *TinkerSamplerBackend
+	WeightSyncer   *WeightSyncer
 	SyncState      ManagedSamplerSyncState
 }
 
@@ -153,6 +155,7 @@ func (c *FiretitanServiceClient) CreateTrainingClient(_ context.Context, opts ..
 		Warnings:       warnings,
 		HandleMetadata: handle,
 		SamplerBackend: backend,
+		WeightSyncer:   opt.WeightSyncer,
 		SyncState:      state,
 	}, nil
 }
@@ -205,6 +208,50 @@ func (c *FiretitanTrainingClient) AttachSamplerBackend(backend *TinkerSamplerBac
 		c.SamplerBackend = backend
 	}
 	return c
+}
+
+func (c *FiretitanTrainingClient) AttachWeightSyncer(syncer *WeightSyncer) *FiretitanTrainingClient {
+	if c != nil {
+		c.WeightSyncer = syncer
+	}
+	return c
+}
+
+func (c *FiretitanTrainingClient) NextSamplerCheckpointType(checkpointType ...string) (SamplerCheckpointType, error) {
+	if c != nil && c.WeightSyncer != nil {
+		return c.WeightSyncer.NextCheckpointType(checkpointType...)
+	}
+	if c == nil {
+		return ResolveNextCheckpointType(0, false, string(SamplerCheckpointTypeBase), checkpointType...)
+	}
+	return ResolveNextCheckpointType(c.Config.LoraRank, false, string(SamplerCheckpointTypeBase), checkpointType...)
+}
+
+func (c *FiretitanTrainingClient) SaveWeightsForSampler(ctx context.Context, name string, checkpointType ...string) (SaveSamplerResult, error) {
+	if c == nil || c.WeightSyncer == nil {
+		return SaveSamplerResult{}, fmt.Errorf("FiretitanTrainingClient requires a WeightSyncer to save weights for sampler")
+	}
+	snapshotName, err := c.WeightSyncer.SaveOnly(ctx, name, checkpointType...)
+	if err != nil {
+		return SaveSamplerResult{}, err
+	}
+	return SaveSamplerResult{Path: snapshotName, SnapshotName: snapshotName}, nil
+}
+
+func (c *FiretitanTrainingClient) SaveWeightsAndHotload(ctx context.Context, name string, checkpointType ...string) (SaveSamplerResult, error) {
+	if c == nil || c.WeightSyncer == nil {
+		return SaveSamplerResult{}, fmt.Errorf("FiretitanTrainingClient requires a WeightSyncer to save and hotload weights for sampler")
+	}
+	snapshotName, err := c.WeightSyncer.SaveAndHotload(ctx, name, checkpointType...)
+	if err != nil {
+		return SaveSamplerResult{}, err
+	}
+	c.SyncState.MarkSamplerHotloaded()
+	return SaveSamplerResult{Path: snapshotName, SnapshotName: snapshotName}, nil
+}
+
+func (c *FiretitanTrainingClient) SaveWeightsAndGetSamplingClient(context.Context, string, DeploymentTokenizer, ...string) (*FiretitanSamplingClient, error) {
+	return nil, fmt.Errorf("%s", SamplingClientFromTrainerMessage)
 }
 
 func (c *FiretitanTrainingClient) RequiresInitialSamplerSync() bool {
