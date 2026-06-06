@@ -203,6 +203,28 @@ func ExpectedReferenceTrainerMode(config FiretitanProvisioningConfig) string {
 	return ForwardOnlyMode
 }
 
+func ValidateReferenceTrainingShape(config FiretitanProvisioningConfig, profile TrainingShapeProfile) error {
+	if config.TrainingShapeID == "" {
+		return nil
+	}
+	expected := ExpectedReferenceTrainerMode(config)
+	actual := profile.TrainerMode
+	if actual == "" {
+		actual = PolicyTrainerMode
+	}
+	if actual == expected {
+		return nil
+	}
+	return fmt.Errorf(
+		"reference_training_shape_id='%s' resolves to trainer_mode='%s', but this run requires trainer_mode='%s' (lora_rank=%d, forward_only=%t). Use a training shape validated for the requested trainer mode",
+		config.TrainingShapeID,
+		actual,
+		expected,
+		config.LoraRank,
+		config.ForwardOnly,
+	)
+}
+
 func DeploymentShapeConflict(requested, existingVersion string) bool {
 	if requested == "" || existingVersion == "" {
 		return false

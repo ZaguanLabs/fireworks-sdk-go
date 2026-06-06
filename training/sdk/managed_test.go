@@ -208,6 +208,56 @@ func TestReferenceManagedConfigCanKeepFreshReference(t *testing.T) {
 	}
 }
 
+func TestValidateReferenceTrainingShapeSkipsExistingReferenceJob(t *testing.T) {
+	err := ValidateReferenceTrainingShape(
+		FiretitanProvisioningConfig{ReferenceTrainerJobID: "ref-job"},
+		TrainingShapeProfile{TrainerMode: PolicyTrainerMode},
+	)
+	if err != nil {
+		t.Fatalf("ValidateReferenceTrainingShape() error = %v", err)
+	}
+}
+
+func TestValidateReferenceTrainingShapeDefaultsMissingModeToPolicy(t *testing.T) {
+	err := ValidateReferenceTrainingShape(
+		FiretitanProvisioningConfig{TrainingShapeID: "ts-ref"},
+		TrainingShapeProfile{},
+	)
+	if err == nil || !strings.Contains(err.Error(), "trainer_mode='POLICY_TRAINER'") || !strings.Contains(err.Error(), "trainer_mode='FORWARD_ONLY'") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestValidateReferenceTrainingShapeForwardOnlyMatch(t *testing.T) {
+	err := ValidateReferenceTrainingShape(
+		FiretitanProvisioningConfig{TrainingShapeID: "ts-ref"},
+		TrainingShapeProfile{TrainerMode: ForwardOnlyMode},
+	)
+	if err != nil {
+		t.Fatalf("ValidateReferenceTrainingShape() error = %v", err)
+	}
+}
+
+func TestValidateReferenceTrainingShapeLoraMatch(t *testing.T) {
+	err := ValidateReferenceTrainingShape(
+		FiretitanProvisioningConfig{TrainingShapeID: "ts-ref", LoraRank: 16},
+		TrainingShapeProfile{TrainerMode: LoraTrainerMode},
+	)
+	if err != nil {
+		t.Fatalf("ValidateReferenceTrainingShape() error = %v", err)
+	}
+}
+
+func TestValidateReferenceTrainingShapeLoraMismatch(t *testing.T) {
+	err := ValidateReferenceTrainingShape(
+		FiretitanProvisioningConfig{TrainingShapeID: "ts-ref", LoraRank: 16},
+		TrainingShapeProfile{TrainerMode: ForwardOnlyMode},
+	)
+	if err == nil || !strings.Contains(err.Error(), "trainer_mode='LORA_TRAINER'") || !strings.Contains(err.Error(), "lora_rank=16") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 func TestDeploymentShapeConflictIgnoresVersionDrift(t *testing.T) {
 	if DeploymentShapeConflict("accounts/a/deploymentShapes/s/versions/v1", "accounts/a/deploymentShapes/s/versions/v2") {
 		t.Fatal("same shape with different versions should not conflict")
