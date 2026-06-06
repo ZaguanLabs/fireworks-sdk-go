@@ -2552,6 +2552,277 @@ func TestTypedGetUsesPythonQueryAliases(t *testing.T) {
 	}
 }
 
+func TestModelsTypedAllParamsUsePythonAliases(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/accounts/acct/models":
+			if got := r.URL.RawQuery; got != "" {
+				t.Errorf("create query = %q", got)
+			}
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("decode create body: %v", err)
+			}
+			if _, ok := body["account_id"]; ok {
+				t.Errorf("create body should not contain account_id: %#v", body)
+			}
+			if body["modelId"] != "model-1" || body["cluster"] != "accounts/acct/clusters/cluster-1" {
+				t.Errorf("create aliases = %#v", body)
+			}
+			if _, ok := body["model_id"]; ok {
+				t.Errorf("unexpected model_id body key: %#v", body)
+			}
+			model, ok := body["model"].(map[string]any)
+			if !ok {
+				t.Fatalf("model = %#v", body["model"])
+			}
+			assertModelPayloadUsesAliases(t, model)
+			_ = json.NewEncoder(w).Encode(JSON{
+				"name":          "accounts/acct/models/model-1",
+				"displayName":   "Model One",
+				"contextLength": 8192,
+				"public":        true,
+			})
+
+		case r.Method == http.MethodPatch && r.URL.Path == "/v1/accounts/acct/models/model-1":
+			if got := r.URL.RawQuery; got != "" {
+				t.Errorf("update query = %q", got)
+			}
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("decode update body: %v", err)
+			}
+			if _, ok := body["account_id"]; ok {
+				t.Errorf("update body should not contain account_id: %#v", body)
+			}
+			assertModelPayloadUsesAliases(t, body)
+			_ = json.NewEncoder(w).Encode(JSON{
+				"name":        "accounts/acct/models/model-1",
+				"displayName": "Model One Updated",
+				"public":      true,
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/accounts/acct/models":
+			query := r.URL.Query()
+			if got := query.Get("filter"); got != "kind=HF_BASE_MODEL" {
+				t.Errorf("filter = %q", got)
+			}
+			if got := query.Get("orderBy"); got != "create_time desc" {
+				t.Errorf("orderBy = %q", got)
+			}
+			if got := query.Get("pageSize"); got != "0" {
+				t.Errorf("pageSize = %q", got)
+			}
+			if got := query.Get("pageToken"); got != "cursor-1" {
+				t.Errorf("pageToken = %q", got)
+			}
+			if got := query.Get("readMask"); got != "name,displayName" {
+				t.Errorf("readMask = %q", got)
+			}
+			if got := query.Get("account_id"); got != "" {
+				t.Errorf("account_id should not be query param, got %q", got)
+			}
+			_ = json.NewEncoder(w).Encode(JSON{
+				"models": []JSON{
+					{"name": "accounts/acct/models/model-1", "displayName": "Model One", "contextLength": 8192},
+				},
+				"nextPageToken": "cursor-2",
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/accounts/acct/models/model-1":
+			if got := r.URL.Query().Get("readMask"); got != "name,displayName" {
+				t.Errorf("readMask = %q", got)
+			}
+			_ = json.NewEncoder(w).Encode(JSON{
+				"name":        "accounts/acct/models/model-1",
+				"displayName": "Model One",
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/accounts/acct/models/model-1:getDownloadEndpoint":
+			if got := r.URL.Query().Get("readMask"); got != "filenameToSignedUrls" {
+				t.Errorf("readMask = %q", got)
+			}
+			_ = json.NewEncoder(w).Encode(JSON{
+				"filenameToSignedUrls": map[string]string{"model.safetensors": "gs://download/model.safetensors"},
+			})
+
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/accounts/acct/models/model-1:getUploadEndpoint":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("decode get upload body: %v", err)
+			}
+			for _, key := range []string{"account_id", "filename_to_size", "enable_resumable_upload", "read_mask"} {
+				if _, ok := body[key]; ok {
+					t.Errorf("get upload body should not contain %q: %#v", key, body)
+				}
+			}
+			filenameToSize, ok := body["filenameToSize"].(map[string]any)
+			if !ok || filenameToSize["model.safetensors"] != "123" {
+				t.Errorf("filenameToSize = %#v", body["filenameToSize"])
+			}
+			if body["enableResumableUpload"] != true || body["readMask"] != "filenameToUnsignedUris" {
+				t.Errorf("get upload aliases = %#v", body)
+			}
+			_ = json.NewEncoder(w).Encode(JSON{
+				"filenameToUnsignedUris": map[string]string{"model.safetensors": "gs://upload/model.safetensors"},
+			})
+
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/accounts/acct/models/model-1:prepare":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("decode prepare body: %v", err)
+			}
+			if _, ok := body["account_id"]; ok {
+				t.Errorf("prepare body should not contain account_id: %#v", body)
+			}
+			if body["precision"] != "FP8" || body["readMask"] != "state" {
+				t.Errorf("prepare body = %#v", body)
+			}
+			if _, ok := body["read_mask"]; ok {
+				t.Errorf("unexpected read_mask body key: %#v", body)
+			}
+			_ = json.NewEncoder(w).Encode(JSON{"prepared": true})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/accounts/acct/models/model-1:validateUpload":
+			query := r.URL.Query()
+			if got := query.Get("configOnly"); got != "true" {
+				t.Errorf("configOnly = %q", got)
+			}
+			if got := query.Get("skipHfConfigValidation"); got != "true" {
+				t.Errorf("skipHfConfigValidation = %q", got)
+			}
+			if got := query.Get("trustRemoteCode"); got != "true" {
+				t.Errorf("trustRemoteCode = %q", got)
+			}
+			for _, key := range []string{"account_id", "config_only", "skip_hf_config_validation", "trust_remote_code"} {
+				if got := query.Get(key); got != "" {
+					t.Errorf("unexpected query %s=%q", key, got)
+				}
+			}
+			_ = json.NewEncoder(w).Encode(JSON{"warnings": []string{"ok"}})
+
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/accounts/acct/models/model-1":
+			_ = json.NewEncoder(w).Encode(JSON{"deleted": true})
+
+		default:
+			t.Errorf("unexpected request %s %s?%s", r.Method, r.URL.Path, r.URL.RawQuery)
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client, err := NewClient(WithBaseURL(server.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := client.Models.CreateTyped(context.Background(), fwtypes.ModelCreateParams{
+		AccountID: "acct",
+		ModelID:   "model-1",
+		Cluster:   "accounts/acct/clusters/cluster-1",
+		Model:     testModelParam("Model One"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.Name == nil || *created.Name != "accounts/acct/models/model-1" {
+		t.Fatalf("created = %#v", created)
+	}
+
+	updated, err := client.Models.UpdateTyped(context.Background(), "model-1", testModelUpdateParams("acct", "Model One Updated"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.DisplayName == nil || *updated.DisplayName != "Model One Updated" {
+		t.Fatalf("updated = %#v", updated)
+	}
+
+	page, err := client.Models.ListTyped(context.Background(), fwtypes.ModelListParams{
+		AccountID: "acct",
+		Filter:    "kind=HF_BASE_MODEL",
+		OrderBy:   "create_time desc",
+		PageSize:  0,
+		PageToken: "cursor-1",
+		ReadMask:  "name,displayName",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var _ *fwtypes.ModelsPage = page
+	if len(page.Models) != 1 || page.NextPageToken == nil || *page.NextPageToken != "cursor-2" {
+		t.Fatalf("page = %#v", page)
+	}
+
+	got, err := client.Models.GetTyped(context.Background(), "model-1", fwtypes.ModelGetParams{
+		AccountID: "acct",
+		ReadMask:  "name,displayName",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Name == nil || *got.Name != "accounts/acct/models/model-1" {
+		t.Fatalf("got = %#v", got)
+	}
+
+	download, err := client.Models.GetDownloadEndpointTyped(context.Background(), "model-1", fwtypes.ModelGetDownloadEndpointParams{
+		AccountID: "acct",
+		ReadMask:  "filenameToSignedUrls",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if download.FilenameToSignedUrls["model.safetensors"] != "gs://download/model.safetensors" {
+		t.Fatalf("download = %#v", download)
+	}
+
+	upload, err := client.Models.GetUploadEndpointTyped(context.Background(), "model-1", fwtypes.ModelGetUploadEndpointParams{
+		AccountID:             "acct",
+		FilenameToSize:        map[string]string{"model.safetensors": "123"},
+		EnableResumableUpload: true,
+		ReadMask:              "filenameToUnsignedUris",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if upload.FilenameToUnsignedUris["model.safetensors"] != "gs://upload/model.safetensors" {
+		t.Fatalf("upload = %#v", upload)
+	}
+
+	prepared, err := client.Models.PrepareTyped(context.Background(), "model-1", fwtypes.ModelPrepareParams{
+		AccountID: "acct",
+		Precision: "FP8",
+		ReadMask:  "state",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prepared["prepared"] != true {
+		t.Fatalf("prepared = %#v", prepared)
+	}
+
+	validated, err := client.Models.ValidateUploadTyped(context.Background(), "model-1", fwtypes.ModelValidateUploadParams{
+		AccountID:              "acct",
+		ConfigOnly:             true,
+		SkipHfConfigValidation: true,
+		TrustRemoteCode:        true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(validated.Warnings) != 1 || validated.Warnings[0] != "ok" {
+		t.Fatalf("validated = %#v", validated)
+	}
+
+	deleted, err := client.Models.DeleteTyped(context.Background(), "model-1", WithAccountID("acct"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deleted["deleted"] != true {
+		t.Fatalf("deleted = %#v", deleted)
+	}
+}
+
 func TestTypedCreateSplitsPythonQueryFields(t *testing.T) {
 	t.Setenv("FIREWORKS_API_KEY", "test-key")
 
@@ -5500,6 +5771,150 @@ func assertDatasetPayloadUsesAliases(t *testing.T, payload map[string]any) {
 		if _, ok := transformed[key]; ok {
 			t.Errorf("unexpected snake transformed key %q: %#v", key, transformed)
 		}
+	}
+}
+
+func testModelParam(displayName string) fwtypes.ModelParam {
+	return fwtypes.ModelParam{
+		BaseModelDetails: fwtypes.BaseModelDetailsParam{
+			CheckpointFormat:      "CHECKPOINT_FORMAT_UNSPECIFIED",
+			ModelType:             "llm",
+			Moe:                   true,
+			ParameterCount:        "7B",
+			SupportsFireattention: true,
+			SupportsMtp:           true,
+			Tunable:               true,
+			WorldSize:             0,
+		},
+		ContextLength:          0,
+		ConversationConfig:     fwtypes.ConversationConfigParam{Style: "chat", System: "system", Template: "template"},
+		DefaultDraftModel:      "accounts/acct/models/draft",
+		DefaultDraftTokenCount: 0,
+		DeprecationDate:        fwtypes.TypeDateParam{Day: 0, Month: 0, Year: 0},
+		Description:            "description",
+		DisplayName:            displayName,
+		GithubURL:              "https://github.com/fw/model",
+		HuggingFaceURL:         "https://huggingface.co/fw/model",
+		Kind:                   "HF_BASE_MODEL",
+		PeftDetails: fwtypes.PeftDetailsParam{
+			BaseModel:           "accounts/acct/models/base",
+			R:                   0,
+			TargetModules:       []string{"q_proj"},
+			MergeAddonModelName: "accounts/acct/models/merged",
+		},
+		Public:                 true,
+		SnapshotType:           "FULL_SNAPSHOT",
+		SupportsImageInput:     true,
+		SupportsLora:           true,
+		SupportsTools:          true,
+		TeftDetails:            JSON{},
+		TrainingContextLength:  0,
+		UseHfApplyChatTemplate: true,
+	}
+}
+
+func testModelUpdateParams(accountID, displayName string) fwtypes.ModelUpdateParams {
+	model := testModelParam(displayName)
+	return fwtypes.ModelUpdateParams{
+		AccountID:              accountID,
+		BaseModelDetails:       model.BaseModelDetails,
+		ContextLength:          model.ContextLength,
+		ConversationConfig:     model.ConversationConfig,
+		DefaultDraftModel:      model.DefaultDraftModel,
+		DefaultDraftTokenCount: model.DefaultDraftTokenCount,
+		DeprecationDate:        model.DeprecationDate,
+		Description:            model.Description,
+		DisplayName:            model.DisplayName,
+		GithubURL:              model.GithubURL,
+		HuggingFaceURL:         model.HuggingFaceURL,
+		Kind:                   model.Kind,
+		PeftDetails:            model.PeftDetails,
+		Public:                 model.Public,
+		SnapshotType:           model.SnapshotType,
+		SupportsImageInput:     model.SupportsImageInput,
+		SupportsLora:           model.SupportsLora,
+		SupportsTools:          model.SupportsTools,
+		TeftDetails:            model.TeftDetails,
+		TrainingContextLength:  model.TrainingContextLength,
+		UseHfApplyChatTemplate: model.UseHfApplyChatTemplate,
+	}
+}
+
+func assertModelPayloadUsesAliases(t *testing.T, payload map[string]any) {
+	t.Helper()
+
+	for _, key := range []string{
+		"baseModelDetails", "contextLength", "conversationConfig", "defaultDraftModel", "defaultDraftTokenCount",
+		"deprecationDate", "description", "displayName", "githubUrl", "huggingFaceUrl", "kind", "peftDetails",
+		"public", "snapshotType", "supportsImageInput", "supportsLora", "supportsTools", "teftDetails",
+		"trainingContextLength", "useHfApplyChatTemplate",
+	} {
+		if _, ok := payload[key]; !ok {
+			t.Errorf("model payload missing %q: %#v", key, payload)
+		}
+	}
+	for _, key := range []string{
+		"base_model_details", "conversation_config", "default_draft_model", "default_draft_token_count",
+		"deprecation_date", "display_name", "github_url", "hugging_face_url", "peft_details",
+		"snapshot_type", "supports_image_input", "supports_lora", "supports_tools", "training_context_length",
+		"use_hf_apply_chat_template",
+	} {
+		if _, ok := payload[key]; ok {
+			t.Errorf("unexpected snake model key %q: %#v", key, payload)
+		}
+	}
+	if payload["contextLength"] != float64(0) || payload["defaultDraftTokenCount"] != float64(0) || payload["trainingContextLength"] != float64(0) {
+		t.Errorf("zero-valued model fields = %#v", payload)
+	}
+	for _, key := range []string{"public", "supportsImageInput", "supportsLora", "supportsTools", "useHfApplyChatTemplate"} {
+		if payload[key] != true {
+			t.Errorf("%s = %#v", key, payload[key])
+		}
+	}
+
+	baseModelDetails, ok := payload["baseModelDetails"].(map[string]any)
+	if !ok {
+		t.Fatalf("baseModelDetails = %#v", payload["baseModelDetails"])
+	}
+	for _, key := range []string{"checkpointFormat", "modelType", "moe", "parameterCount", "supportsFireattention", "supportsMtp", "tunable", "worldSize"} {
+		if _, ok := baseModelDetails[key]; !ok {
+			t.Errorf("baseModelDetails missing %q: %#v", key, baseModelDetails)
+		}
+	}
+	for _, key := range []string{"checkpoint_format", "model_type", "parameter_count", "supports_fireattention", "supports_mtp", "world_size"} {
+		if _, ok := baseModelDetails[key]; ok {
+			t.Errorf("unexpected snake baseModelDetails key %q: %#v", key, baseModelDetails)
+		}
+	}
+	if baseModelDetails["worldSize"] != float64(0) || baseModelDetails["moe"] != true || baseModelDetails["supportsFireattention"] != true {
+		t.Errorf("baseModelDetails values = %#v", baseModelDetails)
+	}
+
+	conversationConfig, ok := payload["conversationConfig"].(map[string]any)
+	if !ok || conversationConfig["style"] != "chat" || conversationConfig["system"] != "system" || conversationConfig["template"] != "template" {
+		t.Errorf("conversationConfig = %#v", payload["conversationConfig"])
+	}
+
+	deprecationDate, ok := payload["deprecationDate"].(map[string]any)
+	if !ok || deprecationDate["day"] != float64(0) || deprecationDate["month"] != float64(0) || deprecationDate["year"] != float64(0) {
+		t.Errorf("deprecationDate = %#v", payload["deprecationDate"])
+	}
+
+	peftDetails, ok := payload["peftDetails"].(map[string]any)
+	if !ok {
+		t.Fatalf("peftDetails = %#v", payload["peftDetails"])
+	}
+	if peftDetails["baseModel"] != "accounts/acct/models/base" || peftDetails["r"] != float64(0) || peftDetails["mergeAddonModelName"] != "accounts/acct/models/merged" {
+		t.Errorf("peftDetails values = %#v", peftDetails)
+	}
+	for _, key := range []string{"base_model", "target_modules", "merge_addon_model_name"} {
+		if _, ok := peftDetails[key]; ok {
+			t.Errorf("unexpected snake peftDetails key %q: %#v", key, peftDetails)
+		}
+	}
+	targetModules, ok := peftDetails["targetModules"].([]any)
+	if !ok || len(targetModules) != 1 || targetModules[0] != "q_proj" {
+		t.Errorf("targetModules = %#v", peftDetails["targetModules"])
 	}
 }
 
