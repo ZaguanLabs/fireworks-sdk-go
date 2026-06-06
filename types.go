@@ -28,6 +28,20 @@ func (r *APIResponse) Text() string {
 	return string(r.Body)
 }
 
+func (r *APIResponse) Method() string {
+	if r == nil || r.Request == nil {
+		return ""
+	}
+	return r.Request.Method
+}
+
+func (r *APIResponse) URL() string {
+	if r == nil || r.Request == nil || r.Request.URL == nil {
+		return ""
+	}
+	return r.Request.URL.String()
+}
+
 func (r *APIResponse) Bytes() []byte {
 	if r == nil {
 		return nil

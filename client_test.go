@@ -1009,6 +1009,12 @@ func TestClientAPIResponseHelperExposesMetadataAndParsing(t *testing.T) {
 	if resp.Request == nil || resp.Request.Method != http.MethodGet {
 		t.Fatalf("request = %#v", resp.Request)
 	}
+	if resp.Method() != http.MethodGet {
+		t.Fatalf("method = %q", resp.Method())
+	}
+	if !strings.HasPrefix(resp.URL(), server.URL+"/metadata?") {
+		t.Fatalf("url = %q", resp.URL())
+	}
 	if resp.RequestID != "req-123" {
 		t.Fatalf("request id = %q", resp.RequestID)
 	}
