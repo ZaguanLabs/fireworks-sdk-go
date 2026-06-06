@@ -17,6 +17,9 @@ import (
 )
 
 func TestVersionMatchesPythonSDK(t *testing.T) {
+	if Title != "fireworks" {
+		t.Fatalf("Title = %q, want %q", Title, "fireworks")
+	}
 	if Version != "1.2.0-alpha.76" {
 		t.Fatalf("Version = %q, want %q", Version, "1.2.0-alpha.76")
 	}
@@ -1040,9 +1043,52 @@ func TestStatusErrorMapping(t *testing.T) {
 	if !errors.As(err, &rateLimit) {
 		t.Fatalf("error type = %T", err)
 	}
+	var statusErr *APIStatusError
+	if !errors.As(err, &statusErr) {
+		t.Fatalf("error type = %T, want APIStatusError", err)
+	}
+	if statusErr.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("status code = %d", statusErr.StatusCode)
+	}
+	var baseErr *APIError
+	if !errors.As(err, &baseErr) {
+		t.Fatalf("error type = %T, want APIError", err)
+	}
 	body, ok := rateLimit.BodyJSON.(map[string]any)
 	if !ok || body["error"] != "limited" {
 		t.Fatalf("BodyJSON = %#v", rateLimit.BodyJSON)
+	}
+}
+
+func TestGenericStatusErrorMapsToAPIStatusError(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, `{"error":"teapot"}`, http.StatusTeapot)
+	}))
+	defer server.Close()
+
+	client, err := NewClient(WithBaseURL(server.URL), WithMaxRetries(0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.Get(context.Background(), "/teapot")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	var statusErr *APIStatusError
+	if !errors.As(err, &statusErr) {
+		t.Fatalf("error type = %T, want APIStatusError", err)
+	}
+	if statusErr.StatusCode != http.StatusTeapot {
+		t.Fatalf("status code = %d", statusErr.StatusCode)
+	}
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("error type = %T, want APIError", err)
+	}
+	if !apiErr.IsStatus(http.StatusTeapot) {
+		t.Fatalf("IsStatus(%d) = false", http.StatusTeapot)
 	}
 }
 

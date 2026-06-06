@@ -35,6 +35,14 @@ func (e *APIError) IsStatus(status int) bool {
 	return e != nil && e.StatusCode == status
 }
 
+type APIStatusError struct {
+	*APIError
+}
+
+func (e *APIStatusError) As(target any) bool {
+	return asAPIStatusError(e, target)
+}
+
 type APIConnectionError struct {
 	Message string
 	Request *http.Request
@@ -73,14 +81,62 @@ func (e *APIResponseValidationError) Unwrap() error {
 	return e.Err
 }
 
-type BadRequestError struct{ *APIError }
-type AuthenticationError struct{ *APIError }
-type PermissionDeniedError struct{ *APIError }
-type NotFoundError struct{ *APIError }
-type ConflictError struct{ *APIError }
-type UnprocessableEntityError struct{ *APIError }
-type RateLimitError struct{ *APIError }
-type InternalServerError struct{ *APIError }
+type BadRequestError struct{ *APIStatusError }
+type AuthenticationError struct{ *APIStatusError }
+type PermissionDeniedError struct{ *APIStatusError }
+type NotFoundError struct{ *APIStatusError }
+type ConflictError struct{ *APIStatusError }
+type UnprocessableEntityError struct{ *APIStatusError }
+type RateLimitError struct{ *APIStatusError }
+type InternalServerError struct{ *APIStatusError }
+
+func (e *BadRequestError) As(target any) bool {
+	return asAPIStatusError(e.APIStatusError, target)
+}
+
+func (e *AuthenticationError) As(target any) bool {
+	return asAPIStatusError(e.APIStatusError, target)
+}
+
+func (e *PermissionDeniedError) As(target any) bool {
+	return asAPIStatusError(e.APIStatusError, target)
+}
+
+func (e *NotFoundError) As(target any) bool {
+	return asAPIStatusError(e.APIStatusError, target)
+}
+
+func (e *ConflictError) As(target any) bool {
+	return asAPIStatusError(e.APIStatusError, target)
+}
+
+func (e *UnprocessableEntityError) As(target any) bool {
+	return asAPIStatusError(e.APIStatusError, target)
+}
+
+func (e *RateLimitError) As(target any) bool {
+	return asAPIStatusError(e.APIStatusError, target)
+}
+
+func (e *InternalServerError) As(target any) bool {
+	return asAPIStatusError(e.APIStatusError, target)
+}
+
+func asAPIStatusError(err *APIStatusError, target any) bool {
+	if err == nil {
+		return false
+	}
+	switch t := target.(type) {
+	case **APIStatusError:
+		*t = err
+		return true
+	case **APIError:
+		*t = err.APIError
+		return true
+	default:
+		return false
+	}
+}
 
 func statusError(resp *http.Response, body []byte) error {
 	apiErr := &APIError{
@@ -90,26 +146,27 @@ func statusError(resp *http.Response, body []byte) error {
 		BodyJSON:   decodeErrorBody(body),
 		Header:     resp.Header.Clone(),
 	}
+	statusErr := &APIStatusError{APIError: apiErr}
 	switch resp.StatusCode {
 	case http.StatusBadRequest:
-		return &BadRequestError{apiErr}
+		return &BadRequestError{statusErr}
 	case http.StatusUnauthorized:
-		return &AuthenticationError{apiErr}
+		return &AuthenticationError{statusErr}
 	case http.StatusForbidden:
-		return &PermissionDeniedError{apiErr}
+		return &PermissionDeniedError{statusErr}
 	case http.StatusNotFound:
-		return &NotFoundError{apiErr}
+		return &NotFoundError{statusErr}
 	case http.StatusConflict:
-		return &ConflictError{apiErr}
+		return &ConflictError{statusErr}
 	case http.StatusUnprocessableEntity:
-		return &UnprocessableEntityError{apiErr}
+		return &UnprocessableEntityError{statusErr}
 	case http.StatusTooManyRequests:
-		return &RateLimitError{apiErr}
+		return &RateLimitError{statusErr}
 	default:
 		if resp.StatusCode >= 500 {
-			return &InternalServerError{apiErr}
+			return &InternalServerError{statusErr}
 		}
-		return apiErr
+		return statusErr
 	}
 }
 
