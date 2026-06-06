@@ -387,8 +387,8 @@ func (r *DPOJobsResource) DeleteTyped(ctx context.Context, jobID string, opts ..
 	return typedDeleteInAccount[fwtypes.DpoJob](ctx, r.client, "/dpoJobs/"+pathEscape(jobID), opts...)
 }
 
-func (r *DPOJobsResource) GetMetricsFileEndpointTyped(ctx context.Context, jobID string, query any, opts ...RequestOption) (*fwtypes.DPOJobGetMetricsFileEndpointResponse, error) {
-	return typedGetInAccount[fwtypes.DPOJobGetMetricsFileEndpointResponse](ctx, r.client, "/dpoJobs/"+pathEscape(jobID)+":getMetricsFileEndpoint", withQuery(query, opts)...)
+func (r *DPOJobsResource) GetMetricsFileEndpointTyped(ctx context.Context, jobID string, opts ...RequestOption) (*fwtypes.DPOJobGetMetricsFileEndpointResponse, error) {
+	return typedGetInAccount[fwtypes.DPOJobGetMetricsFileEndpointResponse](ctx, r.client, "/dpoJobs/"+pathEscape(jobID)+":getMetricsFileEndpoint", opts...)
 }
 
 func (r *DPOJobsResource) ResumeTyped(ctx context.Context, jobID string, body any, opts ...RequestOption) (*fwtypes.DpoJob, error) {

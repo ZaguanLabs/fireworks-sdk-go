@@ -1551,6 +1551,49 @@ func TestTypedListParamsUsePythonQueryAliases(t *testing.T) {
 	}
 }
 
+func TestGenericListMapUsesPythonQueryAliases(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Path; got != "/v1/accounts/acct-from-map/models" {
+			t.Errorf("path = %q", got)
+		}
+		query := r.URL.Query()
+		if got := query.Get("pageToken"); got != "cursor-1" {
+			t.Errorf("pageToken = %q", got)
+		}
+		if got := query.Get("pageSize"); got != "25" {
+			t.Errorf("pageSize = %q", got)
+		}
+		if got := query.Get("orderBy"); got != "name desc" {
+			t.Errorf("orderBy = %q", got)
+		}
+		if got := query.Get("readMask"); got != "name,displayName" {
+			t.Errorf("readMask = %q", got)
+		}
+		if got := query.Get("account_id"); got != "" {
+			t.Errorf("account_id should not be query param, got %q", got)
+		}
+		_ = json.NewEncoder(w).Encode(JSON{"models": []JSON{}})
+	}))
+	defer server.Close()
+
+	client, err := NewClient(WithBaseURL(server.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.Models.List(context.Background(), map[string]any{
+		"account_id": "acct-from-map",
+		"page_token": "cursor-1",
+		"page_size":  25,
+		"order_by":   "name desc",
+		"read_mask":  []string{"name", "displayName"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestTypedManagementActionParity(t *testing.T) {
 	t.Setenv("FIREWORKS_API_KEY", "test-key")
 
@@ -1584,8 +1627,8 @@ func TestTypedManagementActionParity(t *testing.T) {
 			if got := r.Method; got != http.MethodGet {
 				t.Errorf("metrics method = %q", got)
 			}
-			if got := r.URL.Query().Get("read_mask"); got != "signedUrl" {
-				t.Errorf("read_mask = %q", got)
+			if got := r.URL.RawQuery; got != "" {
+				t.Errorf("metrics query = %q", got)
 			}
 			_ = json.NewEncoder(w).Encode(JSON{"signedUrl": "gs://metrics.jsonl"})
 		default:
@@ -1616,7 +1659,7 @@ func TestTypedManagementActionParity(t *testing.T) {
 		t.Fatalf("validated = %#v", validated)
 	}
 
-	metrics, err := client.DPOJobs.GetMetricsFileEndpointTyped(context.Background(), "dpo-1", map[string]any{"read_mask": "signedUrl"})
+	metrics, err := client.DPOJobs.GetMetricsFileEndpointTyped(context.Background(), "dpo-1")
 	if err != nil {
 		t.Fatal(err)
 	}

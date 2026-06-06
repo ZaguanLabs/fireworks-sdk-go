@@ -72,6 +72,7 @@ func queryMap(query any) (map[string]any, string, bool) {
 		return nil, "", false
 	case map[string]any:
 		out, accountID := splitAccountID(v)
+		out = normalizeQueryMap(out)
 		return out, accountID, len(out) > 0
 	case url.Values:
 		out := make(map[string]any, len(v))
