@@ -25,7 +25,7 @@ Status values:
 | `fireworks_client.py` | `training/sdk/fireworks_client.go` | ported | Checkpoint promotion/listing and long-running operation polling are covered. |
 | `training_spec.py` | `training/sdk/training_spec.go` | ported | Training spec encoding and scheduler/warmup calculations are covered. |
 | `weight_syncer.py` | `training/sdk/weight_syncer.go`, `future_facade.go` | ported | Save/hotload lifecycle, hotload manager readiness, timing, sampler client helpers, and training-client facade wrappers are covered. |
-| `managed.py` | `managed*.go`, `service*.go`, `tokenizer.go`, `base_only.go` | partial | Config normalization, trainer/deployment provisioning orchestration, reattach, sampler/weight-sync attachment, separate reference provisioning, metadata resolution, cleanup planning, tokenizer/base-only helpers, lazy REST responses, and public service/training-client facades exist. Needs live contract coverage. |
+| `managed.py` | `managed*.go`, `service*.go`, `tokenizer.go`, `base_only.go` | partial | Config normalization, trainer/deployment provisioning orchestration, reattach, sampler/weight-sync attachment, separate reference provisioning, metadata resolution, cleanup planning, tokenizer/base-only helpers, lazy REST responses, public service/training-client facades, and opt-in live contract tests exist. Needs live execution against Fireworks. |
 | `client.py` low-level helpers | `client_helpers.go`, `resume_helpers.go`, `training_registry.go`, `forward_backward.go`, `embedding.go`, `service_client.go`, `future.go`, `future_facade.go` | partial | Session IDs, checkpoint refs, managed config aliases, duplicate registry, response-token accounting, embedding pooling, built-in loss names, R3 model input helpers, checkpoint delegation, managed lifecycle wiring, sampler backend hooks, tokenizer model resolution, and Go-native futures are covered. |
 | `sampling.py` | `sampling.go`, `service_client.go`, `future_facade.go` | partial | The FireTitan sampler, output shape helpers, facade sampler hooks, and future wrappers are covered. |
 | `tinker_compat.py` | `service_init.go`, `service_helpers.go` | go-native | Python monkeypatch/context-manager behavior is not portable. Go should expose explicit construction helpers instead. |
@@ -55,4 +55,4 @@ The Go port should instead provide explicit constructors, context-aware methods,
 
 ## Priority backlog
 
-1. Add live/contract tests for trainer, deployment, save/hotload/sample, checkpoint promote, and reconnect flows.
+1. Run the opt-in live contract tests against Fireworks and record results.
