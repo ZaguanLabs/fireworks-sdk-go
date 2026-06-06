@@ -361,7 +361,14 @@ func (c *Client) AccountID() string {
 }
 
 func (c *Client) BaseURL() string {
-	return c.baseURL.String()
+	base := *c.baseURL
+	if base.Path == "" {
+		base.Path = "/"
+	} else if !strings.HasSuffix(base.Path, "/") {
+		base.Path += "/"
+		base.RawPath = ""
+	}
+	return base.String()
 }
 
 func (c *Client) MaxRetries() int {

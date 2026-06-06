@@ -396,6 +396,31 @@ func TestBaseURLJoiningMatchesPythonClient(t *testing.T) {
 	}
 }
 
+func TestBaseURLAccessorMatchesPythonTrailingSlash(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+
+	client, err := NewClient(WithBaseURL("https://example.com/from_init"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := client.BaseURL(), "https://example.com/from_init/"; got != want {
+		t.Fatalf("BaseURL = %q, want %q", got, want)
+	}
+}
+
+func TestBaseURLAccessorUsesEnvironmentWithTrailingSlash(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+	t.Setenv("FIREWORKS_BASE_URL", "http://localhost:5000/from/env")
+
+	client, err := NewClient()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := client.BaseURL(), "http://localhost:5000/from/env/"; got != want {
+		t.Fatalf("BaseURL = %q, want %q", got, want)
+	}
+}
+
 func TestWithOptionsOverridesClientSettingsForRequests(t *testing.T) {
 	t.Setenv("FIREWORKS_API_KEY", "env-key")
 
