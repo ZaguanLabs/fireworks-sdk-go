@@ -726,6 +726,49 @@ func TestClientHTTPVerbHelpers(t *testing.T) {
 	}
 }
 
+func TestGetRequestDropsBodyAndContentType(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+
+	var seenBody string
+	var seenContentType string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read body: %v", err)
+		}
+		seenBody = string(body)
+		seenContentType = r.Header.Get("Content-Type")
+		_ = json.NewEncoder(w).Encode(JSON{"ok": true})
+	}))
+	defer server.Close()
+
+	client, err := NewClient(WithBaseURL(server.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out Response
+	err = client.Request(
+		context.Background(),
+		http.MethodGet,
+		"/get-with-body",
+		JSON{"ignored": true},
+		&out,
+		WithHeader("Content-Type", "application/json"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if seenBody != "" {
+		t.Fatalf("body = %q", seenBody)
+	}
+	if seenContentType != "" {
+		t.Fatalf("Content-Type = %q", seenContentType)
+	}
+	if out["ok"] != true {
+		t.Fatalf("response = %#v", out)
+	}
+}
+
 func TestClientHTTPByteContentHelpers(t *testing.T) {
 	t.Setenv("FIREWORKS_API_KEY", "test-key")
 

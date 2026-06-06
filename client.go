@@ -405,6 +405,10 @@ func (c *Client) NewRequest(ctx context.Context, method, path string, body any, 
 
 func (c *Client) newRequestWithReader(ctx context.Context, method, path string, reqBody io.Reader, contentType string, opts ...RequestOption) (*http.Request, error) {
 	reqOpts := applyRequestOptions(opts)
+	if strings.EqualFold(method, http.MethodGet) {
+		reqBody = nil
+		contentType = ""
+	}
 	reqURL, err := c.resolveURL(path)
 	if err != nil {
 		return nil, err
@@ -464,6 +468,9 @@ func (c *Client) newRequestWithReader(ctx context.Context, method, path string, 
 		for _, value := range values {
 			req.Header.Add(key, value)
 		}
+	}
+	if strings.EqualFold(method, http.MethodGet) {
+		req.Header.Del("Content-Type")
 	}
 
 	return req, nil
