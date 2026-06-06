@@ -110,6 +110,53 @@ func TestFiretitanServiceClientResolvedMetadata(t *testing.T) {
 	}
 }
 
+func TestFiretitanServiceClientReferenceIDsAndRelease(t *testing.T) {
+	trainer := &fakeManagedTrainer{}
+	deployment := &fakeManagedDeployment{existing: map[string]DeploymentInfo{}}
+	svc, err := NewFiretitanServiceClient(FiretitanServiceClientOptions{
+		Config: FiretitanProvisioningConfig{
+			BaseModel:                "accounts/acct/models/base",
+			CreateDeployment:         boolPointer(false),
+			ReferenceRequired:        true,
+			ReferenceTrainingShapeID: "accounts/acct/trainingShapes/ref",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = svc.ProvisionManagedHandle(context.Background(), ManagedProvisionOptions{
+		ProfileResolver: fakeProfileResolver{profiles: map[string]TrainingShapeProfile{
+			"accounts/acct/trainingShapes/ref": {
+				TrainingShapeVersion: "accounts/acct/trainingShapes/ref/versions/4",
+				TrainerMode:          ForwardOnlyMode,
+			},
+		}},
+		Trainer:    trainer,
+		Deployment: deployment,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if svc.ReferenceJobID() != "job-new-2" || svc.ReferenceTrainerJobID() != "job-new-2" {
+		t.Fatalf("reference ids = %q %q", svc.ReferenceJobID(), svc.ReferenceTrainerJobID())
+	}
+	if got, err := svc.ReferenceClientJobID(); err != nil || got != "job-new-2" {
+		t.Fatalf("reference client job id = %q err=%v", got, err)
+	}
+	if err := svc.ReleaseReferences(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if svc.ReferenceJobID() != "" {
+		t.Fatalf("reference id after release = %q", svc.ReferenceJobID())
+	}
+	if got, err := svc.ReferenceClientJobID(); err != nil || got != "job-new" {
+		t.Fatalf("fallback reference client job id = %q err=%v", got, err)
+	}
+	if len(trainer.deleted) != 1 || trainer.deleted[0] != "job-new-2" {
+		t.Fatalf("deleted trainers = %#v", trainer.deleted)
+	}
+}
+
 func TestFiretitanTrainingClientUsesDefaultAndCallMetadata(t *testing.T) {
 	svc, err := NewFiretitanServiceClient(FiretitanServiceClientOptions{
 		Config:              FiretitanProvisioningConfig{BaseModel: "accounts/acct/models/base"},

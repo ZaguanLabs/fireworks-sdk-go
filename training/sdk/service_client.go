@@ -24,6 +24,8 @@ type FiretitanServiceClient struct {
 	Fireworks           *FireworksClient
 	Registry            *TrainingClientConfigRegistry
 	ManagedHandle       *ManagedHandleMetadata
+	ProvisionedHandle   *ManagedProvisionedHandle
+	ReferenceHandle     *ManagedProvisionedHandle
 	SamplerBackend      *TinkerSamplerBackend
 	SyncState           ManagedSamplerSyncState
 	Now                 func() time.Time
@@ -83,6 +85,46 @@ func (c *FiretitanServiceClient) ManagedDeploymentID() (string, error) {
 
 func (c *FiretitanServiceClient) ManagedMaxContextLength() (int, error) {
 	return RequireManagedInt(c.ResolvedMetadata().MaxContextLength, "max context length")
+}
+
+func (c *FiretitanServiceClient) ReferenceJobID() string {
+	if c == nil || c.ReferenceHandle == nil {
+		return ""
+	}
+	return c.ReferenceHandle.TrainerEndpoint.JobID
+}
+
+func (c *FiretitanServiceClient) ReferenceTrainerJobID() string {
+	return c.ReferenceJobID()
+}
+
+func (c *FiretitanServiceClient) ReferenceClientJobID() (string, error) {
+	if referenceJobID := c.ReferenceJobID(); referenceJobID != "" {
+		return referenceJobID, nil
+	}
+	return c.ManagedTrainerJobID()
+}
+
+func (c *FiretitanServiceClient) ReleaseReferences(ctx context.Context) error {
+	if c == nil || c.ReferenceHandle == nil {
+		return nil
+	}
+	handle := c.ReferenceHandle
+	c.ReferenceHandle = nil
+	return handle.Close(ctx)
+}
+
+func (c *FiretitanServiceClient) Close(ctx context.Context) error {
+	if c == nil {
+		return nil
+	}
+	if err := c.ReleaseReferences(ctx); err != nil {
+		return err
+	}
+	if c.ProvisionedHandle != nil {
+		return c.ProvisionedHandle.Close(ctx)
+	}
+	return nil
 }
 
 type CreateFiretitanTrainingClientOptions struct {

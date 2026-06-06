@@ -145,7 +145,9 @@ func (c *FiretitanServiceClient) ProvisionManagedHandle(ctx context.Context, opt
 	if err != nil {
 		return nil, err
 	}
+	c.ProvisionedHandle = handle
 	c.ManagedHandle = &handle.Metadata
+	c.ReferenceHandle = handle.ReferenceHandle
 	c.SamplerBackend = handle.SamplerBackend
 	c.SyncState = ManagedSamplerSyncState{RequiresInitialSamplerSync: handle.RequiresInitialSamplerSync}
 	return handle, nil
