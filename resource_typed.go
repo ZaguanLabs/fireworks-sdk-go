@@ -33,6 +33,24 @@ func typedDelete[T any](ctx context.Context, client *Client, path string, opts .
 	return &out, err
 }
 
+func typedPostResponse(ctx context.Context, client *Client, path string, body any, opts ...RequestOption) (Response, error) {
+	var out Response
+	err := client.Request(ctx, http.MethodPost, path, normalizeManagementBody(body), &out, opts...)
+	return out, err
+}
+
+func typedPatchResponse(ctx context.Context, client *Client, path string, body any, opts ...RequestOption) (Response, error) {
+	var out Response
+	err := client.Request(ctx, http.MethodPatch, path, normalizeManagementBody(body), &out, opts...)
+	return out, err
+}
+
+func typedDeleteResponse(ctx context.Context, client *Client, path string, opts ...RequestOption) (Response, error) {
+	var out Response
+	err := client.Request(ctx, http.MethodDelete, path, nil, &out, opts...)
+	return out, err
+}
+
 func typedAccountPath(client *Client, suffix string, opts []RequestOption) (string, error) {
 	return accountSuffixPath(resource{client}, opts, suffix)
 }
@@ -105,7 +123,7 @@ func (r *APIKeysResource) ListTyped(ctx context.Context, userID string, query an
 	return typedGet[fwtypes.APIKeysPage](ctx, r.client, path, withQuery(query, opts)...)
 }
 
-func (r *APIKeysResource) DeleteTyped(ctx context.Context, userID string, body any, opts ...RequestOption) (*fwtypes.APIKey, error) {
+func (r *APIKeysResource) DeleteTyped(ctx context.Context, userID string, body any, opts ...RequestOption) (Response, error) {
 	if err := requirePathArgument("user_id", userID); err != nil {
 		return nil, err
 	}
@@ -113,7 +131,7 @@ func (r *APIKeysResource) DeleteTyped(ctx context.Context, userID string, body a
 	if err != nil {
 		return nil, err
 	}
-	return typedPost[fwtypes.APIKey](ctx, r.client, path, body, opts...)
+	return typedPostResponse(ctx, r.client, path, body, opts...)
 }
 
 func (r *ModelsResource) CreateTyped(ctx context.Context, body any, opts ...RequestOption) (*fwtypes.Model, error) {
@@ -132,8 +150,8 @@ func (r *ModelsResource) GetTyped(ctx context.Context, modelID string, query any
 	return typedGetInAccount[fwtypes.Model](ctx, r.client, "/models/"+pathEscape(modelID), withQuery(query, opts)...)
 }
 
-func (r *ModelsResource) DeleteTyped(ctx context.Context, modelID string, opts ...RequestOption) (*fwtypes.Model, error) {
-	return typedDeleteInAccount[fwtypes.Model](ctx, r.client, "/models/"+pathEscape(modelID), opts...)
+func (r *ModelsResource) DeleteTyped(ctx context.Context, modelID string, opts ...RequestOption) (Response, error) {
+	return typedDeleteResponseInAccount(ctx, r.client, "/models/"+pathEscape(modelID), opts...)
 }
 
 func (r *ModelsResource) GetDownloadEndpointTyped(ctx context.Context, modelID string, query any, opts ...RequestOption) (*fwtypes.ModelGetDownloadEndpointResponse, error) {
@@ -175,8 +193,8 @@ func (r *DatasetsResource) GetTyped(ctx context.Context, datasetID string, query
 	return typedGetInAccount[fwtypes.Dataset](ctx, r.client, "/datasets/"+pathEscape(datasetID), withQuery(query, opts)...)
 }
 
-func (r *DatasetsResource) DeleteTyped(ctx context.Context, datasetID string, opts ...RequestOption) (*fwtypes.Dataset, error) {
-	return typedDeleteInAccount[fwtypes.Dataset](ctx, r.client, "/datasets/"+pathEscape(datasetID), opts...)
+func (r *DatasetsResource) DeleteTyped(ctx context.Context, datasetID string, opts ...RequestOption) (Response, error) {
+	return typedDeleteResponseInAccount(ctx, r.client, "/datasets/"+pathEscape(datasetID), opts...)
 }
 
 func (r *DatasetsResource) GetDownloadEndpointTyped(ctx context.Context, datasetID string, query any, opts ...RequestOption) (*fwtypes.DatasetGetDownloadEndpointResponse, error) {
@@ -238,12 +256,12 @@ func (r *DeploymentsResource) GetTyped(ctx context.Context, deploymentID string,
 	return typedGetInAccount[fwtypes.Deployment](ctx, r.client, "/deployments/"+pathEscape(deploymentID), withQuery(query, opts)...)
 }
 
-func (r *DeploymentsResource) DeleteTyped(ctx context.Context, deploymentID string, query any, opts ...RequestOption) (*fwtypes.Deployment, error) {
-	return typedDeleteInAccount[fwtypes.Deployment](ctx, r.client, "/deployments/"+pathEscape(deploymentID), withQuery(query, opts)...)
+func (r *DeploymentsResource) DeleteTyped(ctx context.Context, deploymentID string, query any, opts ...RequestOption) (Response, error) {
+	return typedDeleteResponseInAccount(ctx, r.client, "/deployments/"+pathEscape(deploymentID), withQuery(query, opts)...)
 }
 
-func (r *DeploymentsResource) ScaleTyped(ctx context.Context, deploymentID string, body any, opts ...RequestOption) (*fwtypes.Deployment, error) {
-	return typedPatchInAccount[fwtypes.Deployment](ctx, r.client, "/deployments/"+pathEscape(deploymentID)+":scale", body, opts...)
+func (r *DeploymentsResource) ScaleTyped(ctx context.Context, deploymentID string, body any, opts ...RequestOption) (Response, error) {
+	return typedPatchResponseInAccount(ctx, r.client, "/deployments/"+pathEscape(deploymentID)+":scale", body, opts...)
 }
 
 func (r *DeploymentsResource) UndeleteTyped(ctx context.Context, deploymentID string, body any, opts ...RequestOption) (*fwtypes.Deployment, error) {
@@ -282,8 +300,8 @@ func (r *LoraResource) LoadTyped(ctx context.Context, body any, opts ...RequestO
 	return typedPostInAccountWithQuery[fwtypes.SharedDeployedModel](ctx, r.client, "/deployedModels", body, []string{"replace_merged_addon"}, opts...)
 }
 
-func (r *LoraResource) UnloadTyped(ctx context.Context, deployedModelID string, opts ...RequestOption) (*fwtypes.SharedDeployedModel, error) {
-	return typedDeleteInAccount[fwtypes.SharedDeployedModel](ctx, r.client, "/deployedModels/"+pathEscape(deployedModelID), opts...)
+func (r *LoraResource) UnloadTyped(ctx context.Context, deployedModelID string, opts ...RequestOption) (Response, error) {
+	return typedDeleteResponseInAccount(ctx, r.client, "/deployedModels/"+pathEscape(deployedModelID), opts...)
 }
 
 func (r *BatchInferenceJobsResource) CreateTyped(ctx context.Context, body any, opts ...RequestOption) (*fwtypes.BatchInferenceJob, error) {
@@ -298,8 +316,8 @@ func (r *BatchInferenceJobsResource) GetTyped(ctx context.Context, jobID string,
 	return typedGetInAccount[fwtypes.BatchInferenceJob](ctx, r.client, "/batchInferenceJobs/"+pathEscape(jobID), withQuery(query, opts)...)
 }
 
-func (r *BatchInferenceJobsResource) DeleteTyped(ctx context.Context, jobID string, opts ...RequestOption) (*fwtypes.BatchInferenceJob, error) {
-	return typedDeleteInAccount[fwtypes.BatchInferenceJob](ctx, r.client, "/batchInferenceJobs/"+pathEscape(jobID), opts...)
+func (r *BatchInferenceJobsResource) DeleteTyped(ctx context.Context, jobID string, opts ...RequestOption) (Response, error) {
+	return typedDeleteResponseInAccount(ctx, r.client, "/batchInferenceJobs/"+pathEscape(jobID), opts...)
 }
 
 func (r *SecretsResource) CreateTyped(ctx context.Context, body any, opts ...RequestOption) (*fwtypes.Secret, error) {
@@ -318,8 +336,8 @@ func (r *SecretsResource) GetTyped(ctx context.Context, secretID string, query a
 	return typedGetInAccount[fwtypes.Secret](ctx, r.client, "/secrets/"+pathEscape(secretID), withQuery(query, opts)...)
 }
 
-func (r *SecretsResource) DeleteTyped(ctx context.Context, secretID string, opts ...RequestOption) (*fwtypes.Secret, error) {
-	return typedDeleteInAccount[fwtypes.Secret](ctx, r.client, "/secrets/"+pathEscape(secretID), opts...)
+func (r *SecretsResource) DeleteTyped(ctx context.Context, secretID string, opts ...RequestOption) (Response, error) {
+	return typedDeleteResponseInAccount(ctx, r.client, "/secrets/"+pathEscape(secretID), opts...)
 }
 
 func (r *SupervisedFineTuningJobsResource) CreateTyped(ctx context.Context, body any, opts ...RequestOption) (*fwtypes.SupervisedFineTuningJob, error) {
@@ -334,8 +352,8 @@ func (r *SupervisedFineTuningJobsResource) GetTyped(ctx context.Context, jobID s
 	return typedGetInAccount[fwtypes.SupervisedFineTuningJob](ctx, r.client, "/supervisedFineTuningJobs/"+pathEscape(jobID), withQuery(query, opts)...)
 }
 
-func (r *SupervisedFineTuningJobsResource) DeleteTyped(ctx context.Context, jobID string, opts ...RequestOption) (*fwtypes.SupervisedFineTuningJob, error) {
-	return typedDeleteInAccount[fwtypes.SupervisedFineTuningJob](ctx, r.client, "/supervisedFineTuningJobs/"+pathEscape(jobID), opts...)
+func (r *SupervisedFineTuningJobsResource) DeleteTyped(ctx context.Context, jobID string, opts ...RequestOption) (Response, error) {
+	return typedDeleteResponseInAccount(ctx, r.client, "/supervisedFineTuningJobs/"+pathEscape(jobID), opts...)
 }
 
 func (r *SupervisedFineTuningJobsResource) ResumeTyped(ctx context.Context, jobID string, body any, opts ...RequestOption) (*fwtypes.SupervisedFineTuningJob, error) {
@@ -354,12 +372,12 @@ func (r *ReinforcementFineTuningJobsResource) GetTyped(ctx context.Context, jobI
 	return typedGetInAccount[fwtypes.ReinforcementFineTuningJob](ctx, r.client, "/reinforcementFineTuningJobs/"+pathEscape(jobID), withQuery(query, opts)...)
 }
 
-func (r *ReinforcementFineTuningJobsResource) DeleteTyped(ctx context.Context, jobID string, opts ...RequestOption) (*fwtypes.ReinforcementFineTuningJob, error) {
-	return typedDeleteInAccount[fwtypes.ReinforcementFineTuningJob](ctx, r.client, "/reinforcementFineTuningJobs/"+pathEscape(jobID), opts...)
+func (r *ReinforcementFineTuningJobsResource) DeleteTyped(ctx context.Context, jobID string, opts ...RequestOption) (Response, error) {
+	return typedDeleteResponseInAccount(ctx, r.client, "/reinforcementFineTuningJobs/"+pathEscape(jobID), opts...)
 }
 
-func (r *ReinforcementFineTuningJobsResource) CancelTyped(ctx context.Context, jobID string, body any, opts ...RequestOption) (*fwtypes.ReinforcementFineTuningJob, error) {
-	return typedPostInAccount[fwtypes.ReinforcementFineTuningJob](ctx, r.client, "/reinforcementFineTuningJobs/"+pathEscape(jobID)+":cancel", body, opts...)
+func (r *ReinforcementFineTuningJobsResource) CancelTyped(ctx context.Context, jobID string, body any, opts ...RequestOption) (Response, error) {
+	return typedPostResponseInAccount(ctx, r.client, "/reinforcementFineTuningJobs/"+pathEscape(jobID)+":cancel", body, opts...)
 }
 
 func (r *ReinforcementFineTuningJobsResource) ResumeTyped(ctx context.Context, jobID string, body any, opts ...RequestOption) (*fwtypes.ReinforcementFineTuningJob, error) {
@@ -378,12 +396,12 @@ func (r *ReinforcementFineTuningStepsResource) GetTyped(ctx context.Context, tra
 	return typedGetInAccount[fwtypes.ReinforcementFineTuningStep](ctx, r.client, "/rlorTrainerJobs/"+pathEscape(trainerJobID), withQuery(query, opts)...)
 }
 
-func (r *ReinforcementFineTuningStepsResource) DeleteTyped(ctx context.Context, trainerJobID string, opts ...RequestOption) (*fwtypes.ReinforcementFineTuningStep, error) {
-	return typedDeleteInAccount[fwtypes.ReinforcementFineTuningStep](ctx, r.client, "/rlorTrainerJobs/"+pathEscape(trainerJobID), opts...)
+func (r *ReinforcementFineTuningStepsResource) DeleteTyped(ctx context.Context, trainerJobID string, opts ...RequestOption) (Response, error) {
+	return typedDeleteResponseInAccount(ctx, r.client, "/rlorTrainerJobs/"+pathEscape(trainerJobID), opts...)
 }
 
-func (r *ReinforcementFineTuningStepsResource) ExecuteTyped(ctx context.Context, trainerJobID string, body any, opts ...RequestOption) (*fwtypes.ReinforcementFineTuningStep, error) {
-	return typedPostInAccount[fwtypes.ReinforcementFineTuningStep](ctx, r.client, "/rlorTrainerJobs/"+pathEscape(trainerJobID)+":executeTrainStep", body, opts...)
+func (r *ReinforcementFineTuningStepsResource) ExecuteTyped(ctx context.Context, trainerJobID string, body any, opts ...RequestOption) (Response, error) {
+	return typedPostResponseInAccount(ctx, r.client, "/rlorTrainerJobs/"+pathEscape(trainerJobID)+":executeTrainStep", body, opts...)
 }
 
 func (r *ReinforcementFineTuningStepsResource) ResumeTyped(ctx context.Context, trainerJobID string, body any, opts ...RequestOption) (*fwtypes.ReinforcementFineTuningStep, error) {
@@ -402,8 +420,8 @@ func (r *DPOJobsResource) GetTyped(ctx context.Context, jobID string, query any,
 	return typedGetInAccount[fwtypes.DpoJob](ctx, r.client, "/dpoJobs/"+pathEscape(jobID), withQuery(query, opts)...)
 }
 
-func (r *DPOJobsResource) DeleteTyped(ctx context.Context, jobID string, opts ...RequestOption) (*fwtypes.DpoJob, error) {
-	return typedDeleteInAccount[fwtypes.DpoJob](ctx, r.client, "/dpoJobs/"+pathEscape(jobID), opts...)
+func (r *DPOJobsResource) DeleteTyped(ctx context.Context, jobID string, opts ...RequestOption) (Response, error) {
+	return typedDeleteResponseInAccount(ctx, r.client, "/dpoJobs/"+pathEscape(jobID), opts...)
 }
 
 func (r *DPOJobsResource) GetMetricsFileEndpointTyped(ctx context.Context, jobID string, opts ...RequestOption) (*fwtypes.DPOJobGetMetricsFileEndpointResponse, error) {
@@ -426,8 +444,8 @@ func (r *EvaluationJobsResource) GetTyped(ctx context.Context, jobID string, que
 	return typedGetInAccount[fwtypes.EvaluationJobGetResponse](ctx, r.client, "/evaluationJobs/"+pathEscape(jobID), withQuery(query, opts)...)
 }
 
-func (r *EvaluationJobsResource) DeleteTyped(ctx context.Context, jobID string, opts ...RequestOption) (*fwtypes.EvaluationJobGetResponse, error) {
-	return typedDeleteInAccount[fwtypes.EvaluationJobGetResponse](ctx, r.client, "/evaluationJobs/"+pathEscape(jobID), opts...)
+func (r *EvaluationJobsResource) DeleteTyped(ctx context.Context, jobID string, opts ...RequestOption) (Response, error) {
+	return typedDeleteResponseInAccount(ctx, r.client, "/evaluationJobs/"+pathEscape(jobID), opts...)
 }
 
 func (r *EvaluationJobsResource) GetLogEndpointTyped(ctx context.Context, jobID string, query any, opts ...RequestOption) (*fwtypes.EvaluationJobGetLogEndpointResponse, error) {
@@ -450,8 +468,8 @@ func (r *EvaluatorsResource) GetTyped(ctx context.Context, evaluatorID string, q
 	return typedGetInAccount[fwtypes.EvaluatorGetResponse](ctx, r.client, "/evaluators/"+pathEscape(evaluatorID), withQuery(query, opts)...)
 }
 
-func (r *EvaluatorsResource) DeleteTyped(ctx context.Context, evaluatorID string, opts ...RequestOption) (*fwtypes.EvaluatorGetResponse, error) {
-	return typedDeleteInAccount[fwtypes.EvaluatorGetResponse](ctx, r.client, "/evaluators/"+pathEscape(evaluatorID), opts...)
+func (r *EvaluatorsResource) DeleteTyped(ctx context.Context, evaluatorID string, opts ...RequestOption) (Response, error) {
+	return typedDeleteResponseInAccount(ctx, r.client, "/evaluators/"+pathEscape(evaluatorID), opts...)
 }
 
 func (r *EvaluatorsResource) GetBuildLogEndpointTyped(ctx context.Context, evaluatorID string, query any, opts ...RequestOption) (*fwtypes.EvaluatorGetBuildLogEndpointResponse, error) {
@@ -466,8 +484,8 @@ func (r *EvaluatorsResource) GetUploadEndpointTyped(ctx context.Context, evaluat
 	return typedPostInAccount[fwtypes.EvaluatorGetUploadEndpointResponse](ctx, r.client, "/evaluators/"+pathEscape(evaluatorID)+":getUploadEndpoint", body, opts...)
 }
 
-func (r *EvaluatorsResource) ValidateUploadTyped(ctx context.Context, evaluatorID string, body any, opts ...RequestOption) (*fwtypes.EvaluatorGetResponse, error) {
-	return typedPostInAccount[fwtypes.EvaluatorGetResponse](ctx, r.client, "/evaluators/"+pathEscape(evaluatorID)+":validateUpload", body, opts...)
+func (r *EvaluatorsResource) ValidateUploadTyped(ctx context.Context, evaluatorID string, body any, opts ...RequestOption) (Response, error) {
+	return typedPostResponseInAccount(ctx, r.client, "/evaluators/"+pathEscape(evaluatorID)+":validateUpload", body, opts...)
 }
 
 func typedListInAccount[T any](ctx context.Context, client *Client, suffix string, query any, opts ...RequestOption) (*T, error) {
@@ -528,6 +546,32 @@ func typedDeleteInAccount[T any](ctx context.Context, client *Client, suffix str
 		return nil, err
 	}
 	return typedDelete[T](ctx, client, path, opts...)
+}
+
+func typedPostResponseInAccount(ctx context.Context, client *Client, suffix string, body any, opts ...RequestOption) (Response, error) {
+	opts = withAccountFromBody(body, opts)
+	path, err := typedAccountPath(client, suffix, opts)
+	if err != nil {
+		return nil, err
+	}
+	return typedPostResponse(ctx, client, path, body, opts...)
+}
+
+func typedPatchResponseInAccount(ctx context.Context, client *Client, suffix string, body any, opts ...RequestOption) (Response, error) {
+	opts = withAccountFromBody(body, opts)
+	path, err := typedAccountPath(client, suffix, opts)
+	if err != nil {
+		return nil, err
+	}
+	return typedPatchResponse(ctx, client, path, body, opts...)
+}
+
+func typedDeleteResponseInAccount(ctx context.Context, client *Client, suffix string, opts ...RequestOption) (Response, error) {
+	path, err := typedAccountPath(client, suffix, opts)
+	if err != nil {
+		return nil, err
+	}
+	return typedDeleteResponse(ctx, client, path, opts...)
 }
 
 func withAccountFromBody(body any, opts []RequestOption) []RequestOption {

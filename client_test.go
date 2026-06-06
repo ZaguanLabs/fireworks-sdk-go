@@ -1760,8 +1760,8 @@ func TestTypedDeleteUsesPythonQueryAliases(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out.Name == nil || *out.Name != "accounts/acct-from-delete/deployments/dep-1" {
-		t.Fatalf("deployment = %#v", out)
+	if out["name"] != "accounts/acct-from-delete/deployments/dep-1" {
+		t.Fatalf("deployment response = %#v", out)
 	}
 }
 
@@ -1882,8 +1882,7 @@ func TestDeploymentsScaleTypedUsesActionPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var _ *fwtypes.Deployment = deployment
-	if deployment.DesiredReplicaCount == nil || *deployment.DesiredReplicaCount != 3 {
+	if deployment["desiredReplicaCount"] != float64(3) {
 		t.Fatalf("deployment = %#v", deployment)
 	}
 }
