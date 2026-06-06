@@ -3088,6 +3088,245 @@ func TestDeploymentsScaleTypedUsesActionPath(t *testing.T) {
 	}
 }
 
+func TestDeploymentsTypedAllParamsUsePythonAliases(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/accounts/acct/deployments":
+			query := r.URL.Query()
+			for key, want := range map[string]string{
+				"deploymentId":               "dep-1",
+				"disableAutoDeploy":          "true",
+				"disableSpeculativeDecoding": "true",
+				"skipImageTagValidation":     "true",
+				"skipShapeValidation":        "true",
+				"validateOnly":               "true",
+			} {
+				if got := query.Get(key); got != want {
+					t.Errorf("%s = %q", key, got)
+				}
+			}
+			for _, key := range []string{"account_id", "deployment_id", "disable_auto_deploy", "disable_speculative_decoding", "skip_image_tag_validation", "skip_shape_validation", "validate_only"} {
+				if got := query.Get(key); got != "" {
+					t.Errorf("unexpected query %s=%q", key, got)
+				}
+			}
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("decode create body: %v", err)
+			}
+			for _, key := range []string{"account_id", "deploymentId", "deployment_id", "disableAutoDeploy", "disableSpeculativeDecoding", "skipImageTagValidation", "skipShapeValidation", "validateOnly"} {
+				if _, ok := body[key]; ok {
+					t.Errorf("create body should not contain %q: %#v", key, body)
+				}
+			}
+			assertDeploymentPayloadUsesAliases(t, body)
+			_ = json.NewEncoder(w).Encode(JSON{
+				"name":        "accounts/acct/deployments/dep-1",
+				"baseModel":   "accounts/fireworks/models/base",
+				"displayName": "Deployment One",
+			})
+
+		case r.Method == http.MethodPatch && r.URL.Path == "/v1/accounts/acct/deployments/dep-1":
+			query := r.URL.Query()
+			if got := query.Get("skipShapeValidation"); got != "true" {
+				t.Errorf("skipShapeValidation = %q", got)
+			}
+			if got := query.Get("skip_shape_validation"); got != "" {
+				t.Errorf("unexpected skip_shape_validation = %q", got)
+			}
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("decode update body: %v", err)
+			}
+			for _, key := range []string{"account_id", "skipShapeValidation", "skip_shape_validation"} {
+				if _, ok := body[key]; ok {
+					t.Errorf("update body should not contain %q: %#v", key, body)
+				}
+			}
+			assertDeploymentPayloadUsesAliases(t, body)
+			_ = json.NewEncoder(w).Encode(JSON{
+				"name":        "accounts/acct/deployments/dep-1",
+				"baseModel":   "accounts/fireworks/models/base",
+				"displayName": "Deployment One Updated",
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/accounts/acct/deployments":
+			query := r.URL.Query()
+			if got := query.Get("filter"); got != "state=READY" {
+				t.Errorf("filter = %q", got)
+			}
+			if got := query.Get("orderBy"); got != "create_time desc" {
+				t.Errorf("orderBy = %q", got)
+			}
+			if got := query.Get("pageSize"); got != "0" {
+				t.Errorf("pageSize = %q", got)
+			}
+			if got := query.Get("pageToken"); got != "cursor-1" {
+				t.Errorf("pageToken = %q", got)
+			}
+			if got := query.Get("readMask"); got != "name,state" {
+				t.Errorf("readMask = %q", got)
+			}
+			if got := query.Get("showDeleted"); got != "true" {
+				t.Errorf("showDeleted = %q", got)
+			}
+			if got := query.Get("show_deleted"); got != "" {
+				t.Errorf("unexpected show_deleted = %q", got)
+			}
+			_ = json.NewEncoder(w).Encode(JSON{
+				"deployments": []JSON{
+					{"name": "accounts/acct/deployments/dep-1", "baseModel": "accounts/fireworks/models/base", "state": "READY"},
+				},
+				"nextPageToken": "cursor-2",
+			})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/accounts/acct/deployments/dep-1":
+			if got := r.URL.Query().Get("readMask"); got != "name,state" {
+				t.Errorf("readMask = %q", got)
+			}
+			_ = json.NewEncoder(w).Encode(JSON{
+				"name":      "accounts/acct/deployments/dep-1",
+				"baseModel": "accounts/fireworks/models/base",
+				"state":     "READY",
+			})
+
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/accounts/acct/deployments/dep-1":
+			query := r.URL.Query()
+			if got := query.Get("hard"); got != "true" {
+				t.Errorf("hard = %q", got)
+			}
+			if got := query.Get("ignoreChecks"); got != "true" {
+				t.Errorf("ignoreChecks = %q", got)
+			}
+			if got := query.Get("ignore_checks"); got != "" {
+				t.Errorf("unexpected ignore_checks = %q", got)
+			}
+			_ = json.NewEncoder(w).Encode(JSON{"deleted": true})
+
+		case r.Method == http.MethodPatch && r.URL.Path == "/v1/accounts/acct/deployments/dep-1:scale":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("decode scale body: %v", err)
+			}
+			if body["replicaCount"] != float64(0) {
+				t.Errorf("replicaCount = %#v", body["replicaCount"])
+			}
+			for _, key := range []string{"account_id", "replica_count"} {
+				if _, ok := body[key]; ok {
+					t.Errorf("scale body should not contain %q: %#v", key, body)
+				}
+			}
+			_ = json.NewEncoder(w).Encode(JSON{"scaled": true})
+
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/accounts/acct/deployments/dep-1:undelete":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("decode undelete body: %v", err)
+			}
+			if _, ok := body["account_id"]; ok {
+				t.Errorf("undelete body should not contain account_id: %#v", body)
+			}
+			if body["restoreReason"] != "manual" {
+				t.Errorf("restoreReason = %#v", body["restoreReason"])
+			}
+			_ = json.NewEncoder(w).Encode(JSON{
+				"name":      "accounts/acct/deployments/dep-1",
+				"baseModel": "accounts/fireworks/models/base",
+				"state":     "READY",
+			})
+
+		default:
+			t.Errorf("unexpected request %s %s?%s", r.Method, r.URL.Path, r.URL.RawQuery)
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client, err := NewClient(WithBaseURL(server.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := client.Deployments.CreateTyped(context.Background(), testDeploymentCreateParams("acct", "Deployment One"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.Name == nil || *created.Name != "accounts/acct/deployments/dep-1" {
+		t.Fatalf("created = %#v", created)
+	}
+
+	updated, err := client.Deployments.UpdateTyped(context.Background(), "dep-1", testDeploymentUpdateParams("acct", "Deployment One Updated"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.DisplayName == nil || *updated.DisplayName != "Deployment One Updated" {
+		t.Fatalf("updated = %#v", updated)
+	}
+
+	page, err := client.Deployments.ListTyped(context.Background(), fwtypes.DeploymentListParams{
+		AccountID:   "acct",
+		Filter:      "state=READY",
+		OrderBy:     "create_time desc",
+		PageSize:    0,
+		PageToken:   "cursor-1",
+		ReadMask:    "name,state",
+		ShowDeleted: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var _ *fwtypes.DeploymentsPage = page
+	if len(page.Deployments) != 1 || page.NextPageToken == nil || *page.NextPageToken != "cursor-2" {
+		t.Fatalf("page = %#v", page)
+	}
+
+	got, err := client.Deployments.GetTyped(context.Background(), "dep-1", fwtypes.DeploymentGetParams{
+		AccountID: "acct",
+		ReadMask:  "name,state",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Name == nil || *got.Name != "accounts/acct/deployments/dep-1" {
+		t.Fatalf("got = %#v", got)
+	}
+
+	deleted, err := client.Deployments.DeleteTyped(context.Background(), "dep-1", fwtypes.DeploymentDeleteParams{
+		AccountID:    "acct",
+		Hard:         true,
+		IgnoreChecks: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deleted["deleted"] != true {
+		t.Fatalf("deleted = %#v", deleted)
+	}
+
+	scaled, err := client.Deployments.ScaleTyped(context.Background(), "dep-1", fwtypes.DeploymentScaleParams{
+		AccountID:    "acct",
+		ReplicaCount: 0,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if scaled["scaled"] != true {
+		t.Fatalf("scaled = %#v", scaled)
+	}
+
+	undeleted, err := client.Deployments.UndeleteTyped(context.Background(), "dep-1", JSON{
+		"account_id":     "acct",
+		"restore_reason": "manual",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if undeleted.Name == nil || *undeleted.Name != "accounts/acct/deployments/dep-1" {
+		t.Fatalf("undeleted = %#v", undeleted)
+	}
+}
+
 func TestBatchInferenceJobsTypedAllParamsUsePythonAliases(t *testing.T) {
 	t.Setenv("FIREWORKS_API_KEY", "test-key")
 
@@ -5915,6 +6154,188 @@ func assertModelPayloadUsesAliases(t *testing.T, payload map[string]any) {
 	targetModules, ok := peftDetails["targetModules"].([]any)
 	if !ok || len(targetModules) != 1 || targetModules[0] != "q_proj" {
 		t.Errorf("targetModules = %#v", peftDetails["targetModules"])
+	}
+}
+
+func testDeploymentCreateParams(accountID, displayName string) fwtypes.DeploymentCreateParams {
+	return fwtypes.DeploymentCreateParams{
+		AccountID:                       accountID,
+		BaseModel:                       "accounts/fireworks/models/base",
+		DeploymentID:                    "dep-1",
+		DisableAutoDeploy:               true,
+		DisableSpeculativeDecoding:      true,
+		SkipImageTagValidation:          true,
+		SkipShapeValidation:             true,
+		ValidateOnly:                    true,
+		AcceleratorCount:                0,
+		AcceleratorType:                 "ACCELERATOR_TYPE_UNSPECIFIED",
+		ActiveModelVersion:              "v1",
+		AutoscalingPolicy:               testAutoscalingPolicyParam(),
+		AutoTune:                        fwtypes.AutoTuneParam{LongPrompt: true},
+		DeploymentShape:                 "deployment-shape",
+		DeploymentTemplate:              "deployment-template",
+		Description:                     "description",
+		DirectRouteAPIKeys:              []string{"direct-key"},
+		DirectRouteType:                 "DIRECT_ROUTE_TYPE_UNSPECIFIED",
+		DisableDeploymentSizeValidation: true,
+		DisplayName:                     displayName,
+		DraftModel:                      "accounts/fireworks/models/draft",
+		DraftTokenCount:                 0,
+		EnableAddons:                    true,
+		EnableHotLoad:                   true,
+		EnableHotReloadLatestAddon:      true,
+		EnableMtp:                       true,
+		EnableSessionAffinity:           true,
+		ExpireTime:                      "2019-12-27T18:11:19.117Z",
+		HotLoadBucketType:               "BUCKET_TYPE_UNSPECIFIED",
+		HotLoadBucketURL:                "gs://bucket/hotload",
+		MaxContextLength:                0,
+		MaxReplicaCount:                 0,
+		MaxWithRevocableReplicaCount:    0,
+		MinReplicaCount:                 0,
+		NgramSpeculationLength:          0,
+		Placement: fwtypes.PlacementParam{
+			MultiRegion: "MULTI_REGION_UNSPECIFIED",
+			Region:      "REGION_UNSPECIFIED",
+			Regions:     []string{"REGION_UNSPECIFIED"},
+		},
+		Precision:          "PRECISION_UNSPECIFIED",
+		PricingPlanID:      "pricing-plan",
+		TargetModelVersion: "target-version",
+	}
+}
+
+func testDeploymentUpdateParams(accountID, displayName string) fwtypes.DeploymentUpdateParams {
+	create := testDeploymentCreateParams(accountID, displayName)
+	return fwtypes.DeploymentUpdateParams{
+		AccountID:                       accountID,
+		BaseModel:                       create.BaseModel,
+		SkipShapeValidation:             true,
+		AcceleratorCount:                create.AcceleratorCount,
+		AcceleratorType:                 create.AcceleratorType,
+		ActiveModelVersion:              create.ActiveModelVersion,
+		AutoscalingPolicy:               create.AutoscalingPolicy,
+		AutoTune:                        create.AutoTune,
+		DeploymentShape:                 create.DeploymentShape,
+		DeploymentTemplate:              create.DeploymentTemplate,
+		Description:                     create.Description,
+		DirectRouteAPIKeys:              create.DirectRouteAPIKeys,
+		DirectRouteType:                 create.DirectRouteType,
+		DisableDeploymentSizeValidation: create.DisableDeploymentSizeValidation,
+		DisplayName:                     displayName,
+		DraftModel:                      create.DraftModel,
+		DraftTokenCount:                 create.DraftTokenCount,
+		EnableAddons:                    create.EnableAddons,
+		EnableHotLoad:                   create.EnableHotLoad,
+		EnableHotReloadLatestAddon:      create.EnableHotReloadLatestAddon,
+		EnableMtp:                       create.EnableMtp,
+		EnableSessionAffinity:           create.EnableSessionAffinity,
+		ExpireTime:                      create.ExpireTime,
+		HotLoadBucketType:               create.HotLoadBucketType,
+		HotLoadBucketURL:                create.HotLoadBucketURL,
+		MaxContextLength:                create.MaxContextLength,
+		MaxReplicaCount:                 create.MaxReplicaCount,
+		MaxWithRevocableReplicaCount:    create.MaxWithRevocableReplicaCount,
+		MinReplicaCount:                 create.MinReplicaCount,
+		NgramSpeculationLength:          create.NgramSpeculationLength,
+		Placement:                       create.Placement,
+		Precision:                       create.Precision,
+		PricingPlanID:                   create.PricingPlanID,
+		TargetModelVersion:              create.TargetModelVersion,
+	}
+}
+
+func testAutoscalingPolicyParam() fwtypes.AutoscalingPolicyParam {
+	return fwtypes.AutoscalingPolicyParam{
+		LoadTargets:       map[string]float64{"requests": 0},
+		ScaleDownWindow:   "60s",
+		ScaleToZeroWindow: "300s",
+		ScaleUpWindow:     "30s",
+	}
+}
+
+func assertDeploymentPayloadUsesAliases(t *testing.T, payload map[string]any) {
+	t.Helper()
+
+	for _, key := range []string{
+		"baseModel", "acceleratorCount", "acceleratorType", "activeModelVersion", "autoscalingPolicy", "autoTune",
+		"deploymentShape", "deploymentTemplate", "description", "directRouteApiKeys", "directRouteType",
+		"disableDeploymentSizeValidation", "displayName", "draftModel", "draftTokenCount", "enableAddons",
+		"enableHotLoad", "enableHotReloadLatestAddon", "enableMtp", "enableSessionAffinity", "expireTime",
+		"hotLoadBucketType", "hotLoadBucketUrl", "maxContextLength", "maxReplicaCount", "maxWithRevocableReplicaCount",
+		"minReplicaCount", "ngramSpeculationLength", "placement", "precision", "pricingPlanId", "targetModelVersion",
+	} {
+		if _, ok := payload[key]; !ok {
+			t.Errorf("deployment payload missing %q: %#v", key, payload)
+		}
+	}
+	for _, key := range []string{
+		"base_model", "accelerator_count", "accelerator_type", "active_model_version", "autoscaling_policy",
+		"deployment_shape", "deployment_template", "direct_route_api_keys", "direct_route_type",
+		"disable_deployment_size_validation", "display_name", "draft_model", "draft_token_count", "enable_addons",
+		"enable_hot_load", "enable_hot_reload_latest_addon", "enable_mtp", "enable_session_affinity", "expire_time",
+		"hot_load_bucket_type", "hot_load_bucket_url", "max_context_length", "max_replica_count",
+		"max_with_revocable_replica_count", "min_replica_count", "ngram_speculation_length", "pricing_plan_id",
+		"target_model_version",
+	} {
+		if _, ok := payload[key]; ok {
+			t.Errorf("unexpected snake deployment key %q: %#v", key, payload)
+		}
+	}
+	for _, key := range []string{"acceleratorCount", "draftTokenCount", "maxContextLength", "maxReplicaCount", "maxWithRevocableReplicaCount", "minReplicaCount", "ngramSpeculationLength"} {
+		if payload[key] != float64(0) {
+			t.Errorf("%s = %#v", key, payload[key])
+		}
+	}
+	for _, key := range []string{"disableDeploymentSizeValidation", "enableAddons", "enableHotLoad", "enableHotReloadLatestAddon", "enableMtp", "enableSessionAffinity"} {
+		if payload[key] != true {
+			t.Errorf("%s = %#v", key, payload[key])
+		}
+	}
+	if payload["baseModel"] != "accounts/fireworks/models/base" || payload["displayName"] == "" || payload["hotLoadBucketUrl"] != "gs://bucket/hotload" {
+		t.Errorf("deployment scalar aliases = %#v", payload)
+	}
+
+	autoscalingPolicy, ok := payload["autoscalingPolicy"].(map[string]any)
+	if !ok {
+		t.Fatalf("autoscalingPolicy = %#v", payload["autoscalingPolicy"])
+	}
+	for _, key := range []string{"loadTargets", "scaleDownWindow", "scaleToZeroWindow", "scaleUpWindow"} {
+		if _, ok := autoscalingPolicy[key]; !ok {
+			t.Errorf("autoscalingPolicy missing %q: %#v", key, autoscalingPolicy)
+		}
+	}
+	for _, key := range []string{"load_targets", "scale_down_window", "scale_to_zero_window", "scale_up_window"} {
+		if _, ok := autoscalingPolicy[key]; ok {
+			t.Errorf("unexpected snake autoscalingPolicy key %q: %#v", key, autoscalingPolicy)
+		}
+	}
+	loadTargets, ok := autoscalingPolicy["loadTargets"].(map[string]any)
+	if !ok || loadTargets["requests"] != float64(0) {
+		t.Errorf("loadTargets = %#v", autoscalingPolicy["loadTargets"])
+	}
+
+	autoTune, ok := payload["autoTune"].(map[string]any)
+	if !ok || autoTune["longPrompt"] != true {
+		t.Errorf("autoTune = %#v", payload["autoTune"])
+	}
+	if _, ok := autoTune["long_prompt"]; ok {
+		t.Errorf("unexpected snake autoTune key: %#v", autoTune)
+	}
+
+	placement, ok := payload["placement"].(map[string]any)
+	if !ok {
+		t.Fatalf("placement = %#v", payload["placement"])
+	}
+	if placement["multiRegion"] != "MULTI_REGION_UNSPECIFIED" || placement["region"] != "REGION_UNSPECIFIED" {
+		t.Errorf("placement = %#v", placement)
+	}
+	if _, ok := placement["multi_region"]; ok {
+		t.Errorf("unexpected snake placement key: %#v", placement)
+	}
+	regions, ok := placement["regions"].([]any)
+	if !ok || len(regions) != 1 || regions[0] != "REGION_UNSPECIFIED" {
+		t.Errorf("regions = %#v", placement["regions"])
 	}
 }
 
