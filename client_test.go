@@ -516,6 +516,61 @@ func TestWithOptionsCanReplaceDefaultTimeout(t *testing.T) {
 	}
 }
 
+func TestClientCloseIsIdempotentAndPreventsRequests(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(JSON{"ok": true})
+	}))
+	defer server.Close()
+
+	client, err := NewClient(WithBaseURL(server.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.IsClosed() {
+		t.Fatal("new client is closed")
+	}
+	if err := client.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if !client.IsClosed() {
+		t.Fatal("client is not closed")
+	}
+	_, err = client.Get(context.Background(), "/closed")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "client is closed") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestWithOptionsSharesClientLifecycleWhenHTTPClientIsShared(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+
+	client, err := NewClient()
+	if err != nil {
+		t.Fatal(err)
+	}
+	clone, err := client.WithOptions(WithDefaultHeader("X-Clone", "yes"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if clone.IsClosed() || client.IsClosed() {
+		t.Fatal("clients unexpectedly closed")
+	}
+	if err := clone.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if !clone.IsClosed() || !client.IsClosed() {
+		t.Fatalf("closed state was not shared: clone=%t client=%t", clone.IsClosed(), client.IsClosed())
+	}
+}
+
 func TestSetDefaultHeadersReplacesEnvironmentCustomHeaders(t *testing.T) {
 	t.Setenv("FIREWORKS_API_KEY", "test-key")
 	t.Setenv("FIREWORKS_CUSTOM_HEADERS", "X-From-Env: yes")

@@ -20,6 +20,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -50,6 +51,7 @@ type Client struct {
 	defaultQuery      url.Values
 	timeout           time.Duration
 	maxRetries        int
+	lifecycle         *clientLifecycle
 
 	Chat                         *ChatResource
 	Completions                  *CompletionsResource
@@ -74,6 +76,11 @@ type Client struct {
 }
 
 type Fireworks = Client
+
+type clientLifecycle struct {
+	mu     sync.RWMutex
+	closed bool
+}
 
 type ClientOption func(*clientConfig)
 
@@ -262,6 +269,7 @@ func NewClient(opts ...ClientOption) (*Client, error) {
 		defaultQuery:      cloneValues(cfg.defaultQuery),
 		timeout:           cfg.timeout,
 		maxRetries:        cfg.maxRetries,
+		lifecycle:         &clientLifecycle{},
 	}
 	c.initResources()
 	return c, nil
@@ -309,6 +317,10 @@ func (c *Client) WithOptions(opts ...ClientOption) (*Client, error) {
 	} else if cfg.timeoutSet && cfg.httpClientOwned {
 		cfg.httpClient = defaultHTTPClientWithTimeout(cfg.timeout)
 	}
+	lifecycle := c.lifecycle
+	if cfg.httpClient != c.httpClient || lifecycle == nil {
+		lifecycle = &clientLifecycle{}
+	}
 
 	parsedBaseURL, err := url.Parse(cfg.baseURL)
 	if err != nil {
@@ -326,6 +338,7 @@ func (c *Client) WithOptions(opts ...ClientOption) (*Client, error) {
 		defaultQuery:      cloneValues(cfg.defaultQuery),
 		timeout:           cfg.timeout,
 		maxRetries:        cfg.maxRetries,
+		lifecycle:         lifecycle,
 	}
 	clone.initResources()
 	return clone, nil
@@ -357,6 +370,39 @@ func (c *Client) MaxRetries() int {
 
 func (c *Client) Timeout() time.Duration {
 	return c.timeout
+}
+
+func (c *Client) IsClosed() bool {
+	if c == nil || c.lifecycle == nil {
+		return true
+	}
+	c.lifecycle.mu.RLock()
+	defer c.lifecycle.mu.RUnlock()
+	return c.lifecycle.closed
+}
+
+func (c *Client) Close() error {
+	if c == nil {
+		return nil
+	}
+	if c.lifecycle == nil {
+		c.lifecycle = &clientLifecycle{}
+	}
+	c.lifecycle.mu.Lock()
+	alreadyClosed := c.lifecycle.closed
+	c.lifecycle.closed = true
+	c.lifecycle.mu.Unlock()
+	if !alreadyClosed && c.httpClient != nil {
+		c.httpClient.CloseIdleConnections()
+	}
+	return nil
+}
+
+func (c *Client) closedError() error {
+	if c.IsClosed() {
+		return &Error{Message: "fireworks: client is closed"}
+	}
+	return nil
 }
 
 func (c *Client) initResources() {
@@ -404,6 +450,9 @@ func (c *Client) NewRequest(ctx context.Context, method, path string, body any, 
 }
 
 func (c *Client) newRequestWithReader(ctx context.Context, method, path string, reqBody io.Reader, contentType string, opts ...RequestOption) (*http.Request, error) {
+	if err := c.closedError(); err != nil {
+		return nil, err
+	}
 	reqOpts := applyRequestOptions(opts)
 	if strings.EqualFold(method, http.MethodGet) {
 		reqBody = nil
@@ -551,6 +600,9 @@ func (c *Client) DoResponse(req *http.Request) (*APIResponse, error) {
 }
 
 func (c *Client) doResponse(req *http.Request, maxRetries int, followRedirects bool) (*APIResponse, error) {
+	if err := c.closedError(); err != nil {
+		return nil, err
+	}
 	var bodyCopy []byte
 	if req.Body != nil {
 		payload, err := io.ReadAll(req.Body)
