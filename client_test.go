@@ -140,6 +140,31 @@ func TestInferenceRequestUsesPythonCompatibleEnvironmentAndHeaders(t *testing.T)
 	}
 }
 
+func TestDefaultHeadersCanOverridePlatformHeaders(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+
+	var seenLang string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenLang = r.Header.Get("X-Stainless-Lang")
+		_ = json.NewEncoder(w).Encode(JSON{"ok": true})
+	}))
+	defer server.Close()
+
+	client, err := NewClient(
+		WithBaseURL(server.URL),
+		WithDefaultHeader("X-Stainless-Lang", "my-overriding-header"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Get(context.Background(), "/headers"); err != nil {
+		t.Fatal(err)
+	}
+	if seenLang != "my-overriding-header" {
+		t.Fatalf("X-Stainless-Lang = %q", seenLang)
+	}
+}
+
 func TestAccountResourcePathAndCommaQuery(t *testing.T) {
 	t.Setenv("FIREWORKS_API_KEY", "test-key")
 	t.Setenv("FIREWORKS_ACCOUNT_ID", "default-account")
