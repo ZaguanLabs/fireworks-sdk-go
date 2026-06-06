@@ -20,6 +20,12 @@ func (c *FiretitanServiceClient) CreateManagedTrainingClientFuture(ctx context.C
 	})
 }
 
+func (c *FiretitanServiceClient) CreateLoraTrainingClientFuture(ctx context.Context, baseModel string, opts ...CreateLoraTrainingClientOptions) *Future[*FiretitanTrainingClient] {
+	return SubmitFuture(func() (*FiretitanTrainingClient, error) {
+		return c.CreateLoraTrainingClient(ctx, baseModel, opts...)
+	})
+}
+
 func (c *FiretitanServiceClient) CreateBaseTrainingClientFuture(ctx context.Context, baseModel string, userMetadata map[string]string) *Future[*FiretitanTrainingClient] {
 	return SubmitFuture(func() (*FiretitanTrainingClient, error) {
 		return c.CreateBaseTrainingClient(ctx, baseModel, userMetadata)
@@ -71,6 +77,12 @@ func (c *FiretitanTrainingClient) SaveWeightsAndHotloadFuture(ctx context.Contex
 func (c *FiretitanTrainingClient) CreateSamplingClientFuture(ctx context.Context, modelPath string, tokenizer DeploymentTokenizer, controller SamplingConcurrencyController) *Future[*FiretitanSamplingClient] {
 	return SubmitFuture(func() (*FiretitanSamplingClient, error) {
 		return c.CreateSamplingClient(ctx, modelPath, tokenizer, controller)
+	})
+}
+
+func (c *FiretitanTrainingClient) CreateBaseTrainingClientFuture(ctx context.Context, baseModel string, userMetadata map[string]string) *Future[*FiretitanTrainingClient] {
+	return SubmitFuture(func() (*FiretitanTrainingClient, error) {
+		return c.CreateBaseTrainingClient(ctx, baseModel, userMetadata)
 	})
 }
 

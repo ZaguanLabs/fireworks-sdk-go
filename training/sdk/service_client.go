@@ -307,6 +307,15 @@ type CreateReferenceClientOptions struct {
 	UserMetadata map[string]string
 }
 
+type CreateLoraTrainingClientOptions struct {
+	Rank         int
+	Seed         *int
+	TrainMLP     *bool
+	TrainAttn    *bool
+	TrainUnembed *bool
+	UserMetadata map[string]string
+}
+
 type FiretitanTrainingClient struct {
 	Service         *FiretitanServiceClient
 	Config          FiretitanProvisioningConfig
@@ -391,6 +400,45 @@ func (c *FiretitanServiceClient) CreateTrainingClient(_ context.Context, opts ..
 		SavedStateNames: map[string]bool{},
 		SyncState:       state,
 	}, nil
+}
+
+func (c *FiretitanServiceClient) CreateLoraTrainingClient(ctx context.Context, baseModel string, opts ...CreateLoraTrainingClientOptions) (*FiretitanTrainingClient, error) {
+	if c == nil {
+		return nil, fmt.Errorf("FiretitanServiceClient is nil")
+	}
+	var opt CreateLoraTrainingClientOptions
+	if len(opts) > 0 {
+		opt = opts[0]
+	}
+	config := c.Config
+	config.BaseModel = strings.TrimSpace(baseModel)
+	if config.BaseModel == "" {
+		return nil, fmt.Errorf("base_model must be a non-empty string")
+	}
+	rank := opt.Rank
+	if rank == 0 {
+		rank = 32
+	}
+	config.LoraRank = rank
+	config.Seed = cloneIntPointer(opt.Seed)
+	config.TrainMLP = boolPointer(true)
+	config.TrainAttn = boolPointer(true)
+	config.TrainUnembed = boolPointer(true)
+	if opt.TrainMLP != nil {
+		config.TrainMLP = boolPointer(*opt.TrainMLP)
+	}
+	if opt.TrainAttn != nil {
+		config.TrainAttn = boolPointer(*opt.TrainAttn)
+	}
+	if opt.TrainUnembed != nil {
+		config.TrainUnembed = boolPointer(*opt.TrainUnembed)
+	}
+	return c.CreateTrainingClient(ctx, CreateFiretitanTrainingClientOptions{
+		ConfigOverride: &config,
+		BaseModel:      baseModel,
+		LoraRank:       &rank,
+		UserMetadata:   opt.UserMetadata,
+	})
 }
 
 func (c *FiretitanServiceClient) CreateBaseTrainingClient(ctx context.Context, baseModel string, userMetadata map[string]string) (*FiretitanTrainingClient, error) {
@@ -553,6 +601,13 @@ func (c *FiretitanTrainingClient) TrainerJobID() (string, error) {
 
 func (c *FiretitanTrainingClient) DeploymentID() (string, error) {
 	return RequireManagedString(c.ResolvedMetadata().DeploymentID, "deployment id")
+}
+
+func (c *FiretitanTrainingClient) CreateBaseTrainingClient(ctx context.Context, baseModel string, userMetadata map[string]string) (*FiretitanTrainingClient, error) {
+	if c == nil || c.Service == nil {
+		return nil, fmt.Errorf("FiretitanTrainingClient requires a service to create a base training client")
+	}
+	return c.Service.CreateBaseTrainingClient(ctx, baseModel, userMetadata)
 }
 
 func (c *FiretitanTrainingClient) ListCheckpoints(ctx context.Context, pageSize int) ([]map[string]any, error) {

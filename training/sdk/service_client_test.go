@@ -254,6 +254,82 @@ func TestFiretitanServiceClientCreateBaseTrainingClientSkipsDuplicateRegistry(t 
 	}
 }
 
+func TestFiretitanServiceClientCreateLoraTrainingClient(t *testing.T) {
+	svc, err := NewFiretitanServiceClient(FiretitanServiceClientOptions{
+		Config: FiretitanProvisioningConfig{BaseModel: "accounts/acct/models/default"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := svc.CreateLoraTrainingClient(context.Background(), "accounts/acct/models/base", CreateLoraTrainingClientOptions{
+		UserMetadata: map[string]string{"purpose": "lora"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.Config.BaseModel != "accounts/acct/models/base" || client.Config.LoraRank != 32 {
+		t.Fatalf("client config = %#v", client.Config)
+	}
+	if client.Config.TrainMLP == nil || !*client.Config.TrainMLP || client.Config.TrainAttn == nil || !*client.Config.TrainAttn || client.Config.TrainUnembed == nil || !*client.Config.TrainUnembed {
+		t.Fatalf("train flags = mlp:%#v attn:%#v unembed:%#v", client.Config.TrainMLP, client.Config.TrainAttn, client.Config.TrainUnembed)
+	}
+	if client.UserMetadata["purpose"] != "lora" {
+		t.Fatalf("metadata = %#v", client.UserMetadata)
+	}
+}
+
+func TestFiretitanServiceClientCreateLoraTrainingClientOverrides(t *testing.T) {
+	seed := 123
+	trainMLP := false
+	trainAttn := true
+	trainUnembed := false
+	svc, err := NewFiretitanServiceClient(FiretitanServiceClientOptions{
+		Config: FiretitanProvisioningConfig{BaseModel: "accounts/acct/models/default"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := svc.CreateLoraTrainingClient(context.Background(), "accounts/acct/models/base", CreateLoraTrainingClientOptions{
+		Rank:         16,
+		Seed:         &seed,
+		TrainMLP:     &trainMLP,
+		TrainAttn:    &trainAttn,
+		TrainUnembed: &trainUnembed,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.Config.LoraRank != 16 || client.Config.Seed == nil || *client.Config.Seed != 123 {
+		t.Fatalf("client config = %#v", client.Config)
+	}
+	if client.Config.TrainMLP == nil || *client.Config.TrainMLP || client.Config.TrainAttn == nil || !*client.Config.TrainAttn || client.Config.TrainUnembed == nil || *client.Config.TrainUnembed {
+		t.Fatalf("train flags = mlp:%#v attn:%#v unembed:%#v", client.Config.TrainMLP, client.Config.TrainAttn, client.Config.TrainUnembed)
+	}
+}
+
+func TestFiretitanTrainingClientCreateBaseTrainingClientDelegatesToService(t *testing.T) {
+	svc, err := NewFiretitanServiceClient(FiretitanServiceClientOptions{
+		Config: FiretitanProvisioningConfig{BaseModel: "accounts/acct/models/base", LoraRank: 8},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy, err := svc.CreateTrainingClient(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseClient, err := policy.CreateBaseTrainingClient(context.Background(), "accounts/acct/models/base", map[string]string{"purpose": "base"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if baseClient.Config.LoraRank != 0 || !baseClient.Config.ForwardOnly {
+		t.Fatalf("base config = %#v", baseClient.Config)
+	}
+	if baseClient.UserMetadata["purpose"] != "base" {
+		t.Fatalf("metadata = %#v", baseClient.UserMetadata)
+	}
+}
+
 func TestFiretitanServiceClientCreateReferenceClientSharedBase(t *testing.T) {
 	svc, err := NewFiretitanServiceClient(FiretitanServiceClientOptions{
 		Config: FiretitanProvisioningConfig{

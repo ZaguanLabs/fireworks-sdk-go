@@ -133,6 +133,28 @@ func TestFiretitanServiceClientManagedLifecycleFutures(t *testing.T) {
 	}
 }
 
+func TestFiretitanServiceClientCreateLoraTrainingClientFuture(t *testing.T) {
+	svc, err := NewFiretitanServiceClient(FiretitanServiceClientOptions{
+		Config: FiretitanProvisioningConfig{BaseModel: "accounts/acct/models/default"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := svc.CreateLoraTrainingClientFuture(context.Background(), "accounts/acct/models/base", CreateLoraTrainingClientOptions{
+		Rank:         12,
+		UserMetadata: map[string]string{"run": "future-lora"},
+	}).Await()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.Config.BaseModel != "accounts/acct/models/base" || client.Config.LoraRank != 12 {
+		t.Fatalf("client config = %#v", client.Config)
+	}
+	if client.UserMetadata["run"] != "future-lora" {
+		t.Fatalf("metadata = %#v", client.UserMetadata)
+	}
+}
+
 func TestFiretitanServiceClientCreateBaseTrainingClientFuture(t *testing.T) {
 	svc, err := NewFiretitanServiceClient(FiretitanServiceClientOptions{
 		Config: FiretitanProvisioningConfig{
@@ -158,6 +180,23 @@ func TestFiretitanServiceClientCreateBaseTrainingClientFuture(t *testing.T) {
 	}
 	if client.UserMetadata["purpose"] != "base" {
 		t.Fatalf("metadata = %#v", client.UserMetadata)
+	}
+
+	policy, err := svc.CreateTrainingClient(context.Background(), CreateFiretitanTrainingClientOptions{
+		ConfigOverride: &FiretitanProvisioningConfig{
+			BaseModel: "accounts/acct/models/base",
+			LoraRank:  4,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err = policy.CreateBaseTrainingClientFuture(context.Background(), "accounts/acct/models/base", map[string]string{"purpose": "training-base"}).Await()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.Config.LoraRank != 0 || !client.Config.ForwardOnly || client.UserMetadata["purpose"] != "training-base" {
+		t.Fatalf("training base client = %#v metadata=%#v", client.Config, client.UserMetadata)
 	}
 }
 
