@@ -1259,6 +1259,137 @@ func TestNewFileFromPathUsesBasenameAndBytes(t *testing.T) {
 	}
 }
 
+func TestExtractFilesMutatesInputLikePythonHelper(t *testing.T) {
+	query := map[string]any{"foo": []byte("Bar"), "hello": "world"}
+	files, err := extractFiles(query, [][]string{{"foo"}}, "brackets")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertFileParts(t, files, []string{"foo"}, []string{"Bar"})
+	if _, ok := query["foo"]; ok || query["hello"] != "world" {
+		t.Fatalf("query = %#v", query)
+	}
+
+	nested := map[string]any{
+		"foo":   map[string]any{"foo": map[string]any{"bar": []byte("Nested")}},
+		"hello": "world",
+	}
+	files, err = extractFiles(nested, [][]string{{"foo", "foo", "bar"}}, "brackets")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertFileParts(t, files, []string{"foo[foo][bar]"}, []string{"Nested"})
+	if got := nested["foo"].(map[string]any)["foo"].(map[string]any); len(got) != 0 {
+		t.Fatalf("nested foo = %#v", got)
+	}
+	if nested["hello"] != "world" {
+		t.Fatalf("nested = %#v", nested)
+	}
+}
+
+func TestExtractFilesArraysUsePythonFieldNames(t *testing.T) {
+	query := map[string]any{
+		"documents": []any{
+			map[string]any{"file": []byte("first")},
+			map[string]any{"file": []byte("second")},
+		},
+	}
+	files, err := extractFiles(query, [][]string{{"documents", "<array>", "file"}}, "brackets")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertFileParts(t, files, []string{"documents[][file]", "documents[][file]"}, []string{"first", "second"})
+	docs := query["documents"].([]any)
+	if len(docs[0].(map[string]any)) != 0 || len(docs[1].(map[string]any)) != 0 {
+		t.Fatalf("documents = %#v", docs)
+	}
+
+	for _, tc := range []struct {
+		name        string
+		arrayFormat string
+		wantTop     []string
+		wantNested  []string
+	}{
+		{name: "brackets", arrayFormat: "brackets", wantTop: []string{"files[]", "files[]"}, wantNested: []string{"items[][file]", "items[][file]"}},
+		{name: "repeat", arrayFormat: "repeat", wantTop: []string{"files", "files"}, wantNested: []string{"items[file]", "items[file]"}},
+		{name: "comma", arrayFormat: "comma", wantTop: []string{"files", "files"}, wantNested: []string{"items[file]", "items[file]"}},
+		{name: "indices", arrayFormat: "indices", wantTop: []string{"files[0]", "files[1]"}, wantNested: []string{"items[0][file]", "items[1][file]"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			top := map[string]any{"files": [][]byte{[]byte("a"), []byte("b")}, "title": "hello"}
+			files, err := extractFiles(top, [][]string{{"files", "<array>"}}, tc.arrayFormat)
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertFileParts(t, files, tc.wantTop, []string{"a", "b"})
+			if _, ok := top["files"]; ok || top["title"] != "hello" {
+				t.Fatalf("top = %#v", top)
+			}
+
+			nested := map[string]any{
+				"items": []any{
+					map[string]any{"file": []byte("a")},
+					map[string]any{"file": []byte("b")},
+				},
+			}
+			files, err = extractFiles(nested, [][]string{{"items", "<array>", "file"}}, tc.arrayFormat)
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertFileParts(t, files, tc.wantNested, []string{"a", "b"})
+		})
+	}
+}
+
+func TestExtractFilesIgnoresIncorrectPaths(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		query map[string]any
+		paths [][]string
+	}{
+		{name: "dict expecting array", query: map[string]any{"foo": map[string]any{"bar": "baz"}}, paths: [][]string{{"foo", "<array>", "bar"}}},
+		{name: "array expecting dict", query: map[string]any{"foo": []any{"bar", "baz"}}, paths: [][]string{{"foo", "bar"}}},
+		{name: "unknown keys", query: map[string]any{"foo": map[string]any{"bar": "baz"}}, paths: [][]string{{"foo", "foo"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			files, err := extractFiles(tc.query, tc.paths, "brackets")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(files) != 0 {
+				t.Fatalf("files = %#v", files)
+			}
+		})
+	}
+}
+
+func TestExtractFilesRejectsUnknownArrayFormat(t *testing.T) {
+	query := map[string]any{"files": [][]byte{[]byte("a")}}
+	_, err := extractFiles(query, [][]string{{"files", "<array>"}}, "foo")
+	if err == nil || !strings.Contains(err.Error(), "unknown array_format value: foo") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func assertFileParts(t *testing.T, files []filePart, wantKeys, wantBodies []string) {
+	t.Helper()
+	if len(files) != len(wantKeys) || len(files) != len(wantBodies) {
+		t.Fatalf("files = %#v, want %d", files, len(wantKeys))
+	}
+	for i, part := range files {
+		if part.Key != wantKeys[i] {
+			t.Fatalf("files[%d].Key = %q, want %q", i, part.Key, wantKeys[i])
+		}
+		body, err := io.ReadAll(part.File.Content)
+		if err != nil {
+			t.Fatalf("read file %d: %v", i, err)
+		}
+		if string(body) != wantBodies[i] {
+			t.Fatalf("files[%d] body = %q, want %q", i, body, wantBodies[i])
+		}
+	}
+}
+
 func TestMultipartFieldsUsePythonBracketSerialization(t *testing.T) {
 	t.Setenv("FIREWORKS_API_KEY", "test-key")
 
