@@ -218,7 +218,8 @@ def go_type(
                 return typ, True
             return "*" + typ, True
         if name in {"Required"} and args:
-            return go_type(args[0], current_module=current_module, imports=imports, refs=refs)
+            typ, _ = go_type(args[0], current_module=current_module, imports=imports, refs=refs)
+            return typ, False
         if name in {"List", "Iterable", "SequenceNotStr"} and args:
             typ, _ = go_type(args[0], current_module=current_module, imports=imports, refs=refs)
             return "[]" + deref(typ), False
@@ -285,6 +286,80 @@ def optional_primitive_param_type(typ: str, omit: bool) -> str:
     return typ
 
 
+def field_line(
+    stmt: ast.AnnAssign,
+    *,
+    total_false: bool,
+    current_module: str,
+    imports: dict[str, str],
+    refs: dict[tuple[str, str], ClassRef],
+) -> tuple[str, str] | None:
+    if not isinstance(stmt.target, ast.Name):
+        return None
+    py_name = stmt.target.id
+    if py_name.startswith("_"):
+        return None
+    typ, optional = go_type(stmt.annotation, current_module=current_module, imports=imports, refs=refs)
+    tag_name = json_alias(stmt.value) or annotation_alias(stmt.annotation) or py_name
+    omit = optional or stmt.value is not None or (total_false and not is_required_annotation(stmt.annotation))
+    typ = optional_primitive_param_type(typ, omit)
+    tag = tag_name + (",omitempty" if omit else "")
+    return py_name, f"\t{field_name(py_name)} {typ} `json:\"{tag}\"`"
+
+
+def class_fields(
+    node: ast.ClassDef,
+    *,
+    current_module: str,
+    imports: dict[str, str],
+    refs: dict[tuple[str, str], ClassRef],
+    class_nodes: dict[str, ast.ClassDef],
+    seen: set[str] | None = None,
+) -> list[str]:
+    if seen is None:
+        seen = set()
+    if node.name in seen:
+        return []
+    seen.add(node.name)
+
+    by_name: dict[str, str] = {}
+    order: list[str] = []
+    for base in node.bases:
+        base_node = class_nodes.get(get_name(base))
+        if base_node is None:
+            continue
+        for line in class_fields(
+            base_node,
+            current_module=current_module,
+            imports=imports,
+            refs=refs,
+            class_nodes=class_nodes,
+            seen=seen,
+        ):
+            match = re.match(r"\t([A-Za-z0-9]+)\s+", line)
+            if not match:
+                continue
+            go_field = match.group(1)
+            if go_field not in by_name:
+                order.append(go_field)
+            by_name[go_field] = line
+
+    total_false = is_total_false_typeddict(node)
+    for stmt in node.body:
+        if not isinstance(stmt, ast.AnnAssign):
+            continue
+        field = field_line(stmt, total_false=total_false, current_module=current_module, imports=imports, refs=refs)
+        if field is None:
+            continue
+        py_name, line = field
+        go_field = field_name(py_name)
+        if go_field not in by_name:
+            order.append(go_field)
+        by_name[go_field] = line
+
+    return [by_name[name] for name in order]
+
+
 def name_to_module_guess(name: str) -> str:
     words = re.findall(r"[A-Z]+(?=[A-Z][a-z]|$)|[A-Z]?[a-z]+|\d+", name)
     return "_".join(w.lower() for w in words)
@@ -319,24 +394,12 @@ def build_file(refs: dict[tuple[str, str], ClassRef]) -> str:
                 for alias in node.names:
                     imports[alias.asname or alias.name] = imported_module
 
+        class_nodes = {node.name: node for node in tree.body if isinstance(node, ast.ClassDef)}
         for node in tree.body:
             if not isinstance(node, ast.ClassDef):
                 continue
             ref = refs[(module, node.name)]
-            fields: list[str] = []
-            total_false = is_total_false_typeddict(node)
-            for stmt in node.body:
-                if not isinstance(stmt, ast.AnnAssign) or not isinstance(stmt.target, ast.Name):
-                    continue
-                py_name = stmt.target.id
-                if py_name.startswith("_"):
-                    continue
-                typ, optional = go_type(stmt.annotation, current_module=module, imports=imports, refs=refs)
-                tag_name = json_alias(stmt.value) or annotation_alias(stmt.annotation) or py_name
-                omit = optional or stmt.value is not None or (total_false and not is_required_annotation(stmt.annotation))
-                typ = optional_primitive_param_type(typ, omit)
-                tag = tag_name + (",omitempty" if omit else "")
-                fields.append(f"\t{field_name(py_name)} {typ} `json:\"{tag}\"`")
+            fields = class_fields(node, current_module=module, imports=imports, refs=refs, class_nodes=class_nodes)
             if not fields:
                 continue
             lines.append(f"// {ref.go_name} mirrors fireworks.types.{module}.{node.name}.")

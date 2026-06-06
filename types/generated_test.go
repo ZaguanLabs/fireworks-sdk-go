@@ -103,6 +103,39 @@ func TestGeneratedJSONAliases(t *testing.T) {
 	if got, want := streamField.Type.Kind(), reflect.Bool; got != want {
 		t.Fatalf("CompletionCreateParamsCompletionCreateParamsStreaming.Stream kind = %s, want %s", got, want)
 	}
+
+	promptField, ok := reflect.TypeOf(CompletionCreateParamsCompletionCreateParamsBase{}).FieldByName("Prompt")
+	if !ok {
+		t.Fatal("CompletionCreateParamsCompletionCreateParamsBase.Prompt missing")
+	}
+	if got, want := promptField.Tag.Get("json"), "prompt"; got != want {
+		t.Fatalf("CompletionCreateParamsCompletionCreateParamsBase.Prompt json tag = %q, want %q", got, want)
+	}
+}
+
+func TestGeneratedInheritedTypedDictParams(t *testing.T) {
+	completionType := reflect.TypeOf(CompletionCreateParamsCompletionCreateParamsStreaming{})
+	for _, field := range []string{"Model", "Prompt", "Stream"} {
+		if _, ok := completionType.FieldByName(field); !ok {
+			t.Fatalf("CompletionCreateParamsCompletionCreateParamsStreaming.%s missing", field)
+		}
+	}
+
+	chatType := reflect.TypeOf(ChatCompletionCreateParamsCompletionCreateParamsStreaming{})
+	for _, field := range []string{"Messages", "Model", "Stream"} {
+		if _, ok := chatType.FieldByName(field); !ok {
+			t.Fatalf("ChatCompletionCreateParamsCompletionCreateParamsStreaming.%s missing", field)
+		}
+	}
+
+	payload := marshalObject(t, CompletionCreateParamsCompletionCreateParamsStreaming{
+		Model:  "accounts/fireworks/models/test",
+		Prompt: "",
+		Stream: true,
+	})
+	assertJSONField(t, payload, "model", "accounts/fireworks/models/test")
+	assertJSONField(t, payload, "prompt", "")
+	assertJSONField(t, payload, "stream", true)
 }
 
 func TestGeneratedOptionalParamsOmitEmpty(t *testing.T) {

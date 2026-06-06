@@ -328,7 +328,7 @@ type ChatCompletionCreateParamsPredictionPredictedOutputContentUnionMember1 stru
 
 // ChatCompletionCreateParamsPredictionPredictedOutput mirrors fireworks.types.chat.completion_create_params.PredictionPredictedOutput.
 type ChatCompletionCreateParamsPredictionPredictedOutput struct {
-	Content any    `json:"content,omitempty"`
+	Content any    `json:"content"`
 	Type    string `json:"type,omitempty"`
 }
 
@@ -364,12 +364,102 @@ type ChatCompletionCreateParamsToolChoiceFunctionSelection struct {
 
 // ChatCompletionCreateParamsCompletionCreateParamsNonStreaming mirrors fireworks.types.chat.completion_create_params.CompletionCreateParamsNonStreaming.
 type ChatCompletionCreateParamsCompletionCreateParamsNonStreaming struct {
-	Stream *bool `json:"stream,omitempty"`
+	Messages                      []SharedParamsChatMessage                 `json:"messages"`
+	Model                         string                                    `json:"model"`
+	ContextLengthExceededBehavior string                                    `json:"context_length_exceeded_behavior,omitempty"`
+	Echo                          *bool                                     `json:"echo,omitempty"`
+	EchoLast                      *int                                      `json:"echo_last,omitempty"`
+	FrequencyPenalty              *float64                                  `json:"frequency_penalty,omitempty"`
+	FunctionCall                  any                                       `json:"function_call,omitempty"`
+	Functions                     []ChatCompletionCreateParamsFunction      `json:"functions,omitempty"`
+	IgnoreEos                     any                                       `json:"ignore_eos,omitempty"`
+	LogitBias                     map[string]float64                        `json:"logit_bias,omitempty"`
+	Logprobs                      any                                       `json:"logprobs,omitempty"`
+	MaxCompletionTokens           *int                                      `json:"max_completion_tokens,omitempty"`
+	MaxTokens                     *int                                      `json:"max_tokens,omitempty"`
+	Metadata                      map[string]string                         `json:"metadata,omitempty"`
+	MinP                          *float64                                  `json:"min_p,omitempty"`
+	MirostatLr                    *float64                                  `json:"mirostat_lr,omitempty"`
+	MirostatTarget                *float64                                  `json:"mirostat_target,omitempty"`
+	N                             any                                       `json:"n,omitempty"`
+	ParallelToolCalls             *bool                                     `json:"parallel_tool_calls,omitempty"`
+	PerfMetricsInResponse         *bool                                     `json:"perf_metrics_in_response,omitempty"`
+	Prediction                    any                                       `json:"prediction,omitempty"`
+	PresencePenalty               *float64                                  `json:"presence_penalty,omitempty"`
+	PromptCacheIsolationKey       *string                                   `json:"prompt_cache_isolation_key,omitempty"`
+	PromptCacheKey                *string                                   `json:"prompt_cache_key,omitempty"`
+	PromptTruncateLen             *int                                      `json:"prompt_truncate_len,omitempty"`
+	RawOutput                     *bool                                     `json:"raw_output,omitempty"`
+	ReasoningEffort               any                                       `json:"reasoning_effort,omitempty"`
+	ReasoningHistory              *string                                   `json:"reasoning_history,omitempty"`
+	RepetitionPenalty             *float64                                  `json:"repetition_penalty,omitempty"`
+	ResponseFormat                *ChatCompletionCreateParamsResponseFormat `json:"response_format,omitempty"`
+	ReturnTokenIds                *bool                                     `json:"return_token_ids,omitempty"`
+	SafeTokenization              *bool                                     `json:"safe_tokenization,omitempty"`
+	Seed                          *int                                      `json:"seed,omitempty"`
+	ServiceTier                   string                                    `json:"service_tier,omitempty"`
+	Speculation                   any                                       `json:"speculation,omitempty"`
+	Stop                          any                                       `json:"stop,omitempty"`
+	Temperature                   *float64                                  `json:"temperature,omitempty"`
+	Thinking                      any                                       `json:"thinking,omitempty"`
+	ToolChoice                    any                                       `json:"tool_choice,omitempty"`
+	Tools                         []SharedParamsChatCompletionTool          `json:"tools,omitempty"`
+	TopK                          *int                                      `json:"top_k,omitempty"`
+	TopLogprobs                   *int                                      `json:"top_logprobs,omitempty"`
+	TopP                          *float64                                  `json:"top_p,omitempty"`
+	TypicalP                      *float64                                  `json:"typical_p,omitempty"`
+	User                          *string                                   `json:"user,omitempty"`
+	Stream                        *bool                                     `json:"stream,omitempty"`
 }
 
 // ChatCompletionCreateParamsCompletionCreateParamsStreaming mirrors fireworks.types.chat.completion_create_params.CompletionCreateParamsStreaming.
 type ChatCompletionCreateParamsCompletionCreateParamsStreaming struct {
-	Stream bool `json:"stream"`
+	Messages                      []SharedParamsChatMessage                 `json:"messages"`
+	Model                         string                                    `json:"model"`
+	ContextLengthExceededBehavior string                                    `json:"context_length_exceeded_behavior,omitempty"`
+	Echo                          *bool                                     `json:"echo,omitempty"`
+	EchoLast                      *int                                      `json:"echo_last,omitempty"`
+	FrequencyPenalty              *float64                                  `json:"frequency_penalty,omitempty"`
+	FunctionCall                  any                                       `json:"function_call,omitempty"`
+	Functions                     []ChatCompletionCreateParamsFunction      `json:"functions,omitempty"`
+	IgnoreEos                     any                                       `json:"ignore_eos,omitempty"`
+	LogitBias                     map[string]float64                        `json:"logit_bias,omitempty"`
+	Logprobs                      any                                       `json:"logprobs,omitempty"`
+	MaxCompletionTokens           *int                                      `json:"max_completion_tokens,omitempty"`
+	MaxTokens                     *int                                      `json:"max_tokens,omitempty"`
+	Metadata                      map[string]string                         `json:"metadata,omitempty"`
+	MinP                          *float64                                  `json:"min_p,omitempty"`
+	MirostatLr                    *float64                                  `json:"mirostat_lr,omitempty"`
+	MirostatTarget                *float64                                  `json:"mirostat_target,omitempty"`
+	N                             any                                       `json:"n,omitempty"`
+	ParallelToolCalls             *bool                                     `json:"parallel_tool_calls,omitempty"`
+	PerfMetricsInResponse         *bool                                     `json:"perf_metrics_in_response,omitempty"`
+	Prediction                    any                                       `json:"prediction,omitempty"`
+	PresencePenalty               *float64                                  `json:"presence_penalty,omitempty"`
+	PromptCacheIsolationKey       *string                                   `json:"prompt_cache_isolation_key,omitempty"`
+	PromptCacheKey                *string                                   `json:"prompt_cache_key,omitempty"`
+	PromptTruncateLen             *int                                      `json:"prompt_truncate_len,omitempty"`
+	RawOutput                     *bool                                     `json:"raw_output,omitempty"`
+	ReasoningEffort               any                                       `json:"reasoning_effort,omitempty"`
+	ReasoningHistory              *string                                   `json:"reasoning_history,omitempty"`
+	RepetitionPenalty             *float64                                  `json:"repetition_penalty,omitempty"`
+	ResponseFormat                *ChatCompletionCreateParamsResponseFormat `json:"response_format,omitempty"`
+	ReturnTokenIds                *bool                                     `json:"return_token_ids,omitempty"`
+	SafeTokenization              *bool                                     `json:"safe_tokenization,omitempty"`
+	Seed                          *int                                      `json:"seed,omitempty"`
+	ServiceTier                   string                                    `json:"service_tier,omitempty"`
+	Speculation                   any                                       `json:"speculation,omitempty"`
+	Stop                          any                                       `json:"stop,omitempty"`
+	Temperature                   *float64                                  `json:"temperature,omitempty"`
+	Thinking                      any                                       `json:"thinking,omitempty"`
+	ToolChoice                    any                                       `json:"tool_choice,omitempty"`
+	Tools                         []SharedParamsChatCompletionTool          `json:"tools,omitempty"`
+	TopK                          *int                                      `json:"top_k,omitempty"`
+	TopLogprobs                   *int                                      `json:"top_logprobs,omitempty"`
+	TopP                          *float64                                  `json:"top_p,omitempty"`
+	TypicalP                      *float64                                  `json:"typical_p,omitempty"`
+	User                          *string                                   `json:"user,omitempty"`
+	Stream                        bool                                      `json:"stream"`
 }
 
 // ChatCompletionCreateResponseChoice mirrors fireworks.types.chat.completion_create_response.Choice.
@@ -419,7 +509,7 @@ type CompletionChunk struct {
 // CompletionCreateParamsCompletionCreateParamsBase mirrors fireworks.types.completion_create_params.CompletionCreateParamsBase.
 type CompletionCreateParamsCompletionCreateParamsBase struct {
 	Model                         string                                `json:"model"`
-	Prompt                        any                                   `json:"prompt,omitempty"`
+	Prompt                        any                                   `json:"prompt"`
 	ContextLengthExceededBehavior string                                `json:"context_length_exceeded_behavior,omitempty"`
 	Echo                          *bool                                 `json:"echo,omitempty"`
 	EchoLast                      *int                                  `json:"echo_last,omitempty"`
@@ -484,7 +574,7 @@ type CompletionCreateParamsPredictionPredictedOutputContentUnionMember1 struct {
 
 // CompletionCreateParamsPredictionPredictedOutput mirrors fireworks.types.completion_create_params.PredictionPredictedOutput.
 type CompletionCreateParamsPredictionPredictedOutput struct {
-	Content any    `json:"content,omitempty"`
+	Content any    `json:"content"`
 	Type    string `json:"type,omitempty"`
 }
 
@@ -509,12 +599,90 @@ type CompletionCreateParamsThinkingThinkingConfigDisabled struct {
 
 // CompletionCreateParamsCompletionCreateParamsNonStreaming mirrors fireworks.types.completion_create_params.CompletionCreateParamsNonStreaming.
 type CompletionCreateParamsCompletionCreateParamsNonStreaming struct {
-	Stream *bool `json:"stream,omitempty"`
+	Model                         string                                `json:"model"`
+	Prompt                        any                                   `json:"prompt"`
+	ContextLengthExceededBehavior string                                `json:"context_length_exceeded_behavior,omitempty"`
+	Echo                          *bool                                 `json:"echo,omitempty"`
+	EchoLast                      *int                                  `json:"echo_last,omitempty"`
+	FrequencyPenalty              *float64                              `json:"frequency_penalty,omitempty"`
+	IgnoreEos                     any                                   `json:"ignore_eos,omitempty"`
+	Images                        any                                   `json:"images,omitempty"`
+	LogitBias                     map[string]float64                    `json:"logit_bias,omitempty"`
+	Logprobs                      any                                   `json:"logprobs,omitempty"`
+	MaxCompletionTokens           *int                                  `json:"max_completion_tokens,omitempty"`
+	MaxTokens                     *int                                  `json:"max_tokens,omitempty"`
+	Metadata                      map[string]string                     `json:"metadata,omitempty"`
+	MinP                          *float64                              `json:"min_p,omitempty"`
+	MirostatLr                    *float64                              `json:"mirostat_lr,omitempty"`
+	MirostatTarget                *float64                              `json:"mirostat_target,omitempty"`
+	N                             any                                   `json:"n,omitempty"`
+	PerfMetricsInResponse         *bool                                 `json:"perf_metrics_in_response,omitempty"`
+	Prediction                    any                                   `json:"prediction,omitempty"`
+	PresencePenalty               *float64                              `json:"presence_penalty,omitempty"`
+	PromptCacheIsolationKey       *string                               `json:"prompt_cache_isolation_key,omitempty"`
+	PromptCacheKey                *string                               `json:"prompt_cache_key,omitempty"`
+	RawOutput                     *bool                                 `json:"raw_output,omitempty"`
+	ReasoningEffort               any                                   `json:"reasoning_effort,omitempty"`
+	ReasoningHistory              *string                               `json:"reasoning_history,omitempty"`
+	RepetitionPenalty             *float64                              `json:"repetition_penalty,omitempty"`
+	ResponseFormat                *CompletionCreateParamsResponseFormat `json:"response_format,omitempty"`
+	ReturnTokenIds                *bool                                 `json:"return_token_ids,omitempty"`
+	Seed                          *int                                  `json:"seed,omitempty"`
+	ServiceTier                   string                                `json:"service_tier,omitempty"`
+	Speculation                   any                                   `json:"speculation,omitempty"`
+	Stop                          any                                   `json:"stop,omitempty"`
+	Temperature                   *float64                              `json:"temperature,omitempty"`
+	Thinking                      any                                   `json:"thinking,omitempty"`
+	TopK                          *int                                  `json:"top_k,omitempty"`
+	TopLogprobs                   *int                                  `json:"top_logprobs,omitempty"`
+	TopP                          *float64                              `json:"top_p,omitempty"`
+	TypicalP                      *float64                              `json:"typical_p,omitempty"`
+	User                          *string                               `json:"user,omitempty"`
+	Stream                        *bool                                 `json:"stream,omitempty"`
 }
 
 // CompletionCreateParamsCompletionCreateParamsStreaming mirrors fireworks.types.completion_create_params.CompletionCreateParamsStreaming.
 type CompletionCreateParamsCompletionCreateParamsStreaming struct {
-	Stream bool `json:"stream"`
+	Model                         string                                `json:"model"`
+	Prompt                        any                                   `json:"prompt"`
+	ContextLengthExceededBehavior string                                `json:"context_length_exceeded_behavior,omitempty"`
+	Echo                          *bool                                 `json:"echo,omitempty"`
+	EchoLast                      *int                                  `json:"echo_last,omitempty"`
+	FrequencyPenalty              *float64                              `json:"frequency_penalty,omitempty"`
+	IgnoreEos                     any                                   `json:"ignore_eos,omitempty"`
+	Images                        any                                   `json:"images,omitempty"`
+	LogitBias                     map[string]float64                    `json:"logit_bias,omitempty"`
+	Logprobs                      any                                   `json:"logprobs,omitempty"`
+	MaxCompletionTokens           *int                                  `json:"max_completion_tokens,omitempty"`
+	MaxTokens                     *int                                  `json:"max_tokens,omitempty"`
+	Metadata                      map[string]string                     `json:"metadata,omitempty"`
+	MinP                          *float64                              `json:"min_p,omitempty"`
+	MirostatLr                    *float64                              `json:"mirostat_lr,omitempty"`
+	MirostatTarget                *float64                              `json:"mirostat_target,omitempty"`
+	N                             any                                   `json:"n,omitempty"`
+	PerfMetricsInResponse         *bool                                 `json:"perf_metrics_in_response,omitempty"`
+	Prediction                    any                                   `json:"prediction,omitempty"`
+	PresencePenalty               *float64                              `json:"presence_penalty,omitempty"`
+	PromptCacheIsolationKey       *string                               `json:"prompt_cache_isolation_key,omitempty"`
+	PromptCacheKey                *string                               `json:"prompt_cache_key,omitempty"`
+	RawOutput                     *bool                                 `json:"raw_output,omitempty"`
+	ReasoningEffort               any                                   `json:"reasoning_effort,omitempty"`
+	ReasoningHistory              *string                               `json:"reasoning_history,omitempty"`
+	RepetitionPenalty             *float64                              `json:"repetition_penalty,omitempty"`
+	ResponseFormat                *CompletionCreateParamsResponseFormat `json:"response_format,omitempty"`
+	ReturnTokenIds                *bool                                 `json:"return_token_ids,omitempty"`
+	Seed                          *int                                  `json:"seed,omitempty"`
+	ServiceTier                   string                                `json:"service_tier,omitempty"`
+	Speculation                   any                                   `json:"speculation,omitempty"`
+	Stop                          any                                   `json:"stop,omitempty"`
+	Temperature                   *float64                              `json:"temperature,omitempty"`
+	Thinking                      any                                   `json:"thinking,omitempty"`
+	TopK                          *int                                  `json:"top_k,omitempty"`
+	TopLogprobs                   *int                                  `json:"top_logprobs,omitempty"`
+	TopP                          *float64                              `json:"top_p,omitempty"`
+	TypicalP                      *float64                              `json:"typical_p,omitempty"`
+	User                          *string                               `json:"user,omitempty"`
+	Stream                        bool                                  `json:"stream"`
 }
 
 // CompletionCreateResponse mirrors fireworks.types.completion_create_response.CompletionCreateResponse.
@@ -1448,7 +1616,7 @@ type MessageCreateParams struct {
 
 // MessageCreateParamsMessageContentUnionMember1AnthropicRequestDocumentBlockSourceAnthropicBase64PdfSource mirrors fireworks.types.message_create_params.MessageContentUnionMember1AnthropicRequestDocumentBlockSourceAnthropicBase64PdfSource.
 type MessageCreateParamsMessageContentUnionMember1AnthropicRequestDocumentBlockSourceAnthropicBase64PdfSource struct {
-	Data      any    `json:"data,omitempty"`
+	Data      any    `json:"data"`
 	MediaType string `json:"media_type"`
 	Type      string `json:"type"`
 }
@@ -1462,7 +1630,7 @@ type MessageCreateParamsMessageContentUnionMember1AnthropicRequestDocumentBlockS
 
 // MessageCreateParamsMessageContentUnionMember1AnthropicRequestDocumentBlockSourceAnthropicContentBlockSource mirrors fireworks.types.message_create_params.MessageContentUnionMember1AnthropicRequestDocumentBlockSourceAnthropicContentBlockSource.
 type MessageCreateParamsMessageContentUnionMember1AnthropicRequestDocumentBlockSourceAnthropicContentBlockSource struct {
-	Content any    `json:"content,omitempty"`
+	Content any    `json:"content"`
 	Type    string `json:"type"`
 }
 
@@ -1511,7 +1679,7 @@ type MessageCreateParamsMessageContentUnionMember1AnthropicRequestToolUseBlock s
 
 // MessageCreateParamsContentAnthropicRequestDocumentBlockSourceAnthropicBase64PdfSource mirrors fireworks.types.message_create_params.ContentAnthropicRequestDocumentBlockSourceAnthropicBase64PdfSource.
 type MessageCreateParamsContentAnthropicRequestDocumentBlockSourceAnthropicBase64PdfSource struct {
-	Data      any    `json:"data,omitempty"`
+	Data      any    `json:"data"`
 	MediaType string `json:"media_type"`
 	Type      string `json:"type"`
 }
@@ -1525,7 +1693,7 @@ type MessageCreateParamsContentAnthropicRequestDocumentBlockSourceAnthropicPlain
 
 // MessageCreateParamsContentAnthropicRequestDocumentBlockSourceAnthropicContentBlockSource mirrors fireworks.types.message_create_params.ContentAnthropicRequestDocumentBlockSourceAnthropicContentBlockSource.
 type MessageCreateParamsContentAnthropicRequestDocumentBlockSourceAnthropicContentBlockSource struct {
-	Content any    `json:"content,omitempty"`
+	Content any    `json:"content"`
 	Type    string `json:"type"`
 }
 
@@ -1561,7 +1729,7 @@ type MessageCreateParamsMessageContentUnionMember1AnthropicRequestToolResultBloc
 
 // MessageCreateParamsMessage mirrors fireworks.types.message_create_params.Message.
 type MessageCreateParamsMessage struct {
-	Content any    `json:"content,omitempty"`
+	Content any    `json:"content"`
 	Role    string `json:"role"`
 }
 
@@ -2118,7 +2286,7 @@ type ReinforcementFineTuningStepResumeParams struct {
 type RequestCharLocationCitationParam struct {
 	CitedText      string  `json:"cited_text"`
 	DocumentIndex  int     `json:"document_index"`
-	DocumentTitle  *string `json:"document_title,omitempty"`
+	DocumentTitle  *string `json:"document_title"`
 	EndCharIndex   int     `json:"end_char_index"`
 	StartCharIndex int     `json:"start_char_index"`
 	Type           string  `json:"type"`
@@ -2128,7 +2296,7 @@ type RequestCharLocationCitationParam struct {
 type RequestContentBlockLocationCitationParam struct {
 	CitedText       string  `json:"cited_text"`
 	DocumentIndex   int     `json:"document_index"`
-	DocumentTitle   *string `json:"document_title,omitempty"`
+	DocumentTitle   *string `json:"document_title"`
 	EndBlockIndex   int     `json:"end_block_index"`
 	StartBlockIndex int     `json:"start_block_index"`
 	Type            string  `json:"type"`
@@ -2136,7 +2304,7 @@ type RequestContentBlockLocationCitationParam struct {
 
 // RequestImageBlockParamSourceAnthropicBase64ImageSource mirrors fireworks.types.request_image_block_param.SourceAnthropicBase64ImageSource.
 type RequestImageBlockParamSourceAnthropicBase64ImageSource struct {
-	Data      any    `json:"data,omitempty"`
+	Data      any    `json:"data"`
 	MediaType string `json:"media_type"`
 	Type      string `json:"type"`
 }
@@ -2158,7 +2326,7 @@ type RequestImageBlockParam struct {
 type RequestPageLocationCitationParam struct {
 	CitedText       string  `json:"cited_text"`
 	DocumentIndex   int     `json:"document_index"`
-	DocumentTitle   *string `json:"document_title,omitempty"`
+	DocumentTitle   *string `json:"document_title"`
 	EndPageNumber   int     `json:"end_page_number"`
 	StartPageNumber int     `json:"start_page_number"`
 	Type            string  `json:"type"`
@@ -2171,7 +2339,7 @@ type RequestSearchResultLocationCitationParam struct {
 	SearchResultIndex int     `json:"search_result_index"`
 	Source            string  `json:"source"`
 	StartBlockIndex   int     `json:"start_block_index"`
-	Title             *string `json:"title,omitempty"`
+	Title             *string `json:"title"`
 	Type              string  `json:"type"`
 }
 
@@ -2187,7 +2355,7 @@ type RequestTextBlockParam struct {
 type RequestWebSearchResultLocationCitationParam struct {
 	CitedText      string  `json:"cited_text"`
 	EncryptedIndex string  `json:"encrypted_index"`
-	Title          *string `json:"title,omitempty"`
+	Title          *string `json:"title"`
 	Type           string  `json:"type"`
 	URL            string  `json:"url"`
 }
