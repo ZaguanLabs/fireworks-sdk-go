@@ -24,10 +24,10 @@ Status values:
 | `deployment.py` | `training/sdk/deployment.go`, `sampling.go` | ported | Create/get/delete/scale, hotload, reattach, warmup, token sampling, routing matrices, concurrency, SSE truncation retries, and server metrics are covered. |
 | `fireworks_client.py` | `training/sdk/fireworks_client.go` | ported | Checkpoint promotion/listing and long-running operation polling are covered. |
 | `training_spec.py` | `training/sdk/training_spec.go` | ported | Training spec encoding and scheduler/warmup calculations are covered. |
-| `weight_syncer.py` | `training/sdk/weight_syncer.go` | ported | Save/hotload lifecycle, hotload manager readiness, timing, and sampler client helpers are covered. |
+| `weight_syncer.py` | `training/sdk/weight_syncer.go`, `future_facade.go` | ported | Save/hotload lifecycle, hotload manager readiness, timing, sampler client helpers, and training-client facade wrappers are covered. |
 | `managed.py` | `managed*.go`, `service*.go`, `tokenizer.go`, `base_only.go` | partial | Config normalization, reference planning, deployment reattach planning, metadata resolution, cleanup planning, tokenizer/base-only helpers, lazy REST responses, and a lazy public service/training-client facade exist. Live provisioning orchestration remains missing. |
-| `client.py` low-level helpers | `client_helpers.go`, `resume_helpers.go`, `training_registry.go`, `forward_backward.go`, `embedding.go`, `service_client.go` | partial | Session IDs, checkpoint refs, managed config aliases, duplicate registry, response-token accounting, embedding pooling, built-in loss names, R3 model input helpers, checkpoint delegation, sampler backend hooks, and tokenizer model resolution are covered. Live `create_training_client` infrastructure orchestration remains missing. |
-| `sampling.py` | `sampling.go`, `service_client.go` | partial | The FireTitan sampler, output shape helpers, and facade sampler hooks are covered. Python async method parity is intentionally Go-native. |
+| `client.py` low-level helpers | `client_helpers.go`, `resume_helpers.go`, `training_registry.go`, `forward_backward.go`, `embedding.go`, `service_client.go`, `future.go`, `future_facade.go` | partial | Session IDs, checkpoint refs, managed config aliases, duplicate registry, response-token accounting, embedding pooling, built-in loss names, R3 model input helpers, checkpoint delegation, sampler backend hooks, tokenizer model resolution, and Go-native futures are covered. Live `create_training_client` infrastructure orchestration remains missing. |
+| `sampling.py` | `sampling.go`, `service_client.go`, `future_facade.go` | partial | The FireTitan sampler, output shape helpers, facade sampler hooks, and future wrappers are covered. |
 | `tinker_compat.py` | `service_init.go`, `service_helpers.go` | go-native | Python monkeypatch/context-manager behavior is not portable. Go should expose explicit construction helpers instead. |
 | `patches/_builtin_loss_fn_patch.py` | `forward_backward.go` | go-native | Python mutates Pydantic literals; Go exposes `LossFnDAPO`, `LossFnGSPO`, and normalization helpers. |
 | `patches/_discriminator_patch.py` | n/a | go-native | Pydantic serialization patch is Python-only. Go uses maps/typed request helpers and does not need discriminator patching. |
@@ -56,8 +56,6 @@ The Go port should instead provide explicit constructors, context-aware methods,
 ## Priority backlog
 
 1. Add live managed handle lifecycle orchestration: create/reconnect trainer, optionally create/reattach deployment, attach sampler backend, expose resolved metadata, and close cleanup.
-2. Add facade save-weight methods around `WeightSyncer`: save weights for sampler, save+hotload, checkpoint override, and non-blocking wrappers.
-3. Add Go-native async/future wrappers where Python returns futures and parity needs non-blocking behavior.
-4. Add CLI equivalents for setup trainer/deployment scripts.
-5. Generate a broader SDK resource/type parity report for non-training endpoints.
-6. Add live/contract tests for trainer, deployment, save/hotload/sample, checkpoint promote, and reconnect flows.
+2. Add CLI equivalents for setup trainer/deployment scripts.
+3. Generate a broader SDK resource/type parity report for non-training endpoints.
+4. Add live/contract tests for trainer, deployment, save/hotload/sample, checkpoint promote, and reconnect flows.
