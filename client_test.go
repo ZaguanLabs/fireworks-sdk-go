@@ -1924,6 +1924,200 @@ func TestChatCompletionCreateTyped(t *testing.T) {
 	}
 }
 
+func TestChatCompletionCreateTypedPreservesAllPythonOptionalParams(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+
+	var body map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode request body: %v", err)
+		}
+		_ = json.NewEncoder(w).Encode(JSON{
+			"id":      "chatcmpl-1",
+			"created": 123,
+			"model":   "model",
+			"choices": []JSON{
+				{
+					"index": 0,
+					"message": JSON{
+						"role":    "assistant",
+						"content": "world",
+					},
+					"finish_reason": "stop",
+				},
+			},
+		})
+	}))
+	defer server.Close()
+
+	functionCall := fwtypes.ChatCompletionCreateParamsFunctionCall("auto")
+	prediction := fwtypes.ChatCompletionCreateParamsPrediction(map[string]any{
+		"content": "string",
+		"type":    "content",
+	})
+	thinking := fwtypes.ChatCompletionCreateParamsThinking(map[string]any{
+		"type":          "enabled",
+		"budget_tokens": 0,
+	})
+	client, err := NewClient(WithBaseURL(server.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.Chat.Completions.CreateTyped(context.Background(), fwtypes.ChatCompletionCreateParams{
+		Messages: []fwtypes.SharedParamsChatMessage{
+			{
+				Role:             "role",
+				Content:          "string",
+				ReasoningContent: testStringPtr("reasoning_content"),
+				ToolCallID:       testStringPtr("tool_call_id"),
+				ToolCalls: []fwtypes.SharedParamsChatCompletionMessageToolCall{
+					{
+						Function: map[string]any{
+							"arguments": "string",
+							"name":      "name",
+						},
+						ID:   testStringPtr("id"),
+						Type: "type",
+					},
+				},
+			},
+		},
+		Model:                         "model",
+		ContextLengthExceededBehavior: "error",
+		Echo:                          testBoolPtr(true),
+		EchoLast:                      testIntPtr(0),
+		FrequencyPenalty:              testFloatPtr(0),
+		FunctionCall:                  &functionCall,
+		Functions: []fwtypes.ChatCompletionCreateParamsFunction{
+			{
+				Name:        "name",
+				Description: testStringPtr("description"),
+				Parameters:  map[string]any{"foo": "bar"},
+				Strict:      testBoolPtr(true),
+			},
+		},
+		IgnoreEos:               true,
+		LogitBias:               map[string]float64{"foo": 0},
+		Logprobs:                0,
+		MaxCompletionTokens:     testIntPtr(0),
+		MaxTokens:               testIntPtr(0),
+		Metadata:                map[string]string{"foo": "string"},
+		MinP:                    testFloatPtr(0),
+		MirostatLr:              testFloatPtr(0),
+		MirostatTarget:          testFloatPtr(0),
+		N:                       0,
+		ParallelToolCalls:       testBoolPtr(true),
+		PerfMetricsInResponse:   testBoolPtr(true),
+		Prediction:              &prediction,
+		PresencePenalty:         testFloatPtr(0),
+		PromptCacheIsolationKey: testStringPtr("prompt_cache_isolation_key"),
+		PromptCacheKey:          testStringPtr("prompt_cache_key"),
+		PromptTruncateLen:       testIntPtr(0),
+		RawOutput:               testBoolPtr(true),
+		ReasoningEffort:         "low",
+		ReasoningHistory:        testStringPtr("disabled"),
+		RepetitionPenalty:       testFloatPtr(0),
+		ResponseFormat: &fwtypes.ChatCompletionCreateParamsResponseFormat{
+			Type:       "json_object",
+			Grammar:    testStringPtr("grammar"),
+			JsonSchema: "string",
+			Schema:     "string",
+		},
+		ReturnTokenIds:   testBoolPtr(true),
+		SafeTokenization: testBoolPtr(true),
+		Seed:             testIntPtr(0),
+		ServiceTier:      "auto",
+		Speculation:      "string",
+		Stop:             "string",
+		Temperature:      testFloatPtr(0),
+		Thinking:         &thinking,
+		ToolChoice:       "auto",
+		Tools: []fwtypes.SharedParamsChatCompletionTool{
+			{
+				Type: "function",
+				Function: &fwtypes.SharedParamsChatCompletionToolFunction{
+					Name:        "name",
+					Description: testStringPtr("description"),
+					Parameters:  map[string]any{"foo": "bar"},
+					Strict:      testBoolPtr(true),
+				},
+			},
+		},
+		TopK:        testIntPtr(0),
+		TopLogprobs: testIntPtr(0),
+		TopP:        testFloatPtr(0),
+		TypicalP:    testFloatPtr(0),
+		User:        testStringPtr("user"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, key := range []string{
+		"context_length_exceeded_behavior",
+		"echo",
+		"echo_last",
+		"frequency_penalty",
+		"function_call",
+		"functions",
+		"ignore_eos",
+		"logit_bias",
+		"logprobs",
+		"max_completion_tokens",
+		"max_tokens",
+		"metadata",
+		"min_p",
+		"mirostat_lr",
+		"mirostat_target",
+		"n",
+		"parallel_tool_calls",
+		"perf_metrics_in_response",
+		"prediction",
+		"presence_penalty",
+		"prompt_cache_isolation_key",
+		"prompt_cache_key",
+		"prompt_truncate_len",
+		"raw_output",
+		"reasoning_effort",
+		"reasoning_history",
+		"repetition_penalty",
+		"response_format",
+		"return_token_ids",
+		"safe_tokenization",
+		"seed",
+		"service_tier",
+		"speculation",
+		"stop",
+		"temperature",
+		"thinking",
+		"tool_choice",
+		"tools",
+		"top_k",
+		"top_logprobs",
+		"top_p",
+		"typical_p",
+		"user",
+	} {
+		if _, ok := body[key]; !ok {
+			t.Fatalf("%q missing from body %#v", key, body)
+		}
+	}
+	messages, ok := body["messages"].([]any)
+	if !ok || len(messages) != 1 {
+		t.Fatalf("messages = %#v", body["messages"])
+	}
+	message, ok := messages[0].(map[string]any)
+	if !ok || message["reasoning_content"] != "reasoning_content" || message["tool_call_id"] != "tool_call_id" {
+		t.Fatalf("message = %#v", messages[0])
+	}
+	if body["echo_last"] != float64(0) || body["temperature"] != float64(0) || body["prompt_truncate_len"] != float64(0) {
+		t.Fatalf("zero-valued params were not preserved: %#v", body)
+	}
+	if body["parallel_tool_calls"] != true || body["safe_tokenization"] != true || body["return_token_ids"] != true {
+		t.Fatalf("boolean params = %#v", body)
+	}
+}
+
 func TestWithExtraBodyMergesIntoJSONRequest(t *testing.T) {
 	t.Setenv("FIREWORKS_API_KEY", "test-key")
 
