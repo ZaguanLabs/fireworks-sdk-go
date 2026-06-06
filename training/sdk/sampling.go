@@ -224,12 +224,39 @@ func (s *DeploymentSampler) SampleWithPromptTokens(ctx context.Context, promptTo
 	if err != nil {
 		return nil, err
 	}
-	var out []SampledCompletion
+	if opt.N <= 0 {
+		return nil, nil
+	}
+	if opt.N == 1 {
+		return s.doOneCompletion(ctx, promptTokenIDs, opt, stop)
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	batches := make([][]SampledCompletion, opt.N)
+	errs := make(chan error, opt.N)
+	var wg sync.WaitGroup
 	for i := 0; i < opt.N; i++ {
-		batch, err := s.doOneCompletion(ctx, promptTokenIDs, opt, stop)
+		wg.Add(1)
+		go func(index int) {
+			defer wg.Done()
+			batch, err := s.doOneCompletion(ctx, promptTokenIDs, opt, stop)
+			if err != nil {
+				errs <- err
+				cancel()
+				return
+			}
+			batches[index] = batch
+		}(i)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
 		if err != nil {
 			return nil, err
 		}
+	}
+	var out []SampledCompletion
+	for _, batch := range batches {
 		out = append(out, batch...)
 	}
 	return out, nil

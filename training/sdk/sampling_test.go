@@ -9,6 +9,8 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -512,11 +514,11 @@ func TestDeploymentSamplerStopConversion(t *testing.T) {
 }
 
 func TestDeploymentSamplerNAndMetricsDrain(t *testing.T) {
-	callCount := 0
+	var callCount atomic.Int32
 	pq := 0.2
 	sampler := NewDeploymentSampler("https://api.example.com", "m", "key",
 		WithDeploymentSamplerRequester(func(context.Context, []int, CompletionRequestOptions) (map[string]any, ServerMetrics, error) {
-			callCount++
+			callCount.Add(1)
 			return map[string]any{"choices": []any{map[string]any{
 				"text":       "x",
 				"raw_output": map[string]any{"completion_token_ids": []any{99.0}},
@@ -527,8 +529,8 @@ func TestDeploymentSamplerNAndMetricsDrain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if callCount != 4 || len(results) != 4 {
-		t.Fatalf("callCount=%d results=%d", callCount, len(results))
+	if callCount.Load() != 4 || len(results) != 4 {
+		t.Fatalf("callCount=%d results=%d", callCount.Load(), len(results))
 	}
 	metrics := sampler.DrainMetrics()
 	if len(metrics) != 4 || metrics[0].PrefillQueueDuration == nil || *metrics[0].PrefillQueueDuration != 0.2 {
@@ -536,6 +538,61 @@ func TestDeploymentSamplerNAndMetricsDrain(t *testing.T) {
 	}
 	if len(sampler.DrainMetrics()) != 0 {
 		t.Fatal("metrics were not drained")
+	}
+}
+
+func TestDeploymentSamplerNRequestsRunConcurrently(t *testing.T) {
+	var active atomic.Int32
+	var maxActive atomic.Int32
+	var readyOnce sync.Once
+	ready := make(chan struct{})
+	release := make(chan struct{})
+
+	sampler := NewDeploymentSampler("https://api.example.com", "m", "key",
+		WithDeploymentSamplerRequester(func(context.Context, []int, CompletionRequestOptions) (map[string]any, ServerMetrics, error) {
+			current := active.Add(1)
+			for {
+				previous := maxActive.Load()
+				if current <= previous || maxActive.CompareAndSwap(previous, current) {
+					break
+				}
+			}
+			if current == 4 {
+				readyOnce.Do(func() { close(ready) })
+			}
+			<-release
+			active.Add(-1)
+			return map[string]any{"choices": []any{map[string]any{
+				"text":       "x",
+				"raw_output": map[string]any{"completion_token_ids": []any{99.0}},
+			}}}, ServerMetrics{}, nil
+		}),
+	)
+
+	done := make(chan error, 1)
+	go func() {
+		results, err := sampler.SampleWithPromptTokens(context.Background(), []int{1, 2}, SampleOptions{N: 4})
+		if err == nil && len(results) != 4 {
+			err = errors.New("expected four results")
+		}
+		done <- err
+	}()
+
+	select {
+	case <-ready:
+	case <-time.After(time.Second):
+		close(release)
+		t.Fatalf("requests did not run concurrently; max active = %d", maxActive.Load())
+	}
+	close(release)
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("sample did not finish after releasing requests")
 	}
 }
 
