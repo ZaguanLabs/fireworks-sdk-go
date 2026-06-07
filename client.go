@@ -235,7 +235,7 @@ func NewClient(opts ...ClientOption) (*Client, error) {
 	if cfg.baseURL == "" {
 		cfg.baseURL = defaultBaseURL
 	}
-	if cfg.timeout <= 0 {
+	if cfg.timeout < 0 {
 		cfg.timeout = defaultTimeout
 	}
 
@@ -322,7 +322,7 @@ func (c *Client) WithOptions(opts ...ClientOption) (*Client, error) {
 		cfg.baseURL = defaultBaseURL
 		cfg.baseURLSet = false
 	}
-	if cfg.timeout <= 0 {
+	if cfg.timeout < 0 {
 		cfg.timeout = defaultTimeout
 	}
 	if cfg.httpClient == nil {
@@ -1119,7 +1119,7 @@ func defaultHTTPClient() *http.Client {
 }
 
 func defaultHTTPClientWithTimeout(timeout time.Duration) *http.Client {
-	if timeout <= 0 {
+	if timeout < 0 {
 		timeout = defaultTimeout
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
@@ -1335,7 +1335,7 @@ func shouldSetRetryCountHeader(headers http.Header) bool {
 }
 
 func readTimeoutHeader(timeout time.Duration) string {
-	if timeout <= 0 {
+	if timeout < 0 {
 		timeout = defaultTimeout
 	}
 	return strconv.FormatFloat(timeout.Seconds(), 'f', -1, 64)

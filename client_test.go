@@ -818,6 +818,34 @@ func TestWithOptionsCanReplaceDefaultTimeout(t *testing.T) {
 	}
 }
 
+func TestWithDefaultTimeoutPreservesExplicitZero(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+
+	var seen string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = r.Header.Get("X-Stainless-Read-Timeout")
+		_ = json.NewEncoder(w).Encode(JSON{"ok": true})
+	}))
+	defer server.Close()
+
+	client, err := NewClient(WithBaseURL(server.URL), WithDefaultTimeout(0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.Timeout() != 0 {
+		t.Fatalf("client timeout = %s", client.Timeout())
+	}
+	if client.httpClient.Timeout != 0 {
+		t.Fatalf("http client timeout = %s", client.httpClient.Timeout)
+	}
+	if _, err := client.Get(context.Background(), "/timeout"); err != nil {
+		t.Fatal(err)
+	}
+	if seen != "0" {
+		t.Fatalf("timeout header = %q, want %q", seen, "0")
+	}
+}
+
 func TestClientCloseIsIdempotentAndPreventsRequests(t *testing.T) {
 	t.Setenv("FIREWORKS_API_KEY", "test-key")
 
