@@ -11,6 +11,18 @@ FIREWORKS_API_KEY=fw_... \
 go test ./training/sdk -run Live -count=1
 ```
 
+With only `FIREWORKS_API_KEY` set, the suite runs a read-only account-list
+smoke test and skips the resource-specific tests below.
+
+## Account List Smoke
+
+Required:
+
+- `FIREWORKS_API_KEY`
+
+This calls `GET /v1/accounts?pageSize=1` and verifies that the SDK can
+authenticate and parse a non-empty account list.
+
 ## Trainer Reconnect And Checkpoints
 
 Required:
@@ -75,4 +87,3 @@ Optional:
 - `FIREWORKS_LIVE_DISPLAY_NAME`
 - `FIREWORKS_LIVE_SKIP_VALIDATIONS=1`
 - `FIREWORKS_LIVE_DISABLE_SPECULATIVE_DECODING=1`
-

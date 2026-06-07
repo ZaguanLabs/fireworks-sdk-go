@@ -2,12 +2,43 @@ package sdk
 
 import (
 	"context"
+	"encoding/json"
+	"io"
 	"os"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestLiveAccountListSmoke(t *testing.T) {
+	ctx := liveContext(t)
+	apiKey := liveRequiredEnv(t, "FIREWORKS_API_KEY")
+	baseURL := os.Getenv("FIREWORKS_BASE_URL")
+	client := NewTrainingRestClient(apiKey, baseURL)
+
+	resp, err := client.Get(ctx, "/v1/accounts?pageSize=1", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		t.Fatalf("list accounts: HTTP %d: %s", resp.StatusCode, ParseAPIErrorBody(body))
+	}
+	var payload struct {
+		Accounts []struct {
+			Name string `json:"name"`
+		} `json:"accounts"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Accounts) == 0 || payload.Accounts[0].Name == "" {
+		t.Fatalf("list accounts returned no accounts")
+	}
+	t.Logf("listed Fireworks account %s", payload.Accounts[0].Name)
+}
 
 func TestLiveTrainerReconnectAndListCheckpoints(t *testing.T) {
 	ctx := liveContext(t)
