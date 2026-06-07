@@ -87,6 +87,56 @@ type filePart struct {
 	File File
 }
 
+func copyWithFilePaths(item any, paths [][]string) any {
+	return copyWithFilePathsAt(item, paths, 0)
+}
+
+func copyWithFilePathsAt(item any, paths [][]string, index int) any {
+	if len(paths) == 0 {
+		return item
+	}
+	switch value := item.(type) {
+	case map[string]any:
+		keyPaths := make(map[string][][]string)
+		for _, path := range paths {
+			if index < len(path) {
+				keyPaths[path[index]] = append(keyPaths[path[index]], path)
+			}
+		}
+		if len(keyPaths) == 0 {
+			return item
+		}
+		out := make(map[string]any, len(value))
+		for key, entry := range value {
+			if subpaths, ok := keyPaths[key]; ok {
+				out[key] = copyWithFilePathsAt(entry, subpaths, index+1)
+			} else {
+				out[key] = entry
+			}
+		}
+		return out
+	case JSON:
+		return copyWithFilePathsAt(map[string]any(value), paths, index)
+	case []any:
+		var arrayPaths [][]string
+		for _, path := range paths {
+			if index < len(path) && path[index] == "<array>" {
+				arrayPaths = append(arrayPaths, path)
+			}
+		}
+		if len(arrayPaths) == 0 {
+			return item
+		}
+		out := make([]any, len(value))
+		for i, entry := range value {
+			out[i] = copyWithFilePathsAt(entry, arrayPaths, index+1)
+		}
+		return out
+	default:
+		return item
+	}
+}
+
 func extractFiles(query map[string]any, paths [][]string, arrayFormat string) ([]filePart, error) {
 	if arrayFormat == "" {
 		arrayFormat = "brackets"

@@ -1710,6 +1710,74 @@ func TestNewFileFromPathUsesBasenameAndBytes(t *testing.T) {
 	}
 }
 
+func TestCopyWithFilePathsMirrorsPythonSelectiveCopy(t *testing.T) {
+	fileBytes := []byte("contents")
+	original := map[string]any{"file": fileBytes, "other": "value"}
+	copied := copyWithFilePaths(original, [][]string{{"file"}}).(map[string]any)
+	if copied["file"] == nil {
+		t.Fatalf("copied = %#v", copied)
+	}
+	if copied["file"].([]byte)[0] != fileBytes[0] {
+		t.Fatalf("file value = %#v", copied["file"])
+	}
+	copied["file"].([]byte)[0] = 'C'
+	if fileBytes[0] != 'C' {
+		t.Fatalf("file value was unexpectedly deep-copied: %#v", copied["file"])
+	}
+	copied["other"] = "changed"
+	if original["other"] != "value" {
+		t.Fatalf("original was mutated: %#v", original)
+	}
+
+	elem1 := map[string]any{"file": []byte("f1"), "extra": 1}
+	elem2 := map[string]any{"file": []byte("f2"), "extra": 2}
+	nested := map[string]any{"items": []any{elem1, elem2}, "title": "example"}
+	nestedCopy := copyWithFilePaths(nested, [][]string{{"items", "<array>", "file"}}).(map[string]any)
+	items := nestedCopy["items"].([]any)
+	items[0].(map[string]any)["extra"] = 99
+	if elem1["extra"] != 1 {
+		t.Fatalf("array element was not copied: %#v", elem1)
+	}
+	if nestedCopy["title"] != nested["title"] {
+		t.Fatalf("off-path value changed: %#v", nestedCopy)
+	}
+
+	emptyPathOriginal := map[string]any{"foo": "bar"}
+	emptyPathCopy := copyWithFilePaths(emptyPathOriginal, nil).(map[string]any)
+	emptyPathCopy["foo"] = "baz"
+	if emptyPathOriginal["foo"] != "baz" {
+		t.Fatalf("empty paths should return original container, got %#v", emptyPathCopy)
+	}
+}
+
+func TestCopyWithFilePathsLetsExtractFilesAvoidOriginalMutation(t *testing.T) {
+	original := map[string]any{
+		"items": []any{
+			map[string]any{"file": []byte("f1"), "extra": 1},
+			map[string]any{"file": []byte("f2"), "extra": 2},
+		},
+		"title": "example",
+	}
+	copied := copyWithFilePaths(original, [][]string{{"items", "<array>", "file"}}).(map[string]any)
+	files, err := extractFiles(copied, [][]string{{"items", "<array>", "file"}}, "brackets")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertFileParts(t, files, []string{"items[][file]", "items[][file]"}, []string{"f1", "f2"})
+	originalItems := original["items"].([]any)
+	for _, item := range originalItems {
+		if _, ok := item.(map[string]any)["file"]; !ok {
+			t.Fatalf("original item was mutated: %#v", item)
+		}
+	}
+	copiedItems := copied["items"].([]any)
+	for _, item := range copiedItems {
+		if _, ok := item.(map[string]any)["file"]; ok {
+			t.Fatalf("copied item still has file: %#v", item)
+		}
+	}
+}
+
 func TestExtractFilesMutatesInputLikePythonHelper(t *testing.T) {
 	query := map[string]any{"foo": []byte("Bar"), "hello": "world"}
 	files, err := extractFiles(query, [][]string{{"foo"}}, "brackets")
