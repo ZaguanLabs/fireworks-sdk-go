@@ -2785,6 +2785,9 @@ func TestWithExtraBodyMergesIntoJSONRequest(t *testing.T) {
 		if got := body["custom"]; got != "value" {
 			t.Errorf("custom = %q", got)
 		}
+		if value, ok := body["nullable"]; !ok || value != nil {
+			t.Errorf("nullable = %#v (present=%t)", value, ok)
+		}
 		_ = json.NewEncoder(w).Encode(JSON{
 			"id":      "cmpl-1",
 			"created": 123,
@@ -2803,7 +2806,7 @@ func TestWithExtraBodyMergesIntoJSONRequest(t *testing.T) {
 	out, err := client.Completions.CreateTyped(
 		context.Background(),
 		fwtypes.CompletionCreateParams{Model: "base-model", Prompt: "prompt"},
-		WithExtraBody(map[string]any{"model": "override-model", "custom": "value"}),
+		WithExtraBody(map[string]any{"model": "override-model", "custom": "value", "nullable": nil}),
 	)
 	if err != nil {
 		t.Fatal(err)
