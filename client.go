@@ -1450,17 +1450,15 @@ func parseRetryAfter(headers http.Header) (time.Duration, bool) {
 	}
 	if raw := headers.Get("retry-after-ms"); raw != "" {
 		if ms, err := strconv.ParseFloat(raw, 64); err == nil {
-			delay := time.Duration(ms * float64(time.Millisecond))
-			if isReasonableRetryDelay(delay) {
-				return delay, true
+			if ms > 0 && ms <= float64(time.Minute/time.Millisecond) {
+				return time.Duration(ms * float64(time.Millisecond)), true
 			}
 		}
 	}
 	if raw := headers.Get("retry-after"); raw != "" {
 		if seconds, err := strconv.ParseFloat(raw, 64); err == nil {
-			delay := time.Duration(seconds * float64(time.Second))
-			if isReasonableRetryDelay(delay) {
-				return delay, true
+			if seconds > 0 && seconds <= float64(time.Minute/time.Second) {
+				return time.Duration(seconds * float64(time.Second)), true
 			}
 		}
 		if retryAt, err := http.ParseTime(raw); err == nil {

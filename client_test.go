@@ -2187,7 +2187,68 @@ func TestRetryAfterHeaderControlsRetryDelay(t *testing.T) {
 }
 
 func TestRetryAfterHeaderIgnoresUnreasonableDelay(t *testing.T) {
-	if delay, ok := parseRetryAfter(http.Header{"Retry-After": {"61"}}); ok || delay != 0 {
+	for _, tc := range []struct {
+		name string
+		raw  string
+	}{
+		{name: "zero", raw: "0"},
+		{name: "negative", raw: "-10"},
+		{name: "too large", raw: "61"},
+		{name: "huge", raw: "99999999999999999999999999999999999"},
+		{name: "malformed date", raw: "Zun, 29 Sep 2023 16:26:27 GMT"},
+		{name: "empty", raw: ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if delay, ok := parseRetryAfter(http.Header{"Retry-After": {tc.raw}}); ok || delay != 0 {
+				t.Fatalf("parseRetryAfter = %s, %t", delay, ok)
+			}
+		})
+	}
+}
+
+func TestRetryAfterHeaderAcceptsReasonableNumericDelay(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		raw  string
+		want time.Duration
+	}{
+		{name: "seconds", raw: "20", want: 20 * time.Second},
+		{name: "max", raw: "60", want: time.Minute},
+		{name: "fractional", raw: "0.5", want: 500 * time.Millisecond},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			delay, ok := parseRetryAfter(http.Header{"Retry-After": {tc.raw}})
+			if !ok || delay != tc.want {
+				t.Fatalf("parseRetryAfter = %s, %t; want %s, true", delay, ok, tc.want)
+			}
+		})
+	}
+}
+
+func TestRetryAfterMSHeaderRejectsUnreasonableDelayBeforeDurationConversion(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		raw  string
+	}{
+		{name: "zero", raw: "0"},
+		{name: "negative", raw: "-1"},
+		{name: "too large", raw: "60001"},
+		{name: "huge", raw: "99999999999999999999999999999999999"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if delay, ok := parseRetryAfter(http.Header{"Retry-After-Ms": {tc.raw}}); ok || delay != 0 {
+				t.Fatalf("parseRetryAfter = %s, %t", delay, ok)
+			}
+		})
+	}
+}
+
+func TestRetryAfterMSHeaderTakesPrecedence(t *testing.T) {
+	delay, ok := parseRetryAfter(http.Header{
+		"Retry-After-Ms": {"250"},
+		"Retry-After":    {"20"},
+	})
+	if !ok || delay != 250*time.Millisecond {
 		t.Fatalf("parseRetryAfter = %s, %t", delay, ok)
 	}
 }
