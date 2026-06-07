@@ -69,6 +69,11 @@ type NormalizeLRSchedulerOptions struct {
 	LegacyMinLRRatio  *float64
 }
 
+// StrictSpec mirrors the Python SDK marker type that rejects unknown fields for
+// scheduler payload validation. It is intentionally empty in Go because strict
+// decoding behavior is enforced by decodeStrict.
+type StrictSpec struct{}
+
 func DefaultConstantSchedule() ConstantSchedule {
 	return ConstantSchedule{Type: ScheduleTypeConstant}
 }

@@ -8,6 +8,11 @@ import (
 const (
 	DefaultDeltaCompression = "arc_v2"
 	DefaultChecksumFormat   = "alder32"
+
+	// Backwards-compatible exported names matching Python SDK constants.
+	DEFAULT_CHECKSUM_FORMAT = DefaultChecksumFormat
+	// Backwards-compatible exported names matching Python SDK constants.
+	DEFAULT_DELTA_COMPRESSION = DefaultDeltaCompression
 )
 
 type SamplerCheckpointType string

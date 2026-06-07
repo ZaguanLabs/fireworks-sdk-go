@@ -141,6 +141,11 @@ func TestParseRejectsUnknownScheduleType(t *testing.T) {
 	}
 }
 
+func TestStrictSpecCompatibilityTypeExists(t *testing.T) {
+	var _ any = StrictSpec{}
+	_ = any(new(StrictSpec))
+}
+
 func assertApproxLR(t *testing.T, spec LRSchedulerSpec, step int, baseLR float64, totalSteps int, want float64) {
 	t.Helper()
 	var (

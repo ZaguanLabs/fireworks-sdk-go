@@ -109,3 +109,12 @@ func TestBuildIncrementalMetadataLoraNeverSendsMetadata(t *testing.T) {
 		t.Fatalf("metadata = %#v, want nil", got)
 	}
 }
+
+func TestPythonCompatibleCheckpointConstants(t *testing.T) {
+	if DEFAULT_CHECKSUM_FORMAT != DefaultChecksumFormat {
+		t.Fatalf("DEFAULT_CHECKSUM_FORMAT = %q, want %q", DEFAULT_CHECKSUM_FORMAT, DefaultChecksumFormat)
+	}
+	if DEFAULT_DELTA_COMPRESSION != DefaultDeltaCompression {
+		t.Fatalf("DEFAULT_DELTA_COMPRESSION = %q, want %q", DEFAULT_DELTA_COMPRESSION, DefaultDeltaCompression)
+	}
+}
