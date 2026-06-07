@@ -76,6 +76,19 @@ type fakeManagedDeployment struct {
 	scaledToZero []string
 }
 
+type fakeManagedDeploymentWithShapeResolver struct {
+	fakeManagedDeployment
+	shape map[string]any
+	err   error
+}
+
+func (d *fakeManagedDeploymentWithShapeResolver) GetDeploymentShapeVersion(_ context.Context, _ string) (map[string]any, error) {
+	if d.err != nil {
+		return nil, d.err
+	}
+	return d.shape, nil
+}
+
 func (d *fakeManagedDeployment) GetInfo(_ context.Context, deploymentID string) (DeploymentInfo, bool, error) {
 	info, ok := d.existing[deploymentID]
 	return info, ok, nil
@@ -214,6 +227,34 @@ func TestProvisionManagedHandleReattachesExistingDeployment(t *testing.T) {
 	}
 	if len(deployment.scaledToZero) != 1 || len(trainer.deleted) != 1 {
 		t.Fatalf("scaled=%#v deleted=%#v", deployment.scaledToZero, trainer.deleted)
+	}
+}
+
+func TestProvisionManagedHandleInfersDeploymentRegionFromShape(t *testing.T) {
+	trainer := &fakeManagedTrainer{}
+	deployment := &fakeManagedDeploymentWithShapeResolver{
+		fakeManagedDeployment: fakeManagedDeployment{existing: map[string]DeploymentInfo{}},
+		shape: map[string]any{
+			"snapshot": map[string]any{"acceleratorType": "NVIDIA_B200_180GB"},
+		},
+	}
+	handle, err := ProvisionManagedHandle(context.Background(), ManagedProvisionOptions{
+		Config: FiretitanProvisioningConfig{
+			BaseModel:       "accounts/acct/models/base",
+			DeploymentShape: "accounts/acct/deploymentShapes/serve/versions/1",
+		},
+		Trainer:    trainer,
+		Deployment: deployment,
+		Now:        func() time.Time { return time.Unix(0, 0) },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if handle.Deployment == nil {
+		t.Fatal("deployment handle is nil")
+	}
+	if got := deployment.created[0].Region; got != "US_OHIO_1" {
+		t.Fatalf("deployment region = %q", got)
 	}
 }
 

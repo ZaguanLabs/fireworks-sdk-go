@@ -180,6 +180,50 @@ func (m *DeploymentManager) GetDeployment(ctx context.Context, deploymentID stri
 	return out, nil
 }
 
+func (m *DeploymentManager) GetDeploymentShapeVersion(ctx context.Context, deploymentShape string) (map[string]any, error) {
+	accountID, err := m.AccountID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	trimmed := strings.TrimLeft(deploymentShape, "/")
+	path := "/v1/" + trimmed
+	isVersioned := strings.Contains(trimmed, "/versions/")
+	if !isVersioned {
+		query := url.Values{}
+		query.Set("filter", "latest_validated=true")
+		query.Set("pageSize", "1")
+		path = path + "/versions?" + query.Encode()
+	}
+	resp, err := m.Get(ctx, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("get deployment shape %s for account %s: HTTP %d: %s", deploymentShape, accountID, resp.StatusCode, ParseAPIErrorBody(body))
+	}
+	if len(body) == 0 {
+		return map[string]any{}, nil
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, err
+	}
+	if isVersioned {
+		return payload, nil
+	}
+	versions, _ := payload["deploymentShapeVersions"].([]any)
+	if len(versions) == 0 {
+		return nil, fmt.Errorf("No latest validated deployment-shape version was returned for %q", deploymentShape)
+	}
+	v, _ := versions[0].(map[string]any)
+	if v == nil {
+		return nil, fmt.Errorf("deployment shape version payload was not an object")
+	}
+	return v, nil
+}
+
 func (m *DeploymentManager) GetTrainerRegion(ctx context.Context, trainerJob string) string {
 	resp, err := m.Get(ctx, "/v1/"+strings.TrimLeft(trainerJob, "/"), nil)
 	if err != nil {

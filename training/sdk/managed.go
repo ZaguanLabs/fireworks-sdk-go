@@ -3,6 +3,7 @@ package sdk
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 	"unicode"
@@ -89,6 +90,10 @@ type FiretitanProvisioningConfig struct {
 	Purpose                    string
 	SkipValidations            bool
 	DisableSpeculativeDecoding bool
+}
+
+type ManagedDeploymentShapeResolver interface {
+	GetDeploymentShapeVersion(context.Context, string) (map[string]any, error)
 }
 
 func (c FiretitanProvisioningConfig) Normalize() (FiretitanProvisioningConfig, error) {
@@ -258,7 +263,27 @@ func DefaultDeploymentIDAt(baseModel string, unixSeconds int64) string {
 
 func InferRegionFromDeploymentShapeSnapshot(snapshot map[string]any) string {
 	accelerator, _ := snapshot["acceleratorType"].(string)
+	if accelerator == "" {
+		if nested, _ := snapshot["snapshot"].(map[string]any); nested != nil {
+			accelerator, _ = nested["acceleratorType"].(string)
+		}
+	}
 	return InferRegionFromAccelerator(accelerator)
+}
+
+func InferRegionFromDeploymentShape(ctx context.Context, resolver ManagedDeploymentShapeResolver, deploymentShape string) string {
+	if resolver == nil || strings.TrimSpace(deploymentShape) == "" {
+		return ""
+	}
+	version, err := resolver.GetDeploymentShapeVersion(ctx, deploymentShape)
+	if err != nil {
+		log.Printf("Could not inspect deployment shape %s for region inference: %s", deploymentShape, err)
+		return ""
+	}
+	if version == nil {
+		return ""
+	}
+	return InferRegionFromDeploymentShapeSnapshot(version)
 }
 
 func InferRegionFromAccelerator(accelerator string) string {

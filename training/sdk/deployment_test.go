@@ -189,6 +189,84 @@ func TestCreateDeploymentPostsCorrectPathAndBody(t *testing.T) {
 	}
 }
 
+func TestGetDeploymentShapeVersionFromVersionedPath(t *testing.T) {
+	var seenPath string
+	var seenQuery string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenPath = r.URL.Path
+		seenQuery = r.URL.RawQuery
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"name":     "accounts/test-acct/deploymentShapes/serve/versions/v1",
+			"snapshot": map[string]any{"acceleratorType": "NVIDIA_H100_80GB"},
+		})
+	}))
+	defer server.Close()
+	mgr := NewDeploymentManager("test-key", server.URL)
+	mgr.SetAccountID("test-acct")
+
+	got, err := mgr.GetDeploymentShapeVersion(context.Background(), "accounts/test-acct/deploymentShapes/serve/versions/v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if seenPath != "/v1/accounts/test-acct/deploymentShapes/serve/versions/v1" {
+		t.Fatalf("path = %q", seenPath)
+	}
+	if seenQuery != "" {
+		t.Fatalf("query = %q", seenQuery)
+	}
+	if got["name"] != "accounts/test-acct/deploymentShapes/serve/versions/v1" {
+		t.Fatalf("got = %#v", got)
+	}
+}
+
+func TestGetDeploymentShapeVersionFromUnversionedPathFetchesLatestValidated(t *testing.T) {
+	var seenPath string
+	var filterValue, pageSizeValue string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenPath = r.URL.Path
+		filterValue = r.URL.Query().Get("filter")
+		pageSizeValue = r.URL.Query().Get("pageSize")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"deploymentShapeVersions": []map[string]any{
+				{"name": "accounts/test-acct/deploymentShapes/serve/versions/v1"},
+			},
+		})
+	}))
+	defer server.Close()
+	mgr := NewDeploymentManager("test-key", server.URL)
+	mgr.SetAccountID("test-acct")
+
+	got, err := mgr.GetDeploymentShapeVersion(context.Background(), "accounts/test-acct/deploymentShapes/serve")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if seenPath != "/v1/accounts/test-acct/deploymentShapes/serve/versions" {
+		t.Fatalf("path = %q", seenPath)
+	}
+	if filterValue != "latest_validated=true" || pageSizeValue != "1" {
+		t.Fatalf("query filter=%q pageSize=%q", filterValue, pageSizeValue)
+	}
+	if got["name"] != "accounts/test-acct/deploymentShapes/serve/versions/v1" {
+		t.Fatalf("got = %#v", got)
+	}
+}
+
+func TestGetDeploymentShapeVersionFromUnversionedPathRequiresLatestVersion(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"deploymentShapeVersions": []map[string]any{},
+		})
+	}))
+	defer server.Close()
+	mgr := NewDeploymentManager("test-key", server.URL)
+	mgr.SetAccountID("test-acct")
+
+	_, err := mgr.GetDeploymentShapeVersion(context.Background(), "accounts/test-acct/deploymentShapes/serve")
+	if err == nil || !strings.Contains(err.Error(), "No latest validated deployment-shape version was returned") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 func TestCreateDeploymentOmitsPlacementWhenRegionUnset(t *testing.T) {
 	var body map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

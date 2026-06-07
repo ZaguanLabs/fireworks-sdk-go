@@ -371,6 +371,13 @@ func attachManagedDeployment(ctx context.Context, deployment ManagedDeploymentCo
 	if deployment == nil {
 		return DeploymentInfo{}, false, fmt.Errorf("managed deployment provisioning requires Deployment")
 	}
+	if config.Region == "" && config.DeploymentRegion == "" && deploymentShape != "" {
+		if resolver, ok := deployment.(ManagedDeploymentShapeResolver); ok {
+			if region := InferRegionFromDeploymentShape(ctx, resolver, deploymentShape); region != "" {
+				config.Region = region
+			}
+		}
+	}
 	var existing *DeploymentInfo
 	if ShouldLookupManagedDeployment(config) {
 		info, ok, err := deployment.GetInfo(ctx, config.DeploymentID)
