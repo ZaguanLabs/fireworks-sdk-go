@@ -38,7 +38,7 @@ The broader training parity matrix is in
 go get github.com/ZaguanLabs/fireworks-sdk-go
 ```
 
-Use Go 1.24 or newer.
+Use Go 1.22 or newer.
 
 ## Authentication
 
@@ -351,6 +351,31 @@ python scripts/report_parity.py
 
 If your sandbox prevents local `httptest` listeners, run tests in an
 environment that allows loopback sockets.
+
+## Releases
+
+Releases are created from git tags by
+[`Release`](.github/workflows/release.yml).
+
+Use Go module semver tags:
+
+```sh
+git tag v1.2.0-alpha.76
+git push origin v1.2.0-alpha.76
+```
+
+The workflow checks that `version.go` matches the tag, runs `go test ./...`,
+and creates or updates the GitHub Release. Release notes include a GitHub
+compare changelog link between the previous release and the new tag.
+
+Tag push defaults:
+
+- tags with a prerelease suffix, such as `v1.2.0-alpha.76`, create a
+  prerelease and do not become Latest
+- stable tags, such as `v1.2.0`, create a normal release and become Latest
+
+To override those defaults, run the workflow manually with an existing tag and
+choose `prerelease` and `make_latest` values explicitly.
 
 ## Documentation Port Notes
 

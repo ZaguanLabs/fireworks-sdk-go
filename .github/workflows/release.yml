@@ -1,0 +1,190 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: "Existing git tag to release, for example v1.2.0-alpha.76"
+        required: true
+        type: string
+      prerelease:
+        description: "Mark the GitHub Release as a prerelease"
+        required: true
+        default: "auto"
+        type: choice
+        options:
+          - auto
+          - "true"
+          - "false"
+      make_latest:
+        description: "Whether this release should become Latest"
+        required: true
+        default: "auto"
+        type: choice
+        options:
+          - auto
+          - "true"
+          - "false"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Validate and create GitHub Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Resolve release inputs
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            tag="${{ inputs.tag_name }}"
+            prerelease_input="${{ inputs.prerelease }}"
+            latest_input="${{ inputs.make_latest }}"
+          else
+            tag="${GITHUB_REF_NAME}"
+            prerelease_input="auto"
+            latest_input="auto"
+          fi
+
+          if [[ ! "${tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Tag must look like a Go module semver tag, for example v1.2.0 or v1.2.0-alpha.76: ${tag}" >&2
+            exit 1
+          fi
+
+          version="${tag#v}"
+          if [[ "${prerelease_input}" == "auto" ]]; then
+            if [[ "${version}" == *-* ]]; then
+              prerelease="true"
+            else
+              prerelease="false"
+            fi
+          else
+            prerelease="${prerelease_input}"
+          fi
+
+          if [[ "${latest_input}" == "auto" ]]; then
+            if [[ "${prerelease}" == "true" ]]; then
+              make_latest="false"
+            else
+              make_latest="true"
+            fi
+          else
+            make_latest="${latest_input}"
+          fi
+
+          {
+            echo "tag=${tag}"
+            echo "version=${version}"
+            echo "prerelease=${prerelease}"
+            echo "make_latest=${make_latest}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Checkout tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.release.outputs.tag }}
+          fetch-depth: 0
+
+      - name: Verify tag matches SDK version
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          version="$(sed -n 's/.*Version = "\(.*\)"/\1/p' version.go)"
+          expected="${{ steps.release.outputs.version }}"
+          if [[ "${version}" != "${expected}" ]]; then
+            echo "version.go has ${version}, but tag is v${expected}" >&2
+            exit 1
+          fi
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Test
+        run: go test ./...
+
+      - name: Create or update GitHub Release
+        uses: actions/github-script@v7
+        env:
+          TAG_NAME: ${{ steps.release.outputs.tag }}
+          VERSION: ${{ steps.release.outputs.version }}
+          PRERELEASE: ${{ steps.release.outputs.prerelease }}
+          MAKE_LATEST: ${{ steps.release.outputs.make_latest }}
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const tag = process.env.TAG_NAME;
+            const version = process.env.VERSION;
+            const prerelease = process.env.PRERELEASE === "true";
+            const makeLatest = process.env.MAKE_LATEST === "true" ? "true" : "false";
+
+            const releases = await github.paginate(github.rest.repos.listReleases, {
+              owner,
+              repo,
+              per_page: 100,
+            });
+            const previous = releases
+              .filter((release) => !release.draft && release.tag_name !== tag)
+              .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0];
+
+            const compareBase = `https://github.com/${owner}/${repo}/compare`;
+            const changelogURL = previous
+              ? `${compareBase}/${encodeURIComponent(previous.tag_name)}...${encodeURIComponent(tag)}`
+              : `${compareBase}/${encodeURIComponent(tag)}`;
+
+            const upstreamCompare = version.includes("-alpha.")
+              ? `https://github.com/fw-ai-external/python-sdk/releases/tag/v${version}`
+              : "https://github.com/fw-ai-external/python-sdk";
+
+            const notes = [
+              `Go SDK port release for Fireworks Python SDK \`${version}\`.`,
+              "",
+              `- Changelog: ${changelogURL}`,
+              `- Official Python SDK: https://github.com/fw-ai-external/python-sdk`,
+              `- Upstream Python SDK reference: ${upstreamCompare}`,
+              "",
+              `Release channel: ${prerelease ? "pre-release" : "stable/latest"}`,
+            ].join("\n");
+
+            const params = {
+              owner,
+              repo,
+              tag_name: tag,
+              name: tag,
+              body: notes,
+              draft: false,
+              prerelease,
+              make_latest: makeLatest,
+            };
+
+            try {
+              const existing = await github.rest.repos.getReleaseByTag({ owner, repo, tag });
+              await github.rest.repos.updateRelease({
+                owner,
+                repo,
+                release_id: existing.data.id,
+                name: params.name,
+                body: params.body,
+                draft: params.draft,
+                prerelease: params.prerelease,
+                make_latest: params.make_latest,
+              });
+              core.info(`Updated release ${tag}`);
+            } catch (error) {
+              if (error.status !== 404) {
+                throw error;
+              }
+              await github.rest.repos.createRelease(params);
+              core.info(`Created release ${tag}`);
+            }
