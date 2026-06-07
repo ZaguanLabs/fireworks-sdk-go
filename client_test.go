@@ -1383,6 +1383,60 @@ func TestClientHTTPByteContentHelpers(t *testing.T) {
 	}
 }
 
+func TestClientHTTPReaderContentHelpers(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+
+	var seenBody string
+	var seenContentType string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read body: %v", err)
+		}
+		seenBody = string(body)
+		seenContentType = r.Header.Get("Content-Type")
+		_, _ = w.Write(body)
+	}))
+	defer server.Close()
+
+	client, err := NewClient(WithBaseURL(server.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	text, err := client.RequestReaderText(context.Background(), http.MethodPost, "/bytes", strings.NewReader("reader payload"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text != "reader payload" {
+		t.Fatalf("response text = %q", text)
+	}
+	if seenBody != "reader payload" {
+		t.Fatalf("body = %q", seenBody)
+	}
+	if seenContentType != "application/octet-stream" {
+		t.Fatalf("Content-Type = %q", seenContentType)
+	}
+
+	seenBody = ""
+	seenContentType = ""
+	_, err = client.RequestReaderRaw(context.Background(), http.MethodPost, "/bytes", strings.NewReader("explicit type"), WithHeader("Content-Type", "text/plain"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if seenContentType != "text/plain" {
+		t.Fatalf("Content-Type = %q", seenContentType)
+	}
+
+	resp, err := client.PostReaderResponse(context.Background(), "/bytes", strings.NewReader("typed reader"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(resp.Body); got != "typed reader" {
+		t.Fatalf("response body = %q", got)
+	}
+}
+
 func TestClientRawAndTextResponseHelpers(t *testing.T) {
 	t.Setenv("FIREWORKS_API_KEY", "test-key")
 

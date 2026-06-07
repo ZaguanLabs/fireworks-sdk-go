@@ -831,6 +831,56 @@ func (c *Client) RequestBytesText(ctx context.Context, method, path string, cont
 	return string(bodyBytes), nil
 }
 
+func (c *Client) RequestReader(ctx context.Context, method, path string, content io.Reader, opts ...RequestOption) error {
+	reqOpts := applyRequestOptions(opts)
+	ctx, cancel := contextWithRequestTimeout(ctx, opts)
+	if cancel != nil {
+		defer cancel()
+	}
+	req, err := c.newRequestWithReader(ctx, method, path, content, "application/octet-stream", opts...)
+	if err != nil {
+		return err
+	}
+	maxRetries := c.maxRetries
+	if reqOpts.MaxRetries != nil {
+		maxRetries = *reqOpts.MaxRetries
+	}
+	return c.do(req, nil, maxRetries, followRedirects(reqOpts))
+}
+
+func (c *Client) RequestReaderResponse(ctx context.Context, method, path string, content io.Reader, opts ...RequestOption) (*APIResponse, error) {
+	reqOpts := applyRequestOptions(opts)
+	ctx, cancel := contextWithRequestTimeout(ctx, opts)
+	if cancel != nil {
+		defer cancel()
+	}
+	req, err := c.newRequestWithReader(ctx, method, path, content, "application/octet-stream", opts...)
+	if err != nil {
+		return nil, err
+	}
+	maxRetries := c.maxRetries
+	if reqOpts.MaxRetries != nil {
+		maxRetries = *reqOpts.MaxRetries
+	}
+	return c.doResponse(req, maxRetries, followRedirects(reqOpts))
+}
+
+func (c *Client) RequestReaderRaw(ctx context.Context, method, path string, content io.Reader, opts ...RequestOption) ([]byte, error) {
+	resp, err := c.RequestReaderResponse(ctx, method, path, content, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return resp.Body, nil
+}
+
+func (c *Client) RequestReaderText(ctx context.Context, method, path string, content io.Reader, opts ...RequestOption) (string, error) {
+	bodyBytes, err := c.RequestReaderRaw(ctx, method, path, content, opts...)
+	if err != nil {
+		return "", err
+	}
+	return string(bodyBytes), nil
+}
+
 func (c *Client) Get(ctx context.Context, path string, opts ...RequestOption) (Response, error) {
 	var out Response
 	err := c.Request(ctx, http.MethodGet, path, nil, &out, opts...)
@@ -885,6 +935,33 @@ func (c *Client) PostBytesText(ctx context.Context, path string, content []byte,
 	return c.RequestBytesText(ctx, http.MethodPost, path, content, opts...)
 }
 
+func (c *Client) PostReader(ctx context.Context, path string, content io.Reader, opts ...RequestOption) (Response, error) {
+	resp, err := c.RequestReaderResponse(ctx, http.MethodPost, path, content, opts...)
+	if err != nil {
+		return nil, err
+	}
+	var out Response
+	if len(resp.Body) == 0 {
+		return out, nil
+	}
+	if err := json.Unmarshal(resp.Body, &out); err != nil {
+		return nil, responseValidationError(resp, resp.Body, err)
+	}
+	return out, nil
+}
+
+func (c *Client) PostReaderRaw(ctx context.Context, path string, content io.Reader, opts ...RequestOption) ([]byte, error) {
+	return c.RequestReaderRaw(ctx, http.MethodPost, path, content, opts...)
+}
+
+func (c *Client) PostReaderResponse(ctx context.Context, path string, content io.Reader, opts ...RequestOption) (*APIResponse, error) {
+	return c.RequestReaderResponse(ctx, http.MethodPost, path, content, opts...)
+}
+
+func (c *Client) PostReaderText(ctx context.Context, path string, content io.Reader, opts ...RequestOption) (string, error) {
+	return c.RequestReaderText(ctx, http.MethodPost, path, content, opts...)
+}
+
 func (c *Client) Patch(ctx context.Context, path string, body any, opts ...RequestOption) (Response, error) {
 	var out Response
 	err := c.Request(ctx, http.MethodPatch, path, body, &out, opts...)
@@ -919,6 +996,33 @@ func (c *Client) PatchBytesResponse(ctx context.Context, path string, content []
 
 func (c *Client) PatchBytesText(ctx context.Context, path string, content []byte, opts ...RequestOption) (string, error) {
 	return c.RequestBytesText(ctx, http.MethodPatch, path, content, opts...)
+}
+
+func (c *Client) PatchReader(ctx context.Context, path string, content io.Reader, opts ...RequestOption) (Response, error) {
+	resp, err := c.RequestReaderResponse(ctx, http.MethodPatch, path, content, opts...)
+	if err != nil {
+		return nil, err
+	}
+	var out Response
+	if len(resp.Body) == 0 {
+		return out, nil
+	}
+	if err := json.Unmarshal(resp.Body, &out); err != nil {
+		return nil, responseValidationError(resp, resp.Body, err)
+	}
+	return out, nil
+}
+
+func (c *Client) PatchReaderRaw(ctx context.Context, path string, content io.Reader, opts ...RequestOption) ([]byte, error) {
+	return c.RequestReaderRaw(ctx, http.MethodPatch, path, content, opts...)
+}
+
+func (c *Client) PatchReaderResponse(ctx context.Context, path string, content io.Reader, opts ...RequestOption) (*APIResponse, error) {
+	return c.RequestReaderResponse(ctx, http.MethodPatch, path, content, opts...)
+}
+
+func (c *Client) PatchReaderText(ctx context.Context, path string, content io.Reader, opts ...RequestOption) (string, error) {
+	return c.RequestReaderText(ctx, http.MethodPatch, path, content, opts...)
 }
 
 func (c *Client) Put(ctx context.Context, path string, body any, opts ...RequestOption) (Response, error) {
@@ -957,6 +1061,33 @@ func (c *Client) PutBytesText(ctx context.Context, path string, content []byte, 
 	return c.RequestBytesText(ctx, http.MethodPut, path, content, opts...)
 }
 
+func (c *Client) PutReader(ctx context.Context, path string, content io.Reader, opts ...RequestOption) (Response, error) {
+	resp, err := c.RequestReaderResponse(ctx, http.MethodPut, path, content, opts...)
+	if err != nil {
+		return nil, err
+	}
+	var out Response
+	if len(resp.Body) == 0 {
+		return out, nil
+	}
+	if err := json.Unmarshal(resp.Body, &out); err != nil {
+		return nil, responseValidationError(resp, resp.Body, err)
+	}
+	return out, nil
+}
+
+func (c *Client) PutReaderRaw(ctx context.Context, path string, content io.Reader, opts ...RequestOption) ([]byte, error) {
+	return c.RequestReaderRaw(ctx, http.MethodPut, path, content, opts...)
+}
+
+func (c *Client) PutReaderResponse(ctx context.Context, path string, content io.Reader, opts ...RequestOption) (*APIResponse, error) {
+	return c.RequestReaderResponse(ctx, http.MethodPut, path, content, opts...)
+}
+
+func (c *Client) PutReaderText(ctx context.Context, path string, content io.Reader, opts ...RequestOption) (string, error) {
+	return c.RequestReaderText(ctx, http.MethodPut, path, content, opts...)
+}
+
 func (c *Client) Delete(ctx context.Context, path string, body any, opts ...RequestOption) (Response, error) {
 	var out Response
 	err := c.Request(ctx, http.MethodDelete, path, body, &out, opts...)
@@ -991,6 +1122,33 @@ func (c *Client) DeleteBytesResponse(ctx context.Context, path string, content [
 
 func (c *Client) DeleteBytesText(ctx context.Context, path string, content []byte, opts ...RequestOption) (string, error) {
 	return c.RequestBytesText(ctx, http.MethodDelete, path, content, opts...)
+}
+
+func (c *Client) DeleteReader(ctx context.Context, path string, content io.Reader, opts ...RequestOption) (Response, error) {
+	resp, err := c.RequestReaderResponse(ctx, http.MethodDelete, path, content, opts...)
+	if err != nil {
+		return nil, err
+	}
+	var out Response
+	if len(resp.Body) == 0 {
+		return out, nil
+	}
+	if err := json.Unmarshal(resp.Body, &out); err != nil {
+		return nil, responseValidationError(resp, resp.Body, err)
+	}
+	return out, nil
+}
+
+func (c *Client) DeleteReaderRaw(ctx context.Context, path string, content io.Reader, opts ...RequestOption) ([]byte, error) {
+	return c.RequestReaderRaw(ctx, http.MethodDelete, path, content, opts...)
+}
+
+func (c *Client) DeleteReaderResponse(ctx context.Context, path string, content io.Reader, opts ...RequestOption) (*APIResponse, error) {
+	return c.RequestReaderResponse(ctx, http.MethodDelete, path, content, opts...)
+}
+
+func (c *Client) DeleteReaderText(ctx context.Context, path string, content io.Reader, opts ...RequestOption) (string, error) {
+	return c.RequestReaderText(ctx, http.MethodDelete, path, content, opts...)
 }
 
 func (c *Client) Raw(ctx context.Context, method, path string, body any, opts ...RequestOption) (*http.Response, error) {
