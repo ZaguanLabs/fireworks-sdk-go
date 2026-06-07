@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -563,6 +564,15 @@ func (m *DeploymentManager) Hotload(ctx context.Context, deploymentID, baseModel
 		return nil, err
 	}
 	url := m.HotloadAPIURL + "/hot_load/v1/models/hot_load"
+	ckptType := "BASE (non-delta)"
+	if len(opt.IncrementalSnapshotMetadata) > 0 {
+		ckptType = "DELTA"
+	}
+	detail := ""
+	if opt.Path != "" {
+		detail = " (source=" + opt.Path + ")"
+	}
+	log.Printf("Hotloading %s snapshot '%s' to deployment '%s'%s", ckptType, snapshotIdentity, deploymentID, detail)
 	includeResetPromptCache := m.HotloadResetPromptCacheSupported == nil || *m.HotloadResetPromptCacheSupported
 
 	payload := func(includeReset bool) map[string]any {

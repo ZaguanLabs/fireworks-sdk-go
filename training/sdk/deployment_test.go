@@ -1,8 +1,11 @@
 package sdk
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -466,6 +469,43 @@ func TestHotloadSendsIdentityMetadataAndPathHeader(t *testing.T) {
 	}
 	if sourceURL != "gs://bucket/snap/" {
 		t.Fatalf("sourceURL = %q", sourceURL)
+	}
+}
+
+func TestHotloadLogsCheckpointType(t *testing.T) {
+	var captured bytes.Buffer
+	oldOutput := log.Writer()
+	oldFlags := log.Flags()
+	log.SetOutput(&captured)
+	log.SetFlags(0)
+	t.Cleanup(func() {
+		log.SetOutput(oldOutput)
+		log.SetFlags(oldFlags)
+	})
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/hot_load/v1/models/hot_load" || r.Method != http.MethodPost {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		_, err := io.Copy(io.Discard, r.Body)
+		if err != nil {
+			t.Errorf("read body: %v", err)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+	}))
+	defer server.Close()
+
+	mgr := NewDeploymentManager("test-key", "https://api.example.com", WithDeploymentHotloadAPIURL(server.URL))
+	mgr.SetAccountID("test-acct")
+	if _, err := mgr.Hotload(context.Background(), "dep-1", "accounts/test/models/m", "snap-2", HotloadOptions{
+		Path: "gs://bucket/snap/",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	line := captured.String()
+	expected := "Hotloading BASE (non-delta) snapshot 'snap-2' to deployment 'dep-1' (source=gs://bucket/snap/)"
+	if !strings.Contains(line, expected) {
+		t.Fatalf("captured log = %q, want contains %q", line, expected)
 	}
 }
 
