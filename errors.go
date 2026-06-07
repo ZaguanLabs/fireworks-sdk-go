@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 )
 
@@ -214,8 +215,11 @@ func requestError(req *http.Request, err error) error {
 }
 
 func errorsIsTimeout(err, ctxErr error) bool {
-	return errors.Is(err, context.DeadlineExceeded) ||
-		errors.Is(ctxErr, context.DeadlineExceeded)
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctxErr, context.DeadlineExceeded) {
+		return true
+	}
+	var netErr net.Error
+	return errors.As(err, &netErr) && netErr.Timeout()
 }
 
 func decodeErrorBody(body []byte) any {

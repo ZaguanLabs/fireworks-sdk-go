@@ -18,6 +18,20 @@ import (
 	fwtypes "github.com/ZaguanLabs/fireworks-sdk-go/types"
 )
 
+type staticErrorRoundTripper struct {
+	err error
+}
+
+func (r staticErrorRoundTripper) RoundTrip(*http.Request) (*http.Response, error) {
+	return nil, r.err
+}
+
+type transportTimeoutError struct{}
+
+func (transportTimeoutError) Error() string   { return "transport timeout" }
+func (transportTimeoutError) Timeout() bool   { return true }
+func (transportTimeoutError) Temporary() bool { return true }
+
 func TestVersionMatchesPythonSDK(t *testing.T) {
 	if Title != "fireworks" {
 		t.Fatalf("Title = %q, want %q", Title, "fireworks")
@@ -1029,6 +1043,30 @@ func TestClientDefaultTimeoutIsAppliedByDefaultHTTPClient(t *testing.T) {
 	var timeoutErr *APITimeoutError
 	if !errors.As(err, &timeoutErr) {
 		t.Fatalf("error type = %T, want APITimeoutError", err)
+	}
+}
+
+func TestTransportTimeoutErrorsMapToAPITimeoutError(t *testing.T) {
+	t.Setenv("FIREWORKS_API_KEY", "test-key")
+
+	httpClient := &http.Client{Transport: staticErrorRoundTripper{err: transportTimeoutError{}}}
+	client, err := NewClient(WithBaseURL("https://example.com"), WithHTTPClient(httpClient), WithMaxRetries(0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.Get(context.Background(), "/timeout")
+	if err == nil {
+		t.Fatal("expected timeout error")
+	}
+	var timeoutErr *APITimeoutError
+	if !errors.As(err, &timeoutErr) {
+		t.Fatalf("error type = %T, want APITimeoutError", err)
+	}
+	if timeoutErr.Request == nil || timeoutErr.Request.URL.Path != "/timeout" {
+		t.Fatalf("request = %#v", timeoutErr.Request)
+	}
+	if errors.Unwrap(timeoutErr) == nil {
+		t.Fatal("expected wrapped transport error")
 	}
 }
 
