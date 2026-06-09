@@ -64,7 +64,7 @@ func TestBuildDeploymentBodyDefaults(t *testing.T) {
 	if body["description"] != DefaultDeploymentDescription {
 		t.Fatalf("body = %#v", body)
 	}
-	if body["enableHotLoad"] != true || body["forTraining"] != true {
+	if body["enableHotLoad"] != true || body["forTraining"] != false {
 		t.Fatalf("body = %#v", body)
 	}
 	if body["maxReplicaCount"] != 1 || body["acceleratorType"] != "NVIDIA_H200_141GB" || body["hotLoadBucketType"] != "FW_HOSTED" {
@@ -184,7 +184,7 @@ func TestCreateDeploymentPostsCorrectPathAndBody(t *testing.T) {
 	if !strings.Contains(seenPath, "deploymentId=dep-1") || !strings.Contains(seenPath, "skipShapeValidation=true") || !strings.Contains(seenPath, "disableSpeculativeDecoding=true") {
 		t.Fatalf("path = %q", seenPath)
 	}
-	if body["description"] != DefaultDeploymentDescription || body["enableHotLoad"] != true || body["forTraining"] != true {
+	if body["description"] != DefaultDeploymentDescription || body["enableHotLoad"] != true || body["forTraining"] != false {
 		t.Fatalf("body = %#v", body)
 	}
 }
@@ -294,7 +294,7 @@ func TestCreateDeploymentOmitsPlacementWhenRegionUnset(t *testing.T) {
 	}
 }
 
-func TestCreateDeploymentColocatesWithTrainerRegionWhenUnset(t *testing.T) {
+func TestCreateDeploymentDoesNotResolveTrainerRegionWhenUnset(t *testing.T) {
 	var body map[string]any
 	var trainerPath string
 	var postCount int
@@ -328,22 +328,29 @@ func TestCreateDeploymentColocatesWithTrainerRegionWhenUnset(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if trainerPath != "/v1/accounts/test-acct/rlorTrainerJobs/job-1" || postCount != 1 {
+	if trainerPath != "" || postCount != 1 {
 		t.Fatalf("trainerPath=%q postCount=%d", trainerPath, postCount)
 	}
-	if placement := body["placement"].(map[string]any); placement["region"] != "US_OHIO_1" {
+	if _, ok := body["placement"]; ok {
 		t.Fatalf("body = %#v", body)
 	}
 }
 
-func TestCreateDeploymentRejectsConflictingTrainerRegion(t *testing.T) {
+func TestCreateDeploymentPassesExplicitRegionWithoutTrainerLookup(t *testing.T) {
+	var body map[string]any
 	var postCount int
+	var getCount int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
 			postCount++
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("decode body: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"name": "accounts/test-acct/deployments/dep-1"})
 			return
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"trainingConfig": map[string]any{"region": "US_OHIO_1"}})
+		getCount++
+		http.NotFound(w, r)
 	}))
 	defer server.Close()
 
@@ -355,11 +362,14 @@ func TestCreateDeploymentRejectsConflictingTrainerRegion(t *testing.T) {
 		Region:            "US_VIRGINIA_1",
 		HotLoadTrainerJob: "accounts/test-acct/rlorTrainerJobs/job-1",
 	})
-	if err == nil || !strings.Contains(err.Error(), "colocated") {
+	if err != nil {
 		t.Fatalf("err = %v", err)
 	}
-	if postCount != 0 {
-		t.Fatalf("postCount = %d", postCount)
+	if postCount != 1 || getCount != 0 {
+		t.Fatalf("postCount=%d getCount=%d", postCount, getCount)
+	}
+	if placement := body["placement"].(map[string]any); placement["region"] != "US_VIRGINIA_1" {
+		t.Fatalf("body = %#v", body)
 	}
 }
 

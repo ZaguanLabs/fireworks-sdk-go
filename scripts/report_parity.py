@@ -10,7 +10,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-PYTHON_SDK_VERSION = "1.2.0-alpha.76"
+PYTHON_SDK_VERSION = "1.2.0-alpha.77"
 DEFAULT_FIREWORKS_ROOT = REPO_ROOT / f"docs/fireworks-py/python-sdk-{PYTHON_SDK_VERSION}/src/fireworks"
 FIREWORKS_ROOT = Path(os.environ.get("FIREWORKS_PY_ROOT", DEFAULT_FIREWORKS_ROOT)).expanduser()
 

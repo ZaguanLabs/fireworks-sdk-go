@@ -16,9 +16,10 @@ import (
 const pollTransientMaxBackoff = 60 * time.Second
 
 var (
-	resourceIDRE     = regexp.MustCompile(`^[a-z0-9-]+$`)
-	checkpointNameRE = regexp.MustCompile(`^accounts/([^/]+)/rlorTrainerJobs/([^/]+)/checkpoints/([^/]+)$`)
-	trainingShapeRE  = regexp.MustCompile(`^accounts/[^/]+/trainingShapes/[^/]+(/versions/[^/]+)?$`)
+	resourceIDRE            = regexp.MustCompile(`^[a-z0-9-]+$`)
+	checkpointNameRE        = regexp.MustCompile(`^accounts/([^/]+)/rlorTrainerJobs/([^/]+)/checkpoints/([^/]+)$`)
+	sessionCheckpointNameRE = regexp.MustCompile(`^accounts/([^/]+)/trainingSessions/([^/]+)/checkpoints/([^/]+)$`)
+	trainingShapeRE         = regexp.MustCompile(`^accounts/[^/]+/trainingShapes/[^/]+(/versions/[^/]+)?$`)
 )
 
 type TransientOperationPollError struct {
@@ -93,6 +94,14 @@ func ValidateOutputModelID(outputModelID string) []string {
 
 func ParseCheckpointName(name string) (accountID, jobID, checkpointID string, ok bool) {
 	matches := checkpointNameRE.FindStringSubmatch(name)
+	if matches == nil {
+		return "", "", "", false
+	}
+	return matches[1], matches[2], matches[3], true
+}
+
+func ParseSessionCheckpointName(name string) (accountID, sessionID, checkpointID string, ok bool) {
+	matches := sessionCheckpointNameRE.FindStringSubmatch(name)
 	if matches == nil {
 		return "", "", "", false
 	}
@@ -336,13 +345,10 @@ func (c *FireworksClient) PromoteCheckpoint(ctx context.Context, opts PromoteChe
 			model, _ = result["model"].(map[string]any)
 		}
 		if model == nil {
-			model = c.FetchPromotedModel(ctx, accountID, opts.OutputModelID)
-		}
-		if model == nil {
 			return nil, fmt.Errorf("%s", FormatSDKError(
 				"Failed to promote checkpoint '"+checkpointID+"'",
 				"promotion operation completed without a model response",
-				"The promote operation finished, but neither the server response nor a follow-up model lookup returned the promoted model payload. Check the operation and output model in the Fireworks console.\n  Console: "+ConsoleURL,
+				"The promote operation finished, but the server response did not contain the promoted model payload. Check the operation and output model in the Fireworks console.\n  Console: "+ConsoleURL,
 				SDKErrorFormatOptions{DocsURL: DocsSDK},
 			))
 		}
@@ -403,6 +409,100 @@ func (c *FireworksClient) ListCheckpoints(ctx context.Context, jobID string, pag
 	return rows, nil
 }
 
+type PromoteSessionCheckpointOptions struct {
+	Name          string
+	OutputModelID string
+	BaseModel     string
+}
+
+func (c *FireworksClient) PromoteSessionCheckpoint(ctx context.Context, opts PromoteSessionCheckpointOptions) (map[string]any, error) {
+	accountID, _, checkpointID, ok := ParseSessionCheckpointName(opts.Name)
+	if !ok {
+		return nil, fmt.Errorf("invalid session checkpoint name %q. Expected 4 segments: accounts/<account>/trainingSessions/<session>/checkpoints/<id>", opts.Name)
+	}
+	if opts.BaseModel == "" {
+		return nil, fmt.Errorf("base_model is required")
+	}
+	if errors := ValidateOutputModelID(opts.OutputModelID); len(errors) > 0 {
+		return nil, fmt.Errorf("%s", strings.Join(errors, "\n\n"))
+	}
+	outputModel := "accounts/" + accountID + "/models/" + opts.OutputModelID
+	body := map[string]any{
+		"output_model": outputModel,
+		"base_model":   opts.BaseModel,
+	}
+	resp, err := c.request(ctx, http.MethodPost, "/v1/"+opts.Name+":promote", body, nil, HTTPLongWriteTimeout)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("%s", FormatSDKError(
+			"Failed to promote session checkpoint '"+checkpointID+"'",
+			ParseAPIErrorBody(respBody),
+			"Check that the checkpoint is valid and base_model is correct.\n  Console: "+ConsoleURL,
+			SDKErrorFormatOptions{DocsURL: DocsSDK},
+		))
+	}
+	var result map[string]any
+	if len(respBody) > 0 {
+		if err := json.Unmarshal(respBody, &result); err != nil {
+			return nil, err
+		}
+	}
+	return LogPromotedModel(result), nil
+}
+
+func (c *FireworksClient) ListTrainingSessionCheckpoints(ctx context.Context, name string, pageSize int) ([]map[string]any, error) {
+	if pageSize <= 0 {
+		pageSize = 200
+	}
+	basePath := "/v1/" + strings.TrimLeft(name, "/") + "/checkpoints"
+	var rows []map[string]any
+	pageToken := ""
+	for {
+		query := url.Values{}
+		query.Set("pageSize", fmt.Sprint(pageSize))
+		if pageToken != "" {
+			query.Set("pageToken", pageToken)
+		}
+		resp, err := c.Get(ctx, basePath+"?"+query.Encode(), nil)
+		if err != nil {
+			return nil, err
+		}
+		body, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return nil, fmt.Errorf("%s", FormatSDKError(
+				fmt.Sprintf("Failed to list checkpoints for training session %q (HTTP %d)", name, resp.StatusCode),
+				ParseAPIErrorBody(body),
+				"Verify the session name and that your API key resolves to the account that owns it.",
+				SDKErrorFormatOptions{DocsURL: DocsSDK},
+			))
+		}
+		var payload map[string]any
+		if len(body) > 0 {
+			if err := json.Unmarshal(body, &payload); err != nil {
+				return nil, err
+			}
+		}
+		for _, item := range trainingSessionCheckpointPage(payload) {
+			if row, ok := item.(map[string]any); ok {
+				rows = append(rows, row)
+			}
+		}
+		pageToken = stringFromAny(payload["nextPageToken"])
+		if pageToken == "" {
+			pageToken = stringFromAny(payload["next_page_token"])
+		}
+		if pageToken == "" {
+			break
+		}
+	}
+	return rows, nil
+}
+
 func (c *FireworksClient) ResolvePromoteTarget(ctx context.Context, name, jobID, checkpointID string) (string, string, string, error) {
 	if name != "" {
 		if checkpointID != "" {
@@ -440,22 +540,6 @@ func BuildPromoteRequest(accountID, jobID, checkpointID, outputModelID, baseMode
 	return path, body
 }
 
-func (c *FireworksClient) FetchPromotedModel(ctx context.Context, accountID, outputModelID string) map[string]any {
-	resp, err := c.Get(ctx, "/v1/accounts/"+accountID+"/models/"+outputModelID, nil)
-	if err != nil {
-		return nil
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil
-	}
-	model, err := decodeJSONMap(resp.Body)
-	if err != nil {
-		return nil
-	}
-	return model
-}
-
 func (c *FireworksClient) decodePromoteResponse(resp *http.Response) (map[string]any, bool, error) {
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
@@ -480,6 +564,16 @@ func (c *FireworksClient) decodePromoteResponse(resp *http.Response) (map[string
 		result = make(map[string]any)
 	}
 	return result, false, nil
+}
+
+func LogPromotedModel(result map[string]any) map[string]any {
+	if result == nil {
+		return map[string]any{}
+	}
+	if model, ok := result["model"].(map[string]any); ok {
+		return model
+	}
+	return map[string]any{}
 }
 
 func isUnknownAsyncPromotionField(body []byte) bool {
@@ -547,6 +641,15 @@ func checkpointPage(payload map[string]any) []any {
 	}
 	if rows, ok := payload["rlorTrainerJobCheckpoints"].([]any); ok {
 		return rows
+	}
+	return nil
+}
+
+func trainingSessionCheckpointPage(payload map[string]any) []any {
+	for _, key := range []string{"trainingSessionCheckpoints", "training_session_checkpoints", "checkpoints"} {
+		if values, ok := payload[key].([]any); ok {
+			return values
+		}
 	}
 	return nil
 }

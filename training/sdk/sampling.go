@@ -7,8 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"math/rand"
+	"net"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -35,6 +38,22 @@ type SampledCompletion struct {
 	InferenceLogprobs []float64
 	LogprobsEchoed    bool
 	RoutingMatrices   []string
+}
+
+type DeploymentSamplerTimeoutError struct {
+	Message string
+	Err     error
+}
+
+func (e *DeploymentSamplerTimeoutError) Error() string {
+	if e.Message != "" {
+		return e.Message
+	}
+	return "deployment sampler timeout"
+}
+
+func (e *DeploymentSamplerTimeoutError) Unwrap() error {
+	return e.Err
 }
 
 type FiretitanSampledSequence struct {
@@ -179,15 +198,16 @@ func NewDeploymentSampler(inferenceURL, model, apiKey string, opts ...Deployment
 }
 
 type SampleOptions struct {
-	N                    int
-	MaxTokens            int
-	Temperature          float64
-	MaxSeqLen            int
-	Logprobs             bool
-	Echo                 bool
-	IncludeRoutingMatrix bool
-	Stop                 any
-	Extra                map[string]any
+	N                        int
+	MaxTokens                int
+	Temperature              float64
+	MaxSeqLen                int
+	Logprobs                 bool
+	Echo                     bool
+	IncludeRoutingMatrix     bool
+	Stop                     any
+	Extra                    map[string]any
+	TimeoutDiagnosticContext any
 }
 
 const (
@@ -478,7 +498,16 @@ func (s *DeploymentSampler) doOneCompletion(ctx context.Context, promptIDs []int
 		if err == nil {
 			return s.ParseCompletionsResult(result, promptIDs, opt.MaxSeqLen, opt.Logprobs, opt.IncludeRoutingMatrix, opt.Echo)
 		}
-		if !samplerRetryableCompletionError(err) || attempt == SamplerRetryMaxAttempts {
+		if !samplerRetryableCompletionError(err) {
+			return nil, err
+		}
+		if attempt == SamplerRetryMaxAttempts {
+			if samplerTimeoutLikeError(err) {
+				return nil, &DeploymentSamplerTimeoutError{
+					Message: s.timeoutDiagnostic(err.Error(), promptIDs, opt, true),
+					Err:     err,
+				}
+			}
 			return nil, err
 		}
 		s.Sleep(s.retryBackoffDelay(backoff))
@@ -488,6 +517,159 @@ func (s *DeploymentSampler) doOneCompletion(ctx context.Context, promptIDs []int
 		}
 	}
 	return nil, fmt.Errorf("unreachable: sampler retry loop exited")
+}
+
+func samplerTimeoutLikeError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+	var statusErr *CompletionHTTPStatusError
+	if errors.As(err, &statusErr) {
+		return statusErr.StatusCode == http.StatusRequestTimeout || statusErr.StatusCode == http.StatusGatewayTimeout
+	}
+	return false
+}
+
+func (s *DeploymentSampler) timeoutDiagnostic(label string, promptIDs []int, opt SampleOptions, exhausted bool) string {
+	httpTimeout := "600s"
+	if s.HTTPClient != nil && s.HTTPClient.Timeout > 0 {
+		httpTimeout = fmt.Sprintf("%.0fs", s.HTTPClient.Timeout.Seconds())
+	}
+	summary := "DeploymentSampler request hit a timeout-like transient."
+	if exhausted {
+		summary = "DeploymentSampler request failed after exhausting retries on a timeout-like error."
+	}
+	fields := []string{
+		summary,
+		"raw_error=" + label,
+		"model=" + s.Model,
+		fmt.Sprintf("prompt_tokens=%d", len(promptIDs)),
+		fmt.Sprintf("max_tokens=%d", opt.MaxTokens),
+		"http_timeout=" + httpTimeout,
+	}
+	contextFields, isRLRollout := formatTimeoutDiagnosticContext(opt.TimeoutDiagnosticContext)
+	if exhausted {
+		if window := concurrencyWindowSize(s.ConcurrencyController); window != "" {
+			fields = append(fields, "sampler_concurrency_window="+window)
+		}
+		fields = append(fields, contextFields...)
+		fields = append(fields, s.recentMetricsDiagnostic()...)
+		if isRLRollout {
+			fields = append(fields, "RL rollout context detected. If recent queue/TTFT metrics are high, rollout sampling may be exceeding sampler capacity.")
+			fields = append(fields, "Check recent queue/TTFT metrics. If they are elevated, reduce rollout concurrency and/or max_completion_tokens, or increase sampler capacity; otherwise investigate gateway, network, or client timeout limits.")
+		} else {
+			fields = append(fields, "Check serving queue/TTFT metrics, gateway timeout limits, network stability, and request shape before changing capacity.")
+		}
+	} else if isRLRollout {
+		for _, field := range contextFields {
+			if strings.HasPrefix(field, "max_concurrency_rollout_sample=") {
+				fields = append(fields, field)
+			}
+		}
+		fields = append(fields, "If this repeats and serving queue/TTFT metrics are high, reduce rollout concurrency/completion tokens or increase sampler capacity.")
+	}
+	return strings.Join(fields, " ")
+}
+
+func formatTimeoutDiagnosticContext(contextValue any) ([]string, bool) {
+	contextMap, ok := contextValue.(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	keys := make([]string, 0, len(contextMap))
+	for key, value := range contextMap {
+		if value != nil {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	fields := make([]string, 0, len(keys))
+	isRLRollout := false
+	for _, key := range keys {
+		value := contextMap[key]
+		if key == "workload" && (value == "async_rl_rollout" || value == "rl_rollout") {
+			isRLRollout = true
+		}
+		fields = append(fields, fmt.Sprintf("%s=%v", key, value))
+	}
+	return fields, isRLRollout
+}
+
+func concurrencyWindowSize(controller SamplingConcurrencyController) string {
+	if withWindow, ok := controller.(interface{ WindowSize() int }); ok {
+		return fmt.Sprint(withWindow.WindowSize())
+	}
+	return ""
+}
+
+func (s *DeploymentSampler) recentMetricsDiagnostic() []string {
+	s.mu.Lock()
+	recent := append([]ServerMetrics(nil), s.recentMetrics...)
+	s.mu.Unlock()
+	if len(recent) > 32 {
+		recent = recent[len(recent)-32:]
+	}
+	if len(recent) == 0 {
+		return nil
+	}
+	var prefill, generation, ttft []float64
+	var concurrent []int
+	for _, metric := range recent {
+		if metric.PrefillQueueDuration != nil {
+			prefill = append(prefill, *metric.PrefillQueueDuration)
+		}
+		if metric.GenerationQueueDuration != nil {
+			generation = append(generation, *metric.GenerationQueueDuration)
+		}
+		if metric.ClientTTFT != nil {
+			ttft = append(ttft, *metric.ClientTTFT)
+		}
+		if metric.NumConcurrentRequests != nil {
+			concurrent = append(concurrent, *metric.NumConcurrentRequests)
+		}
+	}
+	var fields []string
+	if value, ok := p95(prefill); ok {
+		fields = append(fields, fmt.Sprintf("recent_prefill_queue_p95=%.1fs", value))
+	}
+	if value, ok := p95(generation); ok {
+		fields = append(fields, fmt.Sprintf("recent_generation_queue_p95=%.1fs", value))
+	}
+	if value, ok := p95(ttft); ok {
+		fields = append(fields, fmt.Sprintf("recent_client_ttft_p95=%.1fs", value))
+	}
+	if len(concurrent) > 0 {
+		maxConcurrent := concurrent[0]
+		for _, value := range concurrent[1:] {
+			if value > maxConcurrent {
+				maxConcurrent = value
+			}
+		}
+		fields = append(fields, fmt.Sprintf("recent_concurrent_requests_max=%d", maxConcurrent))
+	}
+	return fields
+}
+
+func p95(values []float64) (float64, bool) {
+	if len(values) == 0 {
+		return 0, false
+	}
+	sort.Float64s(values)
+	index := int(math.Ceil(0.95*float64(len(values)))) - 1
+	if index < 0 {
+		index = 0
+	}
+	if index >= len(values) {
+		index = len(values) - 1
+	}
+	return values[index], true
 }
 
 func (s *DeploymentSampler) retryBackoffDelay(backoff time.Duration) time.Duration {
@@ -826,6 +1008,7 @@ func sampleOptions(opts ...SampleOptions) SampleOptions {
 		opt.IncludeRoutingMatrix = provided.IncludeRoutingMatrix
 		opt.Stop = provided.Stop
 		opt.Extra = cloneAnyMap(provided.Extra)
+		opt.TimeoutDiagnosticContext = provided.TimeoutDiagnosticContext
 	}
 	return opt
 }

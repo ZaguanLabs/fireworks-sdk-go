@@ -19,6 +19,7 @@ var (
 )
 
 const GradientAccumulationStepsOneWarning = "TrainerJobConfig.gradient_accumulation_steps=1 is deprecated and ignored. Express gradient accumulation as client-side control flow (multiple forward_backward calls per optim_step) and pass grad_accumulation_normalization on the optim_step request."
+const displayNameLengthLimit = 64
 
 type TrainerServiceEndpoint struct {
 	JobName string
@@ -67,6 +68,7 @@ type TrainerJobConfig struct {
 	SkipValidations           bool
 	Purpose                   string
 	ManagedBy                 string
+	RequestedJobID            string
 }
 
 func (c TrainerJobConfig) Validate() error {
@@ -81,6 +83,9 @@ func (c TrainerJobConfig) Validate() error {
 		if _, err := FormatProtoDuration(c.InactivityTimeout); err != nil {
 			errors = append(errors, "inactivity_timeout "+err.Error())
 		}
+	}
+	if c.DisplayName != "" && len(c.DisplayName) >= displayNameLengthLimit {
+		errors = append(errors, "display_name must be fewer than 64 characters")
 	}
 	if c.TrainingShapeRef != "" {
 		if c.AcceleratorType != "" {
@@ -261,26 +266,49 @@ func (m *TrainerJobManager) ReconnectAndWait(ctx context.Context, jobID string, 
 }
 
 func (m *TrainerJobManager) GetJob(ctx context.Context, jobID string) (map[string]any, error) {
-	accountID, err := m.AccountID(ctx)
+	job, found, err := m.TryGetJob(ctx, jobID)
 	if err != nil {
 		return nil, err
+	}
+	if !found {
+		accountID, accountErr := m.AccountID(ctx)
+		if accountErr != nil {
+			return nil, accountErr
+		}
+		return nil, fmt.Errorf("%s", FormatSDKError(
+			"Trainer job "+jobID+" was not found in this account",
+			"No RLOR trainer job exists at accounts/"+accountID+"/rlorTrainerJobs/"+jobID+".",
+			"Verify the job ID or create a new trainer job.",
+			SDKErrorFormatOptions{DocsURL: DocsSDK},
+		))
+	}
+	return job, nil
+}
+
+func (m *TrainerJobManager) TryGetJob(ctx context.Context, jobID string) (map[string]any, bool, error) {
+	accountID, err := m.AccountID(ctx)
+	if err != nil {
+		return nil, false, err
 	}
 	resp, err := m.Get(ctx, "/v1/accounts/"+accountID+"/rlorTrainerJobs/"+jobID, nil)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, false, nil
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("get trainer job %s: HTTP %d: %s", jobID, resp.StatusCode, ParseAPIErrorBody(body))
+		return nil, false, fmt.Errorf("get trainer job %s: HTTP %d: %s", jobID, resp.StatusCode, ParseAPIErrorBody(body))
 	}
 	var out map[string]any
 	if len(body) > 0 {
 		if err := json.Unmarshal(body, &out); err != nil {
-			return nil, err
+			return nil, false, err
 		}
 	}
-	return out, nil
+	return out, true, nil
 }
 
 func (m *TrainerJobManager) DeleteJob(ctx context.Context, jobID string) error {
@@ -514,6 +542,9 @@ func (m *TrainerJobManager) CreateRaw(ctx context.Context, config TrainerJobConf
 		}
 	} else {
 		query.Set("skipValidations", "true")
+	}
+	if config.RequestedJobID != "" {
+		query.Set("rlorTrainerJobId", config.RequestedJobID)
 	}
 	if len(query) > 0 {
 		path += "?" + query.Encode()

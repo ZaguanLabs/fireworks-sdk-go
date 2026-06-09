@@ -253,6 +253,8 @@ func firetitanProvisioningConfigFromCanonicalMap(values map[string]any) (Firetit
 			config.DisplayName, err = asString(value, key)
 		case "purpose":
 			config.Purpose, err = asString(value, key)
+		case "managed_by":
+			config.ManagedBy, err = asString(value, key)
 		case "skip_validations":
 			config.SkipValidations, err = asBool(value, key)
 		case "disable_speculative_decoding":

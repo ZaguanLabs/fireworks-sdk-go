@@ -51,6 +51,7 @@ type DeploymentConfig struct {
 	HotLoadBucketType          *string
 	HotLoadTrainerJob          string
 	EnableHotLoad              *bool
+	ForTraining                bool
 	SkipShapeValidation        bool
 	DisableSpeculativeDecoding bool
 	ExtraArgs                  []string
@@ -284,20 +285,7 @@ func (m *DeploymentManager) CreateDeployment(ctx context.Context, config Deploym
 	}
 	path := "/v1/accounts/" + accountID + "/deployments?" + query.Encode()
 
-	region := config.Region
-	if config.HotLoadTrainerJob != "" {
-		trainerRegion := m.GetTrainerRegion(ctx, config.HotLoadTrainerJob)
-		if trainerRegion != "" {
-			if config.Region != "" && config.Region != trainerRegion {
-				return nil, fmt.Errorf("hot_load_trainer_job %s is in region %s, but the deployment requests region %s; hot-load requires the deployment to be colocated with the trainer. Leave region unset to inherit the trainer's region", config.HotLoadTrainerJob, trainerRegion, config.Region)
-			}
-			if config.Region == "" {
-				region = trainerRegion
-			}
-		}
-	}
-
-	resp, err := m.Post(ctx, path, BuildDeploymentBody(config, region), nil)
+	resp, err := m.Post(ctx, path, BuildDeploymentBody(config), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -369,7 +357,7 @@ func BuildDeploymentBody(config DeploymentConfig, resolvedRegion ...string) map[
 		"minReplicaCount": config.MinReplicaCount,
 		"maxReplicaCount": *maxReplicaCount,
 		"enableHotLoad":   enableHotLoad,
-		"forTraining":     enableHotLoad,
+		"forTraining":     config.ForTraining,
 	}
 	if region != "" {
 		body["placement"] = map[string]any{"region": region}

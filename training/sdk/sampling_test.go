@@ -114,6 +114,54 @@ func TestDeploymentSamplerExplicitControllerOverridesMaxConcurrency(t *testing.T
 	}
 }
 
+func TestDeploymentSamplerTimeoutErrorIncludesDiagnostics(t *testing.T) {
+	prefill := 2.5
+	ttft := 3.5
+	concurrent := 7
+	sampler := NewDeploymentSampler(
+		"https://api.example.com",
+		"accounts/acct/deployments/dep-1",
+		"key",
+		WithDeploymentSamplerRequester(func(context.Context, []int, CompletionRequestOptions) (map[string]any, ServerMetrics, error) {
+			return nil, ServerMetrics{}, &CompletionHTTPStatusError{StatusCode: http.StatusGatewayTimeout, Body: []byte(`{"error":"timeout"}`)}
+		}),
+		WithDeploymentSamplerClock(nil, func(time.Duration) {}),
+		WithDeploymentSamplerRetryJitter(func() float64 { return 0 }),
+		WithDeploymentSamplerMaxConcurrency(3),
+	)
+	sampler.recentMetrics = []ServerMetrics{{
+		PrefillQueueDuration:  &prefill,
+		ClientTTFT:            &ttft,
+		NumConcurrentRequests: &concurrent,
+	}}
+	_, err := sampler.SampleWithPromptTokens(context.Background(), []int{1, 2, 3}, SampleOptions{
+		N:         1,
+		MaxTokens: 4,
+		TimeoutDiagnosticContext: map[string]any{
+			"workload":                       "rl_rollout",
+			"max_concurrency_rollout_sample": 9,
+		},
+	})
+	var timeoutErr *DeploymentSamplerTimeoutError
+	if !errors.As(err, &timeoutErr) {
+		t.Fatalf("err = %T %v", err, err)
+	}
+	for _, want := range []string{
+		"exhausting retries",
+		"prompt_tokens=3",
+		"max_tokens=4",
+		"sampler_concurrency_window=3",
+		"recent_prefill_queue_p95=2.5s",
+		"recent_client_ttft_p95=3.5s",
+		"recent_concurrent_requests_max=7",
+		"RL rollout context detected",
+	} {
+		if !strings.Contains(timeoutErr.Error(), want) {
+			t.Fatalf("timeout error missing %q: %s", want, timeoutErr.Error())
+		}
+	}
+}
+
 func TestAdaptiveConcurrencyControllerInitialWindow(t *testing.T) {
 	ctrl := NewAdaptiveConcurrencyController(AdaptiveConcurrencyOptions{InitialWindow: 16})
 	if ctrl.WindowSize() != 16 {

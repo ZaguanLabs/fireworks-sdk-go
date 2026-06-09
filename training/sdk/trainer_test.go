@@ -174,6 +174,52 @@ func TestTrainerJobPayloadConstruction(t *testing.T) {
 	}
 }
 
+func TestTrainerJobCreateSendsRequestedJobID(t *testing.T) {
+	var seenPath string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenPath = r.URL.String()
+		_ = json.NewEncoder(w).Encode(map[string]any{"name": "accounts/test/rlorTrainerJobs/stable-id"})
+	}))
+	defer server.Close()
+
+	mgr := NewTrainerJobManager("test-key", server.URL)
+	mgr.SetAccountID("test")
+	created, err := mgr.Create(context.Background(), TrainerJobConfig{
+		BaseModel:      "accounts/test/models/m",
+		RequestedJobID: "stable-id",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.JobID != "stable-id" {
+		t.Fatalf("created = %#v", created)
+	}
+	if !strings.Contains(seenPath, "rlorTrainerJobId=stable-id") {
+		t.Fatalf("path = %q", seenPath)
+	}
+}
+
+func TestTrainerTryGetJobReturnsNotFound(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	mgr := NewTrainerJobManager("test-key", server.URL)
+	mgr.SetAccountID("test")
+	job, found, err := mgr.TryGetJob(context.Background(), "missing")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if found || job != nil {
+		t.Fatalf("job=%#v found=%t", job, found)
+	}
+	_, err = mgr.GetJob(context.Background(), "missing")
+	if err == nil || !strings.Contains(err.Error(), "was not found") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 func TestTrainerJobShapePathOmitsInfraFields(t *testing.T) {
 	payload := BuildTrainerCreatePayload(TrainerJobConfig{
 		BaseModel:        "accounts/test/models/m",

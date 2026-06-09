@@ -264,7 +264,7 @@ func TestFireworksClientPromoteCheckpointRetriesWithoutAsyncField(t *testing.T) 
 	}
 }
 
-func TestFireworksClientPromoteCheckpointFetchesModelWhenOperationResponseEmpty(t *testing.T) {
+func TestFireworksClientPromoteCheckpointFailsWhenOperationResponseEmpty(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/accounts/acct/checkpoints/cp-1:promote":
@@ -287,16 +287,13 @@ func TestFireworksClientPromoteCheckpointFetchesModelWhenOperationResponseEmpty(
 	defer server.Close()
 
 	client := NewFireworksClient("test-key", server.URL)
-	model, err := client.PromoteCheckpoint(context.Background(), PromoteCheckpointOptions{
+	_, err := client.PromoteCheckpoint(context.Background(), PromoteCheckpointOptions{
 		Name:          "accounts/acct/rlorTrainerJobs/job-1/checkpoints/cp-1",
 		OutputModelID: "out",
 		BaseModel:     "accounts/fireworks/models/base",
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if model["state"] != "READY" {
-		t.Fatalf("model = %#v", model)
+	if err == nil || !strings.Contains(err.Error(), "server response did not contain the promoted model payload") {
+		t.Fatalf("err = %v", err)
 	}
 }
 
@@ -569,5 +566,82 @@ func TestFireworksClientListCheckpointsErrors(t *testing.T) {
 				t.Fatalf("error = %v", err)
 			}
 		})
+	}
+}
+
+func TestParseSessionCheckpointName(t *testing.T) {
+	accountID, sessionID, checkpointID, ok := ParseSessionCheckpointName("accounts/acct/trainingSessions/sess-1/checkpoints/cp-1")
+	if !ok {
+		t.Fatal("expected parse success")
+	}
+	if accountID != "acct" || sessionID != "sess-1" || checkpointID != "cp-1" {
+		t.Fatalf("parsed = %q %q %q", accountID, sessionID, checkpointID)
+	}
+	if _, _, _, ok := ParseSessionCheckpointName("accounts/acct/rlorTrainerJobs/job/checkpoints/cp"); ok {
+		t.Fatal("unexpected parse success")
+	}
+}
+
+func TestFireworksClientListTrainingSessionCheckpointsAutoPaginates(t *testing.T) {
+	var seenPaths []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenPaths = append(seenPaths, r.URL.String())
+		if r.URL.Query().Get("pageToken") == "" {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"trainingSessionCheckpoints": []map[string]any{{"name": "c/1", "promotable": true}},
+				"nextPageToken":              "tok-2",
+			})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"checkpoints": []map[string]any{{"name": "c/2", "promotable": false}},
+		})
+	}))
+	defer server.Close()
+
+	client := NewFireworksClient("test-key", server.URL)
+	rows, err := client.ListTrainingSessionCheckpoints(context.Background(), "accounts/acct/trainingSessions/sess-1", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 || rows[0]["name"] != "c/1" || rows[1]["name"] != "c/2" {
+		t.Fatalf("rows = %#v", rows)
+	}
+	if len(seenPaths) != 2 || !strings.Contains(seenPaths[1], "pageToken=tok-2") || !strings.Contains(seenPaths[1], "pageSize=1") {
+		t.Fatalf("paths = %#v", seenPaths)
+	}
+}
+
+func TestFireworksClientPromoteSessionCheckpoint(t *testing.T) {
+	var body map[string]any
+	var seenPath string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenPath = r.URL.Path
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode body: %v", err)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"model": map[string]any{"name": "accounts/acct/models/out", "state": "READY"},
+		})
+	}))
+	defer server.Close()
+
+	client := NewFireworksClient("test-key", server.URL)
+	model, err := client.PromoteSessionCheckpoint(context.Background(), PromoteSessionCheckpointOptions{
+		Name:          "accounts/acct/trainingSessions/sess-1/checkpoints/cp-1",
+		OutputModelID: "out",
+		BaseModel:     "accounts/fireworks/models/base",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if seenPath != "/v1/accounts/acct/trainingSessions/sess-1/checkpoints/cp-1:promote" {
+		t.Fatalf("path = %q", seenPath)
+	}
+	if body["output_model"] != "accounts/acct/models/out" || body["base_model"] != "accounts/fireworks/models/base" {
+		t.Fatalf("body = %#v", body)
+	}
+	if model["name"] != "accounts/acct/models/out" {
+		t.Fatalf("model = %#v", model)
 	}
 }

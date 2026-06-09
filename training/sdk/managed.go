@@ -3,7 +3,7 @@ package sdk
 import (
 	"context"
 	"fmt"
-	"log"
+	"sort"
 	"strings"
 	"time"
 	"unicode"
@@ -21,15 +21,6 @@ const (
 	LoraTrainerMode     = "LORA_TRAINER"
 	DefaultLearningRate = 1e-5
 )
-
-var DeploymentAcceleratorRegionPrefixes = []struct {
-	Prefix string
-	Region string
-}{
-	{Prefix: "NVIDIA_H200", Region: "US_VIRGINIA_1"},
-	{Prefix: "NVIDIA_B200", Region: "US_OHIO_1"},
-	{Prefix: "NVIDIA_B300", Region: "NA_BRITISHCOLUMBIA_1"},
-}
 
 var DeploymentTerminalStates = map[string]bool{
 	DeploymentStateFailed:   true,
@@ -88,6 +79,7 @@ type FiretitanProvisioningConfig struct {
 	CleanupDeploymentOnClose   string
 	DisplayName                string
 	Purpose                    string
+	ManagedBy                  string
 	SkipValidations            bool
 	DisableSpeculativeDecoding bool
 }
@@ -98,26 +90,8 @@ type ManagedDeploymentShapeResolver interface {
 
 func (c FiretitanProvisioningConfig) Normalize() (FiretitanProvisioningConfig, error) {
 	out := c
-	createDeployment := true
-	if out.CreateDeployment != nil {
-		createDeployment = *out.CreateDeployment
-	} else {
+	if out.CreateDeployment == nil {
 		out.CreateDeployment = boolPointer(true)
-	}
-
-	activeDeploymentRegion := ""
-	if createDeployment {
-		activeDeploymentRegion = out.DeploymentRegion
-	}
-	if out.Region != "" && activeDeploymentRegion != "" && out.Region != activeDeploymentRegion {
-		return FiretitanProvisioningConfig{}, fmt.Errorf(
-			"deployment_region=%q conflicts with trainer region=%q: a hot-load deployment must be colocated with its trainer",
-			activeDeploymentRegion,
-			out.Region,
-		)
-	}
-	if activeDeploymentRegion != "" && out.Region == "" {
-		out.Region = activeDeploymentRegion
 	}
 	out.DeploymentRegion = ""
 
@@ -202,32 +176,45 @@ func ReferenceManagedConfig(config FiretitanProvisioningConfig, policyLoraRank i
 }
 
 func ExpectedReferenceTrainerMode(config FiretitanProvisioningConfig) string {
-	if config.LoraRank > 0 {
-		return LoraTrainerMode
-	}
-	return ForwardOnlyMode
+	return LoraTrainerMode
 }
 
 func ValidateReferenceTrainingShape(config FiretitanProvisioningConfig, profile TrainingShapeProfile) error {
 	if config.TrainingShapeID == "" {
 		return nil
 	}
-	expected := ExpectedReferenceTrainerMode(config)
 	actual := profile.TrainerMode
 	if actual == "" {
 		actual = PolicyTrainerMode
 	}
-	if actual == expected {
+	allowed := AllowedReferenceTrainerModes(config.LoraRank)
+	if allowed[actual] {
 		return nil
 	}
+	allowedLabels := make([]string, 0, len(allowed))
+	for mode := range allowed {
+		allowedLabels = append(allowedLabels, mode)
+	}
+	sort.Strings(allowedLabels)
 	return fmt.Errorf(
-		"reference_training_shape_id='%s' resolves to trainer_mode='%s', but this run requires trainer_mode='%s' (lora_rank=%d, forward_only=%t). Use a training shape validated for the requested trainer mode",
+		"reference_training_shape_id='%s' resolves to trainer_mode='%s', but this run requires trainer_mode in {%s} (preferred '%s'; lora_rank=%d, forward_only=%t). Use a training shape validated for the reference trainer mode",
 		config.TrainingShapeID,
 		actual,
-		expected,
+		strings.Join(allowedLabels, ", "),
+		ExpectedReferenceTrainerMode(config),
 		config.LoraRank,
 		config.ForwardOnly,
 	)
+}
+
+func AllowedReferenceTrainerModes(loraRank int) map[string]bool {
+	if loraRank > 0 {
+		return map[string]bool{LoraTrainerMode: true}
+	}
+	return map[string]bool{
+		LoraTrainerMode: true,
+		ForwardOnlyMode: true,
+	}
 }
 
 func DeploymentShapeConflict(requested, existingVersion string) bool {
@@ -259,40 +246,6 @@ func DefaultDeploymentIDAt(baseModel string, unixSeconds int64) string {
 		safe = "model"
 	}
 	return fmt.Sprintf("%s-%d", safe, unixSeconds)
-}
-
-func InferRegionFromDeploymentShapeSnapshot(snapshot map[string]any) string {
-	accelerator, _ := snapshot["acceleratorType"].(string)
-	if accelerator == "" {
-		if nested, _ := snapshot["snapshot"].(map[string]any); nested != nil {
-			accelerator, _ = nested["acceleratorType"].(string)
-		}
-	}
-	return InferRegionFromAccelerator(accelerator)
-}
-
-func InferRegionFromDeploymentShape(ctx context.Context, resolver ManagedDeploymentShapeResolver, deploymentShape string) string {
-	if resolver == nil || strings.TrimSpace(deploymentShape) == "" {
-		return ""
-	}
-	version, err := resolver.GetDeploymentShapeVersion(ctx, deploymentShape)
-	if err != nil {
-		log.Printf("Could not inspect deployment shape %s for region inference: %s", deploymentShape, err)
-		return ""
-	}
-	if version == nil {
-		return ""
-	}
-	return InferRegionFromDeploymentShapeSnapshot(version)
-}
-
-func InferRegionFromAccelerator(accelerator string) string {
-	for _, mapping := range DeploymentAcceleratorRegionPrefixes {
-		if strings.HasPrefix(accelerator, mapping.Prefix) {
-			return mapping.Region
-		}
-	}
-	return ""
 }
 
 type TinkerSamplerBackend struct {

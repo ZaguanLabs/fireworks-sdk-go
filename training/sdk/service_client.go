@@ -31,8 +31,10 @@ type FiretitanServiceClient struct {
 	SyncState           ManagedSamplerSyncState
 	Now                 func() time.Time
 
-	ListCheckpointsFunc   func(context.Context, string, int) ([]map[string]any, error)
-	PromoteCheckpointFunc func(context.Context, PromoteCheckpointOptions) (map[string]any, error)
+	ListCheckpointsFunc                func(context.Context, string, int) ([]map[string]any, error)
+	PromoteCheckpointFunc              func(context.Context, PromoteCheckpointOptions) (map[string]any, error)
+	ListTrainingSessionCheckpointsFunc func(context.Context, string, int) ([]map[string]any, error)
+	PromoteSessionCheckpointFunc       func(context.Context, PromoteSessionCheckpointOptions) (map[string]any, error)
 }
 
 func NewFiretitanServiceClient(opts FiretitanServiceClientOptions) (*FiretitanServiceClient, error) {
@@ -62,6 +64,8 @@ func NewFiretitanServiceClient(opts FiretitanServiceClientOptions) (*FiretitanSe
 	}
 	client.ListCheckpointsFunc = fireworks.ListCheckpoints
 	client.PromoteCheckpointFunc = fireworks.PromoteCheckpoint
+	client.ListTrainingSessionCheckpointsFunc = fireworks.ListTrainingSessionCheckpoints
+	client.PromoteSessionCheckpointFunc = fireworks.PromoteSessionCheckpoint
 	return client, nil
 }
 
@@ -221,6 +225,23 @@ func (c *FiretitanServiceClient) PromoteCheckpoint(ctx context.Context, opts Pro
 	return c.PromoteCheckpointFunc(ctx, opts)
 }
 
+func (c *FiretitanServiceClient) ListTrainingSessionCheckpoints(ctx context.Context, name string, pageSize int) ([]map[string]any, error) {
+	if c == nil || c.ListTrainingSessionCheckpointsFunc == nil {
+		return nil, ControlPlaneCheckpointClientError()
+	}
+	return c.ListTrainingSessionCheckpointsFunc(ctx, name, pageSize)
+}
+
+func (c *FiretitanServiceClient) PromoteSessionCheckpoint(ctx context.Context, opts PromoteSessionCheckpointOptions) (map[string]any, error) {
+	if c == nil || c.PromoteSessionCheckpointFunc == nil {
+		return nil, ControlPlaneCheckpointClientError()
+	}
+	if opts.BaseModel == "" {
+		opts.BaseModel = c.Config.BaseModel
+	}
+	return c.PromoteSessionCheckpointFunc(ctx, opts)
+}
+
 func (c *FiretitanServiceClient) AttachSamplerBackend(backend *TinkerSamplerBackend) *FiretitanServiceClient {
 	if c != nil {
 		c.SamplerBackend = backend
@@ -352,6 +373,13 @@ type ForwardBackwardOptions struct {
 	Data         []TrainingDatum
 	LossFn       LossFn
 	LossFnConfig map[string]any
+}
+
+type ForwardBackwardContrastiveOptions struct {
+	NumQueries        int
+	Temperature       float64
+	Pooling           EmbeddingPooling
+	NumExtraNegatives int
 }
 
 type TrainingComputeBackend interface {
@@ -735,6 +763,33 @@ func (c *FiretitanTrainingClient) ForwardBackward(ctx context.Context, data []Tr
 		output = AddCrossEntropyResponseTokens(output, data)
 	}
 	return output, nil
+}
+
+func (c *FiretitanTrainingClient) ForwardBackwardContrastive(ctx context.Context, data []TrainingDatum, opts ForwardBackwardContrastiveOptions) (ForwardBackwardOutput, error) {
+	expectedLen := 2*opts.NumQueries + opts.NumExtraNegatives
+	if len(data) != expectedLen {
+		return ForwardBackwardOutput{}, fmt.Errorf(
+			"forward_backward_contrastive expects len(data) == 2*num_queries + num_extra_negatives = 2*%d + %d = %d; got len(data)=%d",
+			opts.NumQueries,
+			opts.NumExtraNegatives,
+			expectedLen,
+			len(data),
+		)
+	}
+	if opts.NumExtraNegatives < 0 {
+		return ForwardBackwardOutput{}, fmt.Errorf("num_extra_negatives must be >= 0, got %d", opts.NumExtraNegatives)
+	}
+	pooling := opts.Pooling
+	if pooling == "" {
+		pooling = EmbeddingPoolingLast
+	}
+	return c.ForwardBackward(ctx, data, string(LossFnCrossEntropy), map[string]any{
+		"output":              "contrastive_loss",
+		"num_queries":         opts.NumQueries,
+		"temperature":         opts.Temperature,
+		"pooling":             string(pooling),
+		"num_extra_negatives": opts.NumExtraNegatives,
+	})
 }
 
 func (c *FiretitanTrainingClient) ListCheckpoints(ctx context.Context, pageSize int) ([]map[string]any, error) {

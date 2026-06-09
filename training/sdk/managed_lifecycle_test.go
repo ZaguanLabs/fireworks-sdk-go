@@ -230,7 +230,7 @@ func TestProvisionManagedHandleReattachesExistingDeployment(t *testing.T) {
 	}
 }
 
-func TestProvisionManagedHandleInfersDeploymentRegionFromShape(t *testing.T) {
+func TestProvisionManagedHandleDoesNotInferDeploymentRegionFromShape(t *testing.T) {
 	trainer := &fakeManagedTrainer{}
 	deployment := &fakeManagedDeploymentWithShapeResolver{
 		fakeManagedDeployment: fakeManagedDeployment{existing: map[string]DeploymentInfo{}},
@@ -253,8 +253,11 @@ func TestProvisionManagedHandleInfersDeploymentRegionFromShape(t *testing.T) {
 	if handle.Deployment == nil {
 		t.Fatal("deployment handle is nil")
 	}
-	if got := deployment.created[0].Region; got != "US_OHIO_1" {
+	if got := deployment.created[0].Region; got != "" {
 		t.Fatalf("deployment region = %q", got)
+	}
+	if !deployment.created[0].ForTraining {
+		t.Fatalf("forTraining = false")
 	}
 }
 

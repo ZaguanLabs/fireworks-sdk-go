@@ -84,19 +84,16 @@ func ManagedDeploymentCreateConfig(config FiretitanProvisioningConfig, trainerJo
 		replicaCount = 0
 	}
 	maxReplicaCount := replicaCount
-	region := config.DeploymentRegion
-	if region == "" {
-		region = config.Region
-	}
 	return DeploymentConfig{
 		DeploymentID:               deploymentID,
 		BaseModel:                  config.BaseModel,
 		DeploymentShape:            deploymentShape,
-		Region:                     region,
+		Region:                     config.Region,
 		MinReplicaCount:            replicaCount,
 		MaxReplicaCount:            &maxReplicaCount,
 		AcceleratorType:            config.AcceleratorType,
 		HotLoadTrainerJob:          trainerJobName,
+		ForTraining:                true,
 		SkipShapeValidation:        false,
 		DisableSpeculativeDecoding: config.DisableSpeculativeDecoding,
 		ExtraArgs:                  append([]string(nil), config.DeploymentExtraArgs...),

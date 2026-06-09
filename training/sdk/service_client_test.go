@@ -874,6 +874,95 @@ func TestFiretitanTrainingClientForwardBackwardDelegatesAndCountsTokens(t *testi
 	}
 }
 
+func TestFiretitanTrainingClientForwardBackwardContrastiveDelegates(t *testing.T) {
+	backend := &fakeTrainingComputeBackend{
+		forwardBackwardResult: ForwardBackwardOutput{Metrics: map[string]float64{"loss": 1.25}},
+	}
+	svc, err := NewFiretitanServiceClient(FiretitanServiceClientOptions{
+		Config: FiretitanProvisioningConfig{BaseModel: "accounts/acct/models/base"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := svc.CreateTrainingClient(context.Background(), CreateFiretitanTrainingClientOptions{
+		ComputeBackend: backend,
+		ModelID:        "model-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := []TrainingDatum{{}, {}, {}, {}, {}}
+	output, err := client.ForwardBackwardContrastive(context.Background(), data, ForwardBackwardContrastiveOptions{
+		NumQueries:        2,
+		Temperature:       0.02,
+		Pooling:           EmbeddingPoolingMean,
+		NumExtraNegatives: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if output.Metrics["loss"] != 1.25 {
+		t.Fatalf("output = %#v", output)
+	}
+	if len(backend.forwardBackwardCalls) != 1 {
+		t.Fatalf("calls = %#v", backend.forwardBackwardCalls)
+	}
+	call := backend.forwardBackwardCalls[0]
+	if call.LossFn != LossFnCrossEntropy || call.LossFnConfig["output"] != "contrastive_loss" || call.LossFnConfig["num_queries"] != 2 || call.LossFnConfig["temperature"] != 0.02 || call.LossFnConfig["pooling"] != "mean" || call.LossFnConfig["num_extra_negatives"] != 1 {
+		t.Fatalf("call = %#v", call)
+	}
+}
+
+func TestFiretitanTrainingClientForwardBackwardContrastiveValidatesLength(t *testing.T) {
+	client := (&FiretitanTrainingClient{ModelID: "model-1"}).AttachComputeBackend(&fakeTrainingComputeBackend{})
+	_, err := client.ForwardBackwardContrastive(context.Background(), []TrainingDatum{{}}, ForwardBackwardContrastiveOptions{
+		NumQueries:        1,
+		NumExtraNegatives: 1,
+	})
+	if err == nil || !strings.Contains(err.Error(), "2*num_queries + num_extra_negatives") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestFiretitanServiceClientSessionCheckpointWrappers(t *testing.T) {
+	svc, err := NewFiretitanServiceClient(FiretitanServiceClientOptions{
+		Config: FiretitanProvisioningConfig{BaseModel: "accounts/acct/models/base"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var listedName string
+	var promoted PromoteSessionCheckpointOptions
+	svc.ListTrainingSessionCheckpointsFunc = func(_ context.Context, name string, pageSize int) ([]map[string]any, error) {
+		listedName = name
+		if pageSize != 123 {
+			t.Fatalf("pageSize = %d", pageSize)
+		}
+		return []map[string]any{{"name": "cp-1"}}, nil
+	}
+	svc.PromoteSessionCheckpointFunc = func(_ context.Context, opts PromoteSessionCheckpointOptions) (map[string]any, error) {
+		promoted = opts
+		return map[string]any{"name": "accounts/acct/models/out"}, nil
+	}
+	rows, err := svc.ListTrainingSessionCheckpoints(context.Background(), "accounts/acct/trainingSessions/sess-1", 123)
+	if err != nil {
+		t.Fatal(err)
+	}
+	model, err := svc.PromoteSessionCheckpoint(context.Background(), PromoteSessionCheckpointOptions{
+		Name:          "accounts/acct/trainingSessions/sess-1/checkpoints/cp-1",
+		OutputModelID: "out",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if listedName != "accounts/acct/trainingSessions/sess-1" || rows[0]["name"] != "cp-1" {
+		t.Fatalf("listedName=%q rows=%#v", listedName, rows)
+	}
+	if promoted.BaseModel != "accounts/acct/models/base" || model["name"] != "accounts/acct/models/out" {
+		t.Fatalf("promoted=%#v model=%#v", promoted, model)
+	}
+}
+
 func TestFiretitanTrainingClientComputeRequiresBackendAndModel(t *testing.T) {
 	svc, err := NewFiretitanServiceClient(FiretitanServiceClientOptions{
 		Config: FiretitanProvisioningConfig{BaseModel: "accounts/acct/models/base"},

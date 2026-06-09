@@ -17,6 +17,10 @@ type ManagedTrainerController interface {
 	ReconnectAndWait(context.Context, string, ...TrainerReconnectOptions) (TrainerServiceEndpoint, error)
 }
 
+type ManagedTrainerTryGetter interface {
+	TryGetJob(context.Context, string) (map[string]any, bool, error)
+}
+
 type ManagedDeploymentController interface {
 	GetInfo(context.Context, string) (DeploymentInfo, bool, error)
 	CreateOrGet(context.Context, DeploymentConfig, bool) (DeploymentInfo, error)
@@ -340,7 +344,7 @@ func BuildManagedTrainerJobConfig(config FiretitanProvisioningConfig, maxContext
 		ForwardOnly:               config.ForwardOnly,
 		SkipValidations:           config.SkipValidations,
 		Purpose:                   config.Purpose,
-		ManagedBy:                 "fireworks-sdk-go",
+		ManagedBy:                 config.ManagedBy,
 	}
 }
 
@@ -356,6 +360,24 @@ func provisionManagedTrainer(ctx context.Context, trainer ManagedTrainerControll
 		if err != nil {
 			return TrainerServiceEndpoint{}, err
 		}
+		if tryGetter, ok := trainer.(ManagedTrainerTryGetter); ok {
+			job, found, err := tryGetter.TryGetJob(ctx, config.TrainerJobID)
+			if err != nil {
+				return TrainerServiceEndpoint{}, err
+			}
+			if !found {
+				trainerConfig := BuildManagedTrainerJobConfig(config, maxContextLength, profile)
+				trainerConfig.RequestedJobID = config.TrainerJobID
+				created, err := trainer.Create(ctx, trainerConfig)
+				if err != nil {
+					return TrainerServiceEndpoint{}, err
+				}
+				return waitForStartedTrainer(ctx, trainer, created, config, opts)
+			}
+			if resumableTrainerStates[stringFromAny(job["state"])] {
+				return trainer.ReconnectAndWait(ctx, config.TrainerJobID, opts.ReconnectOptions)
+			}
+		}
 		jobName := "accounts/" + accountID + "/rlorTrainerJobs/" + config.TrainerJobID
 		return trainer.WaitForReady(ctx, config.TrainerJobID, jobName, opts.TrainerPollOptions)
 	}
@@ -364,19 +386,12 @@ func provisionManagedTrainer(ctx context.Context, trainer ManagedTrainerControll
 	if err != nil {
 		return TrainerServiceEndpoint{}, err
 	}
-	return trainer.WaitForReady(ctx, created.JobID, created.JobName, opts.TrainerPollOptions)
+	return waitForStartedTrainer(ctx, trainer, created, config, opts)
 }
 
 func attachManagedDeployment(ctx context.Context, deployment ManagedDeploymentController, config FiretitanProvisioningConfig, trainerJobName, deploymentShape string, now func() time.Time, opts ManagedProvisionOptions) (DeploymentInfo, bool, error) {
 	if deployment == nil {
 		return DeploymentInfo{}, false, fmt.Errorf("managed deployment provisioning requires Deployment")
-	}
-	if config.Region == "" && config.DeploymentRegion == "" && deploymentShape != "" {
-		if resolver, ok := deployment.(ManagedDeploymentShapeResolver); ok {
-			if region := InferRegionFromDeploymentShape(ctx, resolver, deploymentShape); region != "" {
-				config.Region = region
-			}
-		}
 	}
 	var existing *DeploymentInfo
 	if ShouldLookupManagedDeployment(config) {
@@ -414,4 +429,24 @@ func attachManagedDeployment(ctx context.Context, deployment ManagedDeploymentCo
 		}
 	}
 	return info, plan.ResetSnapshotChain, nil
+}
+
+var resumableTrainerStates = map[string]bool{
+	"JOB_STATE_FAILED":    true,
+	"JOB_STATE_CANCELLED": true,
+	"JOB_STATE_PAUSED":    true,
+	"JOB_STATE_COMPLETED": true,
+}
+
+func waitForStartedTrainer(ctx context.Context, trainer ManagedTrainerController, created CreatedTrainerJob, config FiretitanProvisioningConfig, opts ManagedProvisionOptions) (TrainerServiceEndpoint, error) {
+	if tryGetter, ok := trainer.(ManagedTrainerTryGetter); ok {
+		job, found, err := tryGetter.TryGetJob(ctx, created.JobID)
+		if err != nil {
+			return TrainerServiceEndpoint{}, err
+		}
+		if found && resumableTrainerStates[stringFromAny(job["state"])] {
+			return trainer.ReconnectAndWait(ctx, created.JobID, opts.ReconnectOptions)
+		}
+	}
+	return trainer.WaitForReady(ctx, created.JobID, created.JobName, opts.TrainerPollOptions)
 }

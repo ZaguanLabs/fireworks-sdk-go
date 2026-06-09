@@ -7,18 +7,21 @@ import (
 	"time"
 )
 
-func TestFiretitanProvisioningConfigNormalizeDeploymentRegionConflict(t *testing.T) {
-	_, err := (FiretitanProvisioningConfig{
+func TestFiretitanProvisioningConfigNormalizeClearsDeploymentRegion(t *testing.T) {
+	got, err := (FiretitanProvisioningConfig{
 		BaseModel:        "accounts/acct/models/base",
 		Region:           "US_OHIO_1",
 		DeploymentRegion: "US_VIRGINIA_1",
 	}).Normalize()
-	if err == nil || !strings.Contains(err.Error(), "deployment_region") {
-		t.Fatalf("err = %v", err)
+	if err != nil {
+		t.Fatalf("Normalize() error = %v", err)
+	}
+	if got.Region != "US_OHIO_1" || got.DeploymentRegion != "" {
+		t.Fatalf("got = %#v", got)
 	}
 }
 
-func TestFiretitanProvisioningConfigNormalizeInheritsDeploymentRegion(t *testing.T) {
+func TestFiretitanProvisioningConfigNormalizeDoesNotInheritDeploymentRegion(t *testing.T) {
 	got, err := (FiretitanProvisioningConfig{
 		BaseModel:        "accounts/acct/models/base",
 		DeploymentRegion: "US_OHIO_1",
@@ -26,7 +29,7 @@ func TestFiretitanProvisioningConfigNormalizeInheritsDeploymentRegion(t *testing
 	if err != nil {
 		t.Fatalf("Normalize() error = %v", err)
 	}
-	if got.Region != "US_OHIO_1" || got.DeploymentRegion != "" {
+	if got.Region != "" || got.DeploymentRegion != "" {
 		t.Fatalf("got = %#v", got)
 	}
 }
@@ -188,7 +191,7 @@ func TestReferenceManagedConfigLoraReferenceShape(t *testing.T) {
 		t.Fatalf("got = %#v", got)
 	}
 	got.LoraRank = 0
-	if ExpectedReferenceTrainerMode(got) != ForwardOnlyMode {
+	if ExpectedReferenceTrainerMode(got) != LoraTrainerMode {
 		t.Fatalf("mode = %q", ExpectedReferenceTrainerMode(got))
 	}
 }
@@ -223,7 +226,7 @@ func TestValidateReferenceTrainingShapeDefaultsMissingModeToPolicy(t *testing.T)
 		FiretitanProvisioningConfig{TrainingShapeID: "ts-ref"},
 		TrainingShapeProfile{},
 	)
-	if err == nil || !strings.Contains(err.Error(), "trainer_mode='POLICY_TRAINER'") || !strings.Contains(err.Error(), "trainer_mode='FORWARD_ONLY'") {
+	if err == nil || !strings.Contains(err.Error(), "trainer_mode='POLICY_TRAINER'") || !strings.Contains(err.Error(), "FORWARD_ONLY") || !strings.Contains(err.Error(), "LORA_TRAINER") {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -232,6 +235,16 @@ func TestValidateReferenceTrainingShapeForwardOnlyMatch(t *testing.T) {
 	err := ValidateReferenceTrainingShape(
 		FiretitanProvisioningConfig{TrainingShapeID: "ts-ref"},
 		TrainingShapeProfile{TrainerMode: ForwardOnlyMode},
+	)
+	if err != nil {
+		t.Fatalf("ValidateReferenceTrainingShape() error = %v", err)
+	}
+}
+
+func TestValidateReferenceTrainingShapeRank0LoraMatch(t *testing.T) {
+	err := ValidateReferenceTrainingShape(
+		FiretitanProvisioningConfig{TrainingShapeID: "ts-ref"},
+		TrainingShapeProfile{TrainerMode: LoraTrainerMode},
 	)
 	if err != nil {
 		t.Fatalf("ValidateReferenceTrainingShape() error = %v", err)
@@ -253,7 +266,7 @@ func TestValidateReferenceTrainingShapeLoraMismatch(t *testing.T) {
 		FiretitanProvisioningConfig{TrainingShapeID: "ts-ref", LoraRank: 16},
 		TrainingShapeProfile{TrainerMode: ForwardOnlyMode},
 	)
-	if err == nil || !strings.Contains(err.Error(), "trainer_mode='LORA_TRAINER'") || !strings.Contains(err.Error(), "lora_rank=16") {
+	if err == nil || !strings.Contains(err.Error(), "trainer_mode in {LORA_TRAINER}") || !strings.Contains(err.Error(), "lora_rank=16") {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -279,23 +292,6 @@ func TestDefaultDeploymentIDAt(t *testing.T) {
 	}
 	if got := DefaultDeploymentIDAt("///", 123); got != "model-123" {
 		t.Fatalf("fallback id = %q", got)
-	}
-}
-
-func TestInferRegionFromAccelerator(t *testing.T) {
-	cases := map[string]string{
-		"NVIDIA_H200_141GB": "US_VIRGINIA_1",
-		"NVIDIA_B200":       "US_OHIO_1",
-		"NVIDIA_B300_X":     "NA_BRITISHCOLUMBIA_1",
-		"NVIDIA_A100":       "",
-	}
-	for accelerator, want := range cases {
-		if got := InferRegionFromAccelerator(accelerator); got != want {
-			t.Fatalf("InferRegionFromAccelerator(%q) = %q, want %q", accelerator, got, want)
-		}
-	}
-	if got := InferRegionFromDeploymentShapeSnapshot(map[string]any{"acceleratorType": "NVIDIA_B200_180GB"}); got != "US_OHIO_1" {
-		t.Fatalf("InferRegionFromDeploymentShapeSnapshot() = %q", got)
 	}
 }
 

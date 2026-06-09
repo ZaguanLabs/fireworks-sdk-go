@@ -1,6 +1,6 @@
-# Fireworks SDK Go resource/type parity report (1.2.0-alpha.76)
+# Fireworks SDK Go resource/type parity report (1.2.0-alpha.77)
 
-Python SDK source: `/home/stig/dev/ai/zaguan/labs/fireworks-sdk-go/docs/fireworks-py/python-sdk-1.2.0-alpha.76/src/fireworks`.
+Python SDK source: `docs/fireworks-py/python-sdk-1.2.0-alpha.77/src/fireworks`.
 
 ## Resource Methods
 

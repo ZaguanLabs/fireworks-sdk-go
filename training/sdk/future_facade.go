@@ -108,6 +108,12 @@ func (c *FiretitanTrainingClient) ForwardBackwardFuture(ctx context.Context, dat
 	})
 }
 
+func (c *FiretitanTrainingClient) ForwardBackwardContrastiveFuture(ctx context.Context, data []TrainingDatum, opts ForwardBackwardContrastiveOptions) *Future[ForwardBackwardOutput] {
+	return SubmitFuture(func() (ForwardBackwardOutput, error) {
+		return c.ForwardBackwardContrastive(ctx, data, opts)
+	})
+}
+
 func (c *FiretitanTrainingClient) SaveWeightsAndGetSamplingClientFuture(ctx context.Context, name string, tokenizer DeploymentTokenizer, checkpointType ...string) *Future[*FiretitanSamplingClient] {
 	return SubmitFuture(func() (*FiretitanSamplingClient, error) {
 		return c.SaveWeightsAndGetSamplingClient(ctx, name, tokenizer, checkpointType...)
