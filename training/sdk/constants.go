@@ -2,6 +2,15 @@ package sdk
 
 import "time"
 
+type DeploymentCleanupOnClose string
+
+const (
+	CleanupDeploymentOnCloseDelete      DeploymentCleanupOnClose = "delete"
+	CleanupDeploymentOnCloseScaleToZero DeploymentCleanupOnClose = "scale_to_zero"
+
+	SDKManagedRolloutDeploymentAnnotation = "fireworks-training-sdk/managed-rollout"
+)
+
 const (
 	DefaultTrainerTimeout  = 3600 * time.Second
 	TrainerReadyTimeout    = 15 * time.Minute

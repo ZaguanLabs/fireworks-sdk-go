@@ -21,11 +21,22 @@ type ManagedTrainerTryGetter interface {
 	TryGetJob(context.Context, string) (map[string]any, bool, error)
 }
 
+type startedManagedTrainer struct {
+	Endpoint TrainerServiceEndpoint
+	Created  bool
+}
+
 type ManagedDeploymentController interface {
 	GetInfo(context.Context, string) (DeploymentInfo, bool, error)
 	CreateOrGet(context.Context, DeploymentConfig, bool) (DeploymentInfo, error)
 	WaitForReady(context.Context, string, ...DeploymentWaitOptions) (DeploymentInfo, error)
 	ReattachTrainer(context.Context, DeploymentInfo, string, string, ...ReattachTrainerOptions) (DeploymentInfo, error)
+}
+
+type managedDeploymentAttachment struct {
+	Info               DeploymentInfo
+	ResetSnapshotChain bool
+	Created            bool
 }
 
 type ManagedTrainerCleanup interface {
@@ -226,35 +237,38 @@ func ProvisionManagedHandle(ctx context.Context, opts ManagedProvisionOptions) (
 		}
 	}
 
-	trainerEndpoint, err := provisionManagedTrainer(ctx, opts.Trainer, config, maxContextLength, profile, opts)
+	startedTrainer, err := provisionManagedTrainer(ctx, opts.Trainer, config, maxContextLength, profile, opts)
 	if err != nil {
 		return nil, err
 	}
+	trainerEndpoint := startedTrainer.Endpoint
 
 	var deployment *DeploymentInfo
 	var samplerBackend *TinkerSamplerBackend
 	requiresInitialSync := false
+	deploymentCreated := false
 	createDeployment := true
 	if config.CreateDeployment != nil {
 		createDeployment = *config.CreateDeployment
 	}
 	if createDeployment {
-		attached, reattached, err := attachManagedDeployment(ctx, opts.Deployment, config, trainerEndpoint.JobName, deploymentShape, now, opts)
+		attached, err := attachManagedDeployment(ctx, opts.Deployment, config, trainerEndpoint.JobName, deploymentShape, now, opts)
 		if err != nil {
 			return nil, err
 		}
-		deployment = &attached
-		requiresInitialSync = reattached
+		deployment = &attached.Info
+		requiresInitialSync = attached.ResetSnapshotChain
+		deploymentCreated = attached.Created
 		if opts.DeploymentManager != nil {
 			samplerBackend = &TinkerSamplerBackend{
 				DeployMgr:         opts.DeploymentManager,
-				DeploymentID:      attached.DeploymentID,
+				DeploymentID:      attached.Info.DeploymentID,
 				BaseModel:         config.BaseModel,
 				HotloadTimeout:    config.HotloadTimeout,
 				LoraRank:          config.LoraRank,
 				CompressionFormat: DefaultDeltaCompression,
 			}
-			if reattached {
+			if attached.ResetSnapshotChain {
 				samplerBackend.ResetSnapshotChain()
 			}
 		}
@@ -293,8 +307,8 @@ func ProvisionManagedHandle(ctx context.Context, opts ManagedProvisionOptions) (
 	cleanupPlan, err := PlanManagedHandleCleanup(ManagedHandleCleanupConfig{
 		TrainerJobID:             trainerEndpoint.JobID,
 		Deployment:               deployment,
-		CleanupTrainerOnClose:    config.CleanupTrainerOnClose,
-		CleanupDeploymentOnClose: config.CleanupDeploymentOnClose,
+		CleanupTrainerOnClose:    config.CleanupTrainerOnClose && startedTrainer.Created,
+		CleanupDeploymentOnClose: cleanupDeploymentModeForCreated(config.CleanupDeploymentOnClose, deploymentCreated),
 	})
 	if err != nil {
 		return nil, err
@@ -316,8 +330,8 @@ func ProvisionManagedHandle(ctx context.Context, opts ManagedProvisionOptions) (
 		TrainerManager:             opts.Trainer,
 		DeploymentManager:          opts.Deployment,
 		ConcreteDeploymentManager:  opts.DeploymentManager,
-		CleanupTrainerOnClose:      config.CleanupTrainerOnClose,
-		CleanupDeploymentOnClose:   config.CleanupDeploymentOnClose,
+		CleanupTrainerOnClose:      config.CleanupTrainerOnClose && startedTrainer.Created,
+		CleanupDeploymentOnClose:   cleanupDeploymentModeForCreated(config.CleanupDeploymentOnClose, deploymentCreated),
 	}, nil
 }
 
@@ -348,56 +362,61 @@ func BuildManagedTrainerJobConfig(config FiretitanProvisioningConfig, maxContext
 	}
 }
 
-func provisionManagedTrainer(ctx context.Context, trainer ManagedTrainerController, config FiretitanProvisioningConfig, maxContextLength *int, profile *TrainingShapeProfile, opts ManagedProvisionOptions) (TrainerServiceEndpoint, error) {
+func provisionManagedTrainer(ctx context.Context, trainer ManagedTrainerController, config FiretitanProvisioningConfig, maxContextLength *int, profile *TrainingShapeProfile, opts ManagedProvisionOptions) (startedManagedTrainer, error) {
 	if trainer == nil {
-		return TrainerServiceEndpoint{}, fmt.Errorf("managed provisioning requires Trainer")
+		return startedManagedTrainer{}, fmt.Errorf("managed provisioning requires Trainer")
 	}
 	if config.TrainerJobID != "" {
 		if opts.ReconnectExistingJob {
-			return trainer.ReconnectAndWait(ctx, config.TrainerJobID, opts.ReconnectOptions)
+			endpoint, err := trainer.ReconnectAndWait(ctx, config.TrainerJobID, opts.ReconnectOptions)
+			return startedManagedTrainer{Endpoint: endpoint, Created: false}, err
 		}
 		accountID, err := trainer.AccountID(ctx)
 		if err != nil {
-			return TrainerServiceEndpoint{}, err
+			return startedManagedTrainer{}, err
 		}
 		if tryGetter, ok := trainer.(ManagedTrainerTryGetter); ok {
 			job, found, err := tryGetter.TryGetJob(ctx, config.TrainerJobID)
 			if err != nil {
-				return TrainerServiceEndpoint{}, err
+				return startedManagedTrainer{}, err
 			}
 			if !found {
 				trainerConfig := BuildManagedTrainerJobConfig(config, maxContextLength, profile)
 				trainerConfig.RequestedJobID = config.TrainerJobID
 				created, err := trainer.Create(ctx, trainerConfig)
 				if err != nil {
-					return TrainerServiceEndpoint{}, err
+					return startedManagedTrainer{}, err
 				}
-				return waitForStartedTrainer(ctx, trainer, created, config, opts)
+				endpoint, err := waitForStartedTrainer(ctx, trainer, created, config, opts)
+				return startedManagedTrainer{Endpoint: endpoint, Created: true}, err
 			}
 			if resumableTrainerStates[stringFromAny(job["state"])] {
-				return trainer.ReconnectAndWait(ctx, config.TrainerJobID, opts.ReconnectOptions)
+				endpoint, err := trainer.ReconnectAndWait(ctx, config.TrainerJobID, opts.ReconnectOptions)
+				return startedManagedTrainer{Endpoint: endpoint, Created: false}, err
 			}
 		}
 		jobName := "accounts/" + accountID + "/rlorTrainerJobs/" + config.TrainerJobID
-		return trainer.WaitForReady(ctx, config.TrainerJobID, jobName, opts.TrainerPollOptions)
+		endpoint, err := trainer.WaitForReady(ctx, config.TrainerJobID, jobName, opts.TrainerPollOptions)
+		return startedManagedTrainer{Endpoint: endpoint, Created: false}, err
 	}
 	trainerConfig := BuildManagedTrainerJobConfig(config, maxContextLength, profile)
 	created, err := trainer.Create(ctx, trainerConfig)
 	if err != nil {
-		return TrainerServiceEndpoint{}, err
+		return startedManagedTrainer{}, err
 	}
-	return waitForStartedTrainer(ctx, trainer, created, config, opts)
+	endpoint, err := waitForStartedTrainer(ctx, trainer, created, config, opts)
+	return startedManagedTrainer{Endpoint: endpoint, Created: true}, err
 }
 
-func attachManagedDeployment(ctx context.Context, deployment ManagedDeploymentController, config FiretitanProvisioningConfig, trainerJobName, deploymentShape string, now func() time.Time, opts ManagedProvisionOptions) (DeploymentInfo, bool, error) {
+func attachManagedDeployment(ctx context.Context, deployment ManagedDeploymentController, config FiretitanProvisioningConfig, trainerJobName, deploymentShape string, now func() time.Time, opts ManagedProvisionOptions) (managedDeploymentAttachment, error) {
 	if deployment == nil {
-		return DeploymentInfo{}, false, fmt.Errorf("managed deployment provisioning requires Deployment")
+		return managedDeploymentAttachment{}, fmt.Errorf("managed deployment provisioning requires Deployment")
 	}
 	var existing *DeploymentInfo
 	if ShouldLookupManagedDeployment(config) {
 		info, ok, err := deployment.GetInfo(ctx, config.DeploymentID)
 		if err != nil {
-			return DeploymentInfo{}, false, err
+			return managedDeploymentAttachment{}, err
 		}
 		if ok {
 			existing = &info
@@ -406,7 +425,7 @@ func attachManagedDeployment(ctx context.Context, deployment ManagedDeploymentCo
 	unixSeconds := now().Unix()
 	plan, err := PlanManagedDeploymentAttachment(config, trainerJobName, deploymentShape, existing, unixSeconds)
 	if err != nil {
-		return DeploymentInfo{}, false, err
+		return managedDeploymentAttachment{}, err
 	}
 	var info DeploymentInfo
 	switch plan.Action {
@@ -420,15 +439,22 @@ func attachManagedDeployment(ctx context.Context, deployment ManagedDeploymentCo
 		err = fmt.Errorf("unsupported managed deployment action %q", plan.Action)
 	}
 	if err != nil {
-		return DeploymentInfo{}, false, err
+		return managedDeploymentAttachment{}, err
 	}
 	if plan.WaitForReady && !DeploymentServingStates[info.State] {
 		info, err = deployment.WaitForReady(ctx, plan.DeploymentID, opts.DeploymentWait)
 		if err != nil {
-			return DeploymentInfo{}, false, err
+			return managedDeploymentAttachment{}, err
 		}
 	}
-	return info, plan.ResetSnapshotChain, nil
+	return managedDeploymentAttachment{Info: info, ResetSnapshotChain: plan.ResetSnapshotChain, Created: plan.Created}, nil
+}
+
+func cleanupDeploymentModeForCreated(mode string, created bool) string {
+	if !created {
+		return ""
+	}
+	return mode
 }
 
 var resumableTrainerStates = map[string]bool{

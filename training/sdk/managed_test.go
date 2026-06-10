@@ -162,7 +162,7 @@ func TestReferenceManagedConfigFreshForwardOnly(t *testing.T) {
 	}
 }
 
-func TestReferenceManagedConfigExistingJobNoCleanup(t *testing.T) {
+func TestReferenceManagedConfigExistingJobCarriesCleanupPolicy(t *testing.T) {
 	got, err := ReferenceManagedConfig(FiretitanProvisioningConfig{
 		BaseModel:                "accounts/acct/models/base",
 		ReferenceTrainerJobID:    "ref-job",
@@ -174,7 +174,7 @@ func TestReferenceManagedConfigExistingJobNoCleanup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReferenceManagedConfig() error = %v", err)
 	}
-	if got.TrainingShapeID != "" || got.TrainerJobID != "ref-job" || got.CleanupTrainerOnClose {
+	if got.TrainingShapeID != "" || got.TrainerJobID != "ref-job" || !got.CleanupTrainerOnClose {
 		t.Fatalf("got = %#v", got)
 	}
 }

@@ -22,6 +22,7 @@ type fakeManagedTrainer struct {
 	waited          []string
 	reconnected     []string
 	deleted         []string
+	jobs            map[string]map[string]any
 	endpointBaseURL string
 }
 
@@ -60,6 +61,14 @@ func (t *fakeManagedTrainer) ReconnectAndWait(_ context.Context, jobID string, _
 		JobID:   jobID,
 		BaseURL: "https://trainer.example.com",
 	}, nil
+}
+
+func (t *fakeManagedTrainer) TryGetJob(_ context.Context, jobID string) (map[string]any, bool, error) {
+	if t.jobs == nil {
+		return nil, false, nil
+	}
+	job, ok := t.jobs[jobID]
+	return job, ok, nil
 }
 
 func (t *fakeManagedTrainer) DeleteJob(_ context.Context, jobID string) error {
@@ -219,14 +228,74 @@ func TestProvisionManagedHandleReattachesExistingDeployment(t *testing.T) {
 	if !handle.RequiresInitialSamplerSync {
 		t.Fatal("reattach should require initial sampler sync")
 	}
-	if len(handle.CleanupPlan) != 2 {
+	if len(handle.CleanupPlan) != 0 {
 		t.Fatalf("cleanup plan = %#v", handle.CleanupPlan)
 	}
 	if err := handle.Close(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if len(deployment.scaledToZero) != 1 || len(trainer.deleted) != 1 {
+	if len(deployment.scaledToZero) != 0 || len(trainer.deleted) != 0 {
 		t.Fatalf("scaled=%#v deleted=%#v", deployment.scaledToZero, trainer.deleted)
+	}
+}
+
+func TestProvisionManagedHandleCleansCreatedStableResources(t *testing.T) {
+	trainer := &fakeManagedTrainer{}
+	deployment := &fakeManagedDeployment{existing: map[string]DeploymentInfo{}}
+	handle, err := ProvisionManagedHandle(context.Background(), ManagedProvisionOptions{
+		Config: FiretitanProvisioningConfig{
+			BaseModel:                 "accounts/acct/models/base",
+			TrainerJobID:              "job-stable",
+			DeploymentID:              "dep-stable",
+			DeploymentShape:           "accounts/acct/deploymentShapes/serve/versions/1",
+			CleanupTrainerOnClose:     true,
+			CleanupDeploymentOnClose:  CleanupDeploymentDelete,
+			GradientAccumulationSteps: 1,
+		},
+		Trainer:    trainer,
+		Deployment: deployment,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(trainer.created) != 1 || trainer.created[0].RequestedJobID != "job-stable" {
+		t.Fatalf("created trainers = %#v", trainer.created)
+	}
+	if len(deployment.created) != 1 || deployment.created[0].DeploymentID != "dep-stable" {
+		t.Fatalf("created deployments = %#v", deployment.created)
+	}
+	got := cleanupOperations(handle.CleanupPlan)
+	want := []ManagedCleanupOperation{ManagedCleanupDeleteDeployment, ManagedCleanupDeleteTrainer}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("cleanup plan = %#v", handle.CleanupPlan)
+	}
+}
+
+func TestProvisionManagedHandleDoesNotCleanupReusedStableTrainer(t *testing.T) {
+	trainer := &fakeManagedTrainer{
+		jobs: map[string]map[string]any{
+			"job-stable": {"state": "JOB_STATE_RUNNING"},
+		},
+	}
+	deployment := &fakeManagedDeployment{existing: map[string]DeploymentInfo{}}
+	handle, err := ProvisionManagedHandle(context.Background(), ManagedProvisionOptions{
+		Config: FiretitanProvisioningConfig{
+			BaseModel:             "accounts/acct/models/base",
+			TrainerJobID:          "job-stable",
+			CreateDeployment:      boolPointer(false),
+			CleanupTrainerOnClose: true,
+		},
+		Trainer:    trainer,
+		Deployment: deployment,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(trainer.created) != 0 || len(trainer.waited) != 1 || trainer.waited[0] != "job-stable" {
+		t.Fatalf("created=%#v waited=%#v", trainer.created, trainer.waited)
+	}
+	if handle.CleanupTrainerOnClose || len(handle.CleanupPlan) != 0 {
+		t.Fatalf("cleanup=%t plan=%#v", handle.CleanupTrainerOnClose, handle.CleanupPlan)
 	}
 }
 

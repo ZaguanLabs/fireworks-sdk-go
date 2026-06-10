@@ -171,7 +171,7 @@ func ReferenceManagedConfig(config FiretitanProvisioningConfig, policyLoraRank i
 	if config.CleanupReferenceTrainerOnClose != nil {
 		cleanupReference = *config.CleanupReferenceTrainerOnClose
 	}
-	out.CleanupTrainerOnClose = config.ReferenceTrainerJobID == "" && cleanupReference
+	out.CleanupTrainerOnClose = cleanupReference
 	return out, nil
 }
 

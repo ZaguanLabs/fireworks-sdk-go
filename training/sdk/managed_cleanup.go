@@ -15,8 +15,8 @@ const (
 )
 
 const (
-	CleanupDeploymentDelete      = "delete"
-	CleanupDeploymentScaleToZero = "scale_to_zero"
+	CleanupDeploymentDelete      = string(CleanupDeploymentOnCloseDelete)
+	CleanupDeploymentScaleToZero = string(CleanupDeploymentOnCloseScaleToZero)
 )
 
 type ManagedHandleCleanupConfig struct {

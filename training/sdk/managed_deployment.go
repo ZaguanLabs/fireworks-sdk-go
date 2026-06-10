@@ -14,6 +14,7 @@ type ManagedDeploymentAttachPlan struct {
 	DeploymentID       string
 	Action             ManagedDeploymentAction
 	Reattached         bool
+	Created            bool
 	ResetSnapshotChain bool
 	WaitForReady       bool
 	CreateConfig       *DeploymentConfig
@@ -59,6 +60,7 @@ func PlanManagedDeploymentAttachment(config FiretitanProvisioningConfig, trainer
 		return ManagedDeploymentAttachPlan{}, err
 	}
 	plan.Action = ManagedDeploymentActionCreate
+	plan.Created = true
 	plan.CreateConfig = &createConfig
 	plan.WaitForReady = true
 	return plan, nil
@@ -98,5 +100,6 @@ func ManagedDeploymentCreateConfig(config FiretitanProvisioningConfig, trainerJo
 		DisableSpeculativeDecoding: config.DisableSpeculativeDecoding,
 		ExtraArgs:                  append([]string(nil), config.DeploymentExtraArgs...),
 		ExtraValues:                cloneStringMap(config.DeploymentExtraValues),
+		Annotations:                map[string]string{SDKManagedRolloutDeploymentAnnotation: "true"},
 	}, nil
 }
