@@ -57,14 +57,14 @@ func (e *DeploymentSamplerTimeoutError) Unwrap() error {
 }
 
 type FiretitanSampledSequence struct {
-	StopReason string
-	Tokens     []int
-	Logprobs   []float64
+	StopReason string    `json:"stop_reason"`
+	Tokens     []int     `json:"_tokens_list"`
+	Logprobs   []float64 `json:"_logprobs_list"`
 }
 
 type FiretitanSampleResponse struct {
-	Sequences      []FiretitanSampledSequence
-	PromptLogprobs []*float64
+	Sequences      []FiretitanSampledSequence `json:"sequences"`
+	PromptLogprobs []*float64                 `json:"_prompt_logprobs_list"`
 }
 
 type FiretitanSamplingParams struct {

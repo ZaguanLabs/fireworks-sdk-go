@@ -36,8 +36,8 @@ func TestVersionMatchesPythonSDK(t *testing.T) {
 	if Title != "fireworks" {
 		t.Fatalf("Title = %q, want %q", Title, "fireworks")
 	}
-	if Version != "1.2.0-alpha.78" {
-		t.Fatalf("Version = %q, want %q", Version, "1.2.0-alpha.78")
+	if Version != "1.2.0-alpha.79" {
+		t.Fatalf("Version = %q, want %q", Version, "1.2.0-alpha.79")
 	}
 }
 

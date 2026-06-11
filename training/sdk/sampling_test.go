@@ -910,6 +910,28 @@ func TestFiretitanSamplingClientSampleReturnsTinkerShapedResponse(t *testing.T) 
 	if captured.Stop[0] != "<99>" || captured.Extra["top_p"] != 0.9 || captured.Extra["top_k"] != 10 || captured.Extra["seed"] != 123 {
 		t.Fatalf("captured = %#v", captured)
 	}
+	data, err := json.Marshal(response)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire map[string]any
+	if err := json.Unmarshal(data, &wire); err != nil {
+		t.Fatal(err)
+	}
+	sequences := wire["sequences"].([]any)
+	seqWire := sequences[0].(map[string]any)
+	if _, ok := seqWire["tokens"]; ok {
+		t.Fatalf("legacy tokens field serialized: %s", data)
+	}
+	if _, ok := seqWire["logprobs"]; ok {
+		t.Fatalf("legacy logprobs field serialized: %s", data)
+	}
+	if _, ok := wire["prompt_logprobs"]; ok {
+		t.Fatalf("legacy prompt_logprobs field serialized: %s", data)
+	}
+	if seqWire["_tokens_list"] == nil || seqWire["_logprobs_list"] == nil || wire["_prompt_logprobs_list"] != nil {
+		t.Fatalf("alpha.79 wire shape = %s", data)
+	}
 }
 
 func TestFiretitanSamplingClientSampleSplitsEchoPromptLogprobs(t *testing.T) {
@@ -952,6 +974,13 @@ func TestFiretitanSamplingClientSampleSplitsEchoPromptLogprobs(t *testing.T) {
 	}
 	if len(seq.Logprobs) != 2 || seq.Logprobs[0] != -0.3 || seq.Logprobs[1] != -0.4 {
 		t.Fatalf("seq = %#v", seq)
+	}
+	data, err := json.Marshal(response)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"_prompt_logprobs_list":[null,-0.1,-0.2]`) {
+		t.Fatalf("alpha.79 prompt logprobs shape = %s", data)
 	}
 }
 
