@@ -14,8 +14,9 @@ func TestNormalizeCheckpointTypeEmptyPassthrough(t *testing.T) {
 
 func TestNormalizeCheckpointTypeLowercases(t *testing.T) {
 	tests := map[string]SamplerCheckpointType{
-		"BASE":  SamplerCheckpointTypeBase,
-		"Delta": SamplerCheckpointTypeDelta,
+		"BASE":        SamplerCheckpointTypeBase,
+		"Delta":       SamplerCheckpointTypeDelta,
+		"MERGED_BASE": SamplerCheckpointTypeMergedBase,
 	}
 	for input, want := range tests {
 		got, err := NormalizeCheckpointType(input)
@@ -72,6 +73,16 @@ func TestResolveNextCheckpointTypeExplicitOverrideWins(t *testing.T) {
 	}
 }
 
+func TestResolveNextCheckpointTypeExplicitMergedBaseOverrideWins(t *testing.T) {
+	got, err := ResolveNextCheckpointType(8, true, "base", "merged_base")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != SamplerCheckpointTypeMergedBase {
+		t.Fatalf("checkpoint type = %q, want merged_base", got)
+	}
+}
+
 func TestBuildIncrementalMetadataFullParamDeltaPinsPrevious(t *testing.T) {
 	got := BuildIncrementalMetadata(0, "delta", "snap-1", DefaultDeltaCompression)
 	if got == nil {
@@ -94,6 +105,12 @@ func TestBuildIncrementalMetadataFullParamDeltaPinsPrevious(t *testing.T) {
 
 func TestBuildIncrementalMetadataBaseHasNoMetadata(t *testing.T) {
 	if got := BuildIncrementalMetadata(0, "base", "snap-1", DefaultDeltaCompression); got != nil {
+		t.Fatalf("metadata = %#v, want nil", got)
+	}
+}
+
+func TestBuildIncrementalMetadataMergedBaseHasNoMetadata(t *testing.T) {
+	if got := BuildIncrementalMetadata(8, "merged_base", "snap-1", DefaultDeltaCompression); got != nil {
 		t.Fatalf("metadata = %#v, want nil", got)
 	}
 }

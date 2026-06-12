@@ -385,12 +385,16 @@ func BuildDeploymentBody(config DeploymentConfig, resolvedRegion ...string) map[
 	return body
 }
 
-func (m *DeploymentManager) ParseDeploymentInfo(deploymentID string, data map[string]any) DeploymentInfo {
+func (m *DeploymentManager) ParseDeploymentInfo(deploymentID string, data map[string]any, stateOverride ...string) DeploymentInfo {
 	accountID := m.accountID
+	state := stringOrDefault(data["state"], "UNKNOWN")
+	if len(stateOverride) > 0 && stateOverride[0] != "" {
+		state = stateOverride[0]
+	}
 	return DeploymentInfo{
 		DeploymentID:           deploymentID,
 		Name:                   stringFromAny(data["name"]),
-		State:                  stringOrDefault(data["state"], "UNKNOWN"),
+		State:                  state,
 		HotLoadBucketURL:       stringFromAny(data["hotLoadBucketUrl"]),
 		HotLoadTrainerJob:      firstString(data, "hotLoadTrainerJob", "hot_load_trainer_job"),
 		DeploymentShapeVersion: firstString(data, "deploymentShape", "deployment_shape"),
@@ -486,7 +490,7 @@ func (m *DeploymentManager) WaitForReady(ctx context.Context, deploymentID strin
 		}
 		if state == "CREATING" && opt.Probe(ctx, model) {
 			m.BootTime = opt.Now().Sub(start)
-			return m.ParseDeploymentInfo(deploymentID, data), nil
+			return m.ParseDeploymentInfo(deploymentID, data, "READY"), nil
 		}
 		opt.Sleep(opt.PollInterval)
 	}

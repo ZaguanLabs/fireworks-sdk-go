@@ -187,6 +187,11 @@ func ProvisionManagedHandle(ctx context.Context, opts ManagedProvisionOptions) (
 	if err != nil {
 		return nil, err
 	}
+	explicitTrainerJobID := config.TrainerJobID != ""
+	if !explicitTrainerJobID {
+		config.TrainerJobID = newTrainerJobID()
+	}
+	explicitDeploymentID := config.DeploymentID != ""
 	if opts.DeploymentManager != nil && opts.Deployment == nil {
 		opts.Deployment = opts.DeploymentManager
 	}
@@ -237,7 +242,7 @@ func ProvisionManagedHandle(ctx context.Context, opts ManagedProvisionOptions) (
 		}
 	}
 
-	startedTrainer, err := provisionManagedTrainer(ctx, opts.Trainer, config, maxContextLength, profile, opts)
+	startedTrainer, err := provisionManagedTrainer(ctx, opts.Trainer, config, maxContextLength, profile, explicitTrainerJobID, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -252,11 +257,12 @@ func ProvisionManagedHandle(ctx context.Context, opts ManagedProvisionOptions) (
 		createDeployment = *config.CreateDeployment
 	}
 	if createDeployment {
-		attached, err := attachManagedDeployment(ctx, opts.Deployment, config, trainerEndpoint.JobName, deploymentShape, now, opts)
+		attached, err := attachManagedDeployment(ctx, opts.Deployment, config, trainerEndpoint.JobName, deploymentShape, now, explicitDeploymentID, opts)
 		if err != nil {
 			return nil, err
 		}
 		deployment = &attached.Info
+		config.DeploymentID = attached.Info.DeploymentID
 		requiresInitialSync = attached.ResetSnapshotChain
 		deploymentCreated = attached.Created
 		if opts.DeploymentManager != nil {
@@ -362,11 +368,11 @@ func BuildManagedTrainerJobConfig(config FiretitanProvisioningConfig, maxContext
 	}
 }
 
-func provisionManagedTrainer(ctx context.Context, trainer ManagedTrainerController, config FiretitanProvisioningConfig, maxContextLength *int, profile *TrainingShapeProfile, opts ManagedProvisionOptions) (startedManagedTrainer, error) {
+func provisionManagedTrainer(ctx context.Context, trainer ManagedTrainerController, config FiretitanProvisioningConfig, maxContextLength *int, profile *TrainingShapeProfile, explicitTrainerJobID bool, opts ManagedProvisionOptions) (startedManagedTrainer, error) {
 	if trainer == nil {
 		return startedManagedTrainer{}, fmt.Errorf("managed provisioning requires Trainer")
 	}
-	if config.TrainerJobID != "" {
+	if explicitTrainerJobID {
 		if opts.ReconnectExistingJob {
 			endpoint, err := trainer.ReconnectAndWait(ctx, config.TrainerJobID, opts.ReconnectOptions)
 			return startedManagedTrainer{Endpoint: endpoint, Created: false}, err
@@ -400,6 +406,7 @@ func provisionManagedTrainer(ctx context.Context, trainer ManagedTrainerControll
 		return startedManagedTrainer{Endpoint: endpoint, Created: false}, err
 	}
 	trainerConfig := BuildManagedTrainerJobConfig(config, maxContextLength, profile)
+	trainerConfig.RequestedJobID = config.TrainerJobID
 	created, err := trainer.Create(ctx, trainerConfig)
 	if err != nil {
 		return startedManagedTrainer{}, err
@@ -408,12 +415,12 @@ func provisionManagedTrainer(ctx context.Context, trainer ManagedTrainerControll
 	return startedManagedTrainer{Endpoint: endpoint, Created: true}, err
 }
 
-func attachManagedDeployment(ctx context.Context, deployment ManagedDeploymentController, config FiretitanProvisioningConfig, trainerJobName, deploymentShape string, now func() time.Time, opts ManagedProvisionOptions) (managedDeploymentAttachment, error) {
+func attachManagedDeployment(ctx context.Context, deployment ManagedDeploymentController, config FiretitanProvisioningConfig, trainerJobName, deploymentShape string, now func() time.Time, explicitDeploymentID bool, opts ManagedProvisionOptions) (managedDeploymentAttachment, error) {
 	if deployment == nil {
 		return managedDeploymentAttachment{}, fmt.Errorf("managed deployment provisioning requires Deployment")
 	}
 	var existing *DeploymentInfo
-	if ShouldLookupManagedDeployment(config) {
+	if explicitDeploymentID {
 		info, ok, err := deployment.GetInfo(ctx, config.DeploymentID)
 		if err != nil {
 			return managedDeploymentAttachment{}, err

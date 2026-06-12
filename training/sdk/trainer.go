@@ -3,6 +3,8 @@ package sdk
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -20,6 +22,7 @@ var (
 
 const GradientAccumulationStepsOneWarning = "TrainerJobConfig.gradient_accumulation_steps=1 is deprecated and ignored. Express gradient accumulation as client-side control flow (multiple forward_backward calls per optim_step) and pass grad_accumulation_normalization on the optim_step request."
 const displayNameLengthLimit = 64
+const autoTrainerJobIDPrefix = "training-api-service"
 
 type TrainerServiceEndpoint struct {
 	JobName string
@@ -69,6 +72,21 @@ type TrainerJobConfig struct {
 	Purpose                   string
 	ManagedBy                 string
 	RequestedJobID            string
+}
+
+func newTrainerJobID() string {
+	var raw [4]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return fmt.Sprintf("%s-%d", autoTrainerJobIDPrefix, time.Now().UnixNano())
+	}
+	return autoTrainerJobIDPrefix + "-" + hex.EncodeToString(raw[:])
+}
+
+func ensureRequestedJobID(config *TrainerJobConfig) string {
+	if config.RequestedJobID == "" {
+		config.RequestedJobID = newTrainerJobID()
+	}
+	return config.RequestedJobID
 }
 
 func (c TrainerJobConfig) Validate() error {
@@ -530,6 +548,7 @@ func (m *TrainerJobManager) CreateRaw(ctx context.Context, config TrainerJobConf
 	if err != nil {
 		return nil, err
 	}
+	requestedJobID := ensureRequestedJobID(&config)
 	path := "/v1/accounts/" + accountID + "/rlorTrainerJobs"
 	query := url.Values{}
 	if config.HotLoadDeploymentID != "" {
@@ -543,9 +562,7 @@ func (m *TrainerJobManager) CreateRaw(ctx context.Context, config TrainerJobConf
 	} else {
 		query.Set("skipValidations", "true")
 	}
-	if config.RequestedJobID != "" {
-		query.Set("rlorTrainerJobId", config.RequestedJobID)
-	}
+	query.Set("rlorTrainerJobId", requestedJobID)
 	if len(query) > 0 {
 		path += "?" + query.Encode()
 	}
@@ -556,6 +573,15 @@ func (m *TrainerJobManager) CreateRaw(ctx context.Context, config TrainerJobConf
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode == http.StatusConflict {
+		existing, found, getErr := m.TryGetJob(ctx, requestedJobID)
+		if getErr != nil {
+			return nil, getErr
+		}
+		if found {
+			return existing, nil
+		}
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("%s", FormatSDKError(
 			fmt.Sprintf("RLOR job creation failed (HTTP %d)", resp.StatusCode),

@@ -12,10 +12,12 @@ import (
 )
 
 func TestTrainerJobCreateReturnsJobIdentity(t *testing.T) {
+	var seenJobID string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/accounts/test/rlorTrainerJobs" {
 			t.Errorf("path = %q", r.URL.Path)
 		}
+		seenJobID = r.URL.Query().Get("rlorTrainerJobId")
 		_ = json.NewEncoder(w).Encode(map[string]any{"name": "accounts/test/rlorTrainerJobs/job-1"})
 	}))
 	defer server.Close()
@@ -28,6 +30,9 @@ func TestTrainerJobCreateReturnsJobIdentity(t *testing.T) {
 	}
 	if created.JobName != "accounts/test/rlorTrainerJobs/job-1" || created.JobID != "job-1" {
 		t.Fatalf("created = %#v", created)
+	}
+	if !strings.HasPrefix(seenJobID, autoTrainerJobIDPrefix+"-") {
+		t.Fatalf("rlorTrainerJobId = %q", seenJobID)
 	}
 }
 
@@ -196,6 +201,38 @@ func TestTrainerJobCreateSendsRequestedJobID(t *testing.T) {
 	}
 	if !strings.Contains(seenPath, "rlorTrainerJobId=stable-id") {
 		t.Fatalf("path = %q", seenPath)
+	}
+}
+
+func TestTrainerJobCreateConflictFetchesExisting(t *testing.T) {
+	var calls []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.Method+" "+r.URL.String())
+		switch r.Method {
+		case http.MethodPost:
+			http.Error(w, `{"error":"already exists"}`, http.StatusConflict)
+		case http.MethodGet:
+			_ = json.NewEncoder(w).Encode(map[string]any{"name": "accounts/test/rlorTrainerJobs/stable-id"})
+		default:
+			t.Errorf("unexpected method %s", r.Method)
+		}
+	}))
+	defer server.Close()
+
+	mgr := NewTrainerJobManager("test-key", server.URL)
+	mgr.SetAccountID("test")
+	created, err := mgr.Create(context.Background(), TrainerJobConfig{
+		BaseModel:      "accounts/test/models/m",
+		RequestedJobID: "stable-id",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.JobID != "stable-id" {
+		t.Fatalf("created = %#v", created)
+	}
+	if len(calls) != 2 || !strings.Contains(calls[0], "rlorTrainerJobId=stable-id") || calls[1] != "GET /v1/accounts/test/rlorTrainerJobs/stable-id" {
+		t.Fatalf("calls = %#v", calls)
 	}
 }
 

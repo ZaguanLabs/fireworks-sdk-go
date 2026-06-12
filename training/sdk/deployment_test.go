@@ -511,7 +511,7 @@ func TestWaitForReadyAcceptsReadyAndCreatingProbe(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.State != "CREATING" || mgr.BootTime != 0 {
+	if info.State != "READY" || mgr.BootTime != 0 {
 		t.Fatalf("info=%#v boot=%s", info, mgr.BootTime)
 	}
 }

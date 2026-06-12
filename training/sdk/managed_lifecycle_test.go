@@ -169,6 +169,9 @@ func TestProvisionManagedHandleCreatesTrainerAndDeployment(t *testing.T) {
 	if trainer.created[0].TrainingShapeRef != profile.TrainingShapeVersion {
 		t.Fatalf("trainer config = %#v", trainer.created[0])
 	}
+	if !strings.HasPrefix(trainer.created[0].RequestedJobID, autoTrainerJobIDPrefix+"-") {
+		t.Fatalf("requested job id = %q", trainer.created[0].RequestedJobID)
+	}
 	if trainer.created[0].MaxContextLength == nil || *trainer.created[0].MaxContextLength != 4096 {
 		t.Fatalf("max context = %#v", trainer.created[0].MaxContextLength)
 	}
@@ -183,6 +186,9 @@ func TestProvisionManagedHandleCreatesTrainerAndDeployment(t *testing.T) {
 	}
 	if handle.Metadata.TrainerJobID != "job-new" || handle.Metadata.DeploymentID != "base-123" {
 		t.Fatalf("metadata = %#v", handle.Metadata)
+	}
+	if handle.Config.TrainerJobID != trainer.created[0].RequestedJobID || handle.Config.DeploymentID != "base-123" {
+		t.Fatalf("config = %#v requested=%q", handle.Config, trainer.created[0].RequestedJobID)
 	}
 	if handle.Metadata.MaxContextLength == nil || *handle.Metadata.MaxContextLength != 4096 {
 		t.Fatalf("metadata max context = %#v", handle.Metadata.MaxContextLength)

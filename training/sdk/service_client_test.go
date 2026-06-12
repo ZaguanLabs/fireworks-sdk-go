@@ -411,7 +411,7 @@ func TestFiretitanServiceClientCreateReferenceClientSeparateHandle(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if client.Config.TrainerJobID != "job-new-2" || !client.Config.ForwardOnly {
+	if !strings.HasPrefix(client.Config.TrainerJobID, autoTrainerJobIDPrefix+"-") || !client.Config.ForwardOnly {
 		t.Fatalf("reference config = %#v", client.Config)
 	}
 	if client.HandleMetadata.TrainerJobID != "job-new-2" {

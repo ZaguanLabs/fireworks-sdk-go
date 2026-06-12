@@ -2,5 +2,5 @@ package fireworks
 
 const (
 	Title   = "fireworks"
-	Version = "1.2.0-alpha.79"
+	Version = "1.2.0-alpha.80"
 )
