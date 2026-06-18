@@ -81,6 +81,25 @@ func TestFiretitanServiceClientCreateTrainingClientAllowsDifferentSeed(t *testin
 	}
 }
 
+func TestFiretitanServiceClientCreateTrainingClientClearsFullParameterLoraAlpha(t *testing.T) {
+	svc, err := NewFiretitanServiceClient(FiretitanServiceClientOptions{
+		Config: FiretitanProvisioningConfig{
+			BaseModel: "accounts/acct/models/base",
+			LoraAlpha: intPointer(32),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := svc.CreateTrainingClient(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.Config.LoraAlpha != nil {
+		t.Fatalf("full-parameter lora alpha = %#v", client.Config.LoraAlpha)
+	}
+}
+
 func TestFiretitanServiceClientResolvedMetadata(t *testing.T) {
 	maxContext := 8192
 	acceleratorCount := 8
@@ -298,6 +317,9 @@ func TestFiretitanServiceClientCreateLoraTrainingClient(t *testing.T) {
 	if client.Config.BaseModel != "accounts/acct/models/base" || client.Config.LoraRank != 32 {
 		t.Fatalf("client config = %#v", client.Config)
 	}
+	if client.Config.LoraAlpha == nil || *client.Config.LoraAlpha != DefaultLoraAlpha {
+		t.Fatalf("lora alpha = %#v", client.Config.LoraAlpha)
+	}
 	if client.Config.TrainMLP == nil || !*client.Config.TrainMLP || client.Config.TrainAttn == nil || !*client.Config.TrainAttn || client.Config.TrainUnembed == nil || !*client.Config.TrainUnembed {
 		t.Fatalf("train flags = mlp:%#v attn:%#v unembed:%#v", client.Config.TrainMLP, client.Config.TrainAttn, client.Config.TrainUnembed)
 	}
@@ -308,6 +330,7 @@ func TestFiretitanServiceClientCreateLoraTrainingClient(t *testing.T) {
 
 func TestFiretitanServiceClientCreateLoraTrainingClientOverrides(t *testing.T) {
 	seed := 123
+	alpha := 24
 	trainMLP := false
 	trainAttn := true
 	trainUnembed := false
@@ -319,6 +342,7 @@ func TestFiretitanServiceClientCreateLoraTrainingClientOverrides(t *testing.T) {
 	}
 	client, err := svc.CreateLoraTrainingClient(context.Background(), "accounts/acct/models/base", CreateLoraTrainingClientOptions{
 		Rank:         16,
+		Alpha:        &alpha,
 		Seed:         &seed,
 		TrainMLP:     &trainMLP,
 		TrainAttn:    &trainAttn,
@@ -327,7 +351,7 @@ func TestFiretitanServiceClientCreateLoraTrainingClientOverrides(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if client.Config.LoraRank != 16 || client.Config.Seed == nil || *client.Config.Seed != 123 {
+	if client.Config.LoraRank != 16 || client.Config.LoraAlpha == nil || *client.Config.LoraAlpha != 24 || client.Config.Seed == nil || *client.Config.Seed != 123 {
 		t.Fatalf("client config = %#v", client.Config)
 	}
 	if client.Config.TrainMLP == nil || *client.Config.TrainMLP || client.Config.TrainAttn == nil || !*client.Config.TrainAttn || client.Config.TrainUnembed == nil || *client.Config.TrainUnembed {

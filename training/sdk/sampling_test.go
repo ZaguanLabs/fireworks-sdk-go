@@ -680,7 +680,7 @@ func TestDeploymentSamplerDefaultRequesterPayload(t *testing.T) {
 	if payload["model"] != "accounts/test/deployments/dep" || payload["stream"] != true || payload["perf_metrics_in_response"] != true || payload["raw_output"] != true || payload["logprobs"] != true || payload["include_routing_matrix"] != true {
 		t.Fatalf("payload = %#v", payload)
 	}
-	if payload["temperature"].(float64) != 0.7 || payload["max_tokens"].(float64) != 2 {
+	if payload["temperature"].(float64) != 0.7 || payload["max_tokens"].(float64) != 2 || payload["top_p"].(float64) != 1.0 || payload["top_k"].(float64) != 0 {
 		t.Fatalf("payload = %#v", payload)
 	}
 	metrics := sampler.DrainMetrics()

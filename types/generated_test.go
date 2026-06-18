@@ -36,6 +36,7 @@ func TestPythonTopLevelSharedAliases(t *testing.T) {
 	_ = PromptTokensDetails{}
 	_ = ChatCompletionMessageToolCall{}
 	_ = NewLogProbsContentTopLogProbs{}
+	_ = DpoConfig{}
 	_ = ReinforcementLearningLossConfig{}
 	_ = ChatCompletionMessageToolCallFunction{}
 }

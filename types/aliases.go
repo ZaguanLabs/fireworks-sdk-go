@@ -27,6 +27,8 @@ type NewLogProbsContent = SharedNewLogProbsContent
 type PromptTokensDetails = SharedPromptTokensDetails
 type ChatCompletionMessageToolCall = SharedChatCompletionMessageToolCall
 type NewLogProbsContentTopLogProbs = SharedNewLogProbsContentTopLogProbs
+type DPOConfig = SharedDPOConfigDpoConfig
+type DpoConfig = SharedDPOConfigDpoConfig
 type ReinforcementLearningLossConfig = SharedReinforcementLearningLossConfig
 type ChatCompletionMessageToolCallFunction = SharedChatCompletionMessageToolCallFunction
 

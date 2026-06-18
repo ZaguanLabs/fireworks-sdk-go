@@ -20,6 +20,7 @@ const (
 	ForwardOnlyMode     = "FORWARD_ONLY"
 	LoraTrainerMode     = "LORA_TRAINER"
 	DefaultLearningRate = 1e-5
+	DefaultLoraAlpha    = 32
 )
 
 var DeploymentTerminalStates = map[string]bool{
@@ -37,6 +38,7 @@ type FiretitanProvisioningConfig struct {
 	BaseModel       string
 	TokenizerModel  string
 	LoraRank        int
+	LoraAlpha       *int
 	TrainingShapeID string
 
 	ReferenceTrainingShapeID       string

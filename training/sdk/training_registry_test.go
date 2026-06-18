@@ -45,6 +45,18 @@ func TestTrainingClientConfigRegistryDistinguishesSeed(t *testing.T) {
 	}
 }
 
+func TestTrainingClientConfigRegistryDistinguishesLoraAlpha(t *testing.T) {
+	registry := NewTrainingClientConfigRegistry(
+		NewTrainingClientKey("model-a", 8, nil, true, true, true, intPointer(16)),
+	)
+	if err := registry.Add(NewTrainingClientKey("model-a", 8, nil, true, true, true, intPointer(32))); err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.Add(NewTrainingClientKey("model-a", 8, nil, true, true, true, intPointer(32))); err == nil {
+		t.Fatal("expected duplicate lora alpha to be rejected")
+	}
+}
+
 func TestTrainingClientConfigRegistryDistinguishesTrainFlags(t *testing.T) {
 	registry := NewTrainingClientConfigRegistry(
 		NewTrainingClientKey("model-a", 0, nil, true, true, true),

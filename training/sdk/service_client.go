@@ -327,6 +327,7 @@ type CreateFiretitanTrainingClientOptions struct {
 	ConfigOverride             *FiretitanProvisioningConfig
 	BaseModel                  string
 	LoraRank                   *int
+	LoraAlpha                  *int
 	UserMetadata               map[string]string
 	HandleMetadata             *ManagedHandleMetadata
 	SamplerBackend             *TinkerSamplerBackend
@@ -407,6 +408,7 @@ type CreateReferenceClientOptions struct {
 
 type CreateLoraTrainingClientOptions struct {
 	Rank         int
+	Alpha        *int
 	Seed         *int
 	TrainMLP     *bool
 	TrainAttn    *bool
@@ -451,6 +453,12 @@ func (c *FiretitanServiceClient) CreateTrainingClient(_ context.Context, opts ..
 		}
 		config = normalized
 	}
+	if config.LoraRank > 0 && config.LoraAlpha == nil {
+		config.LoraAlpha = intPointer(DefaultLoraAlpha)
+	}
+	if config.LoraRank == 0 {
+		config.LoraAlpha = nil
+	}
 	if !opt.SkipRegistry {
 		key := ManagedTrainingClientKey(config)
 		if err := c.Registry.Add(key); err != nil {
@@ -465,6 +473,15 @@ func (c *FiretitanServiceClient) CreateTrainingClient(_ context.Context, opts ..
 	}
 	if opt.LoraRank != nil {
 		if warning := DeprecatedManagedOverrideMessage("create_training_client", "lora_rank", *opt.LoraRank, config.LoraRank); warning != "" {
+			warnings = append(warnings, warning)
+		}
+	}
+	if opt.LoraAlpha != nil {
+		var configuredAlpha any
+		if config.LoraAlpha != nil {
+			configuredAlpha = *config.LoraAlpha
+		}
+		if warning := DeprecatedManagedOverrideMessage("create_training_client", "lora_alpha", *opt.LoraAlpha, configuredAlpha); warning != "" {
 			warnings = append(warnings, warning)
 		}
 	}
@@ -520,6 +537,10 @@ func (c *FiretitanServiceClient) CreateLoraTrainingClient(ctx context.Context, b
 		rank = 32
 	}
 	config.LoraRank = rank
+	config.LoraAlpha = intPointer(DefaultLoraAlpha)
+	if opt.Alpha != nil {
+		config.LoraAlpha = cloneIntPointer(opt.Alpha)
+	}
 	config.Seed = cloneIntPointer(opt.Seed)
 	config.TrainMLP = boolPointer(true)
 	config.TrainAttn = boolPointer(true)
@@ -537,6 +558,7 @@ func (c *FiretitanServiceClient) CreateLoraTrainingClient(ctx context.Context, b
 		ConfigOverride: &config,
 		BaseModel:      baseModel,
 		LoraRank:       &rank,
+		LoraAlpha:      config.LoraAlpha,
 		UserMetadata:   opt.UserMetadata,
 	})
 }

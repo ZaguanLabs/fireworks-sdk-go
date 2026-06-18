@@ -173,7 +173,9 @@ func (c *FiretitanServiceClient) CreateManagedTrainingClient(ctx context.Context
 	if err != nil {
 		return nil, err
 	}
+	config := handle.Config
 	return c.CreateTrainingClient(ctx, CreateFiretitanTrainingClientOptions{
+		ConfigOverride:             &config,
 		UserMetadata:               handle.UserMetadata,
 		HandleMetadata:             &handle.Metadata,
 		SamplerBackend:             handle.SamplerBackend,
@@ -186,6 +188,12 @@ func ProvisionManagedHandle(ctx context.Context, opts ManagedProvisionOptions) (
 	config, err := opts.Config.Normalize()
 	if err != nil {
 		return nil, err
+	}
+	if config.LoraRank > 0 && config.LoraAlpha == nil {
+		config.LoraAlpha = intPointer(DefaultLoraAlpha)
+	}
+	if config.LoraRank == 0 {
+		config.LoraAlpha = nil
 	}
 	explicitTrainerJobID := config.TrainerJobID != ""
 	if !explicitTrainerJobID {

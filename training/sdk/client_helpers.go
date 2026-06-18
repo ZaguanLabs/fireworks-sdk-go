@@ -150,6 +150,9 @@ func ManagedConfigFromMap(values map[string]any) (FiretitanProvisioningConfig, [
 	if err := PopAlias(kwargs, "replica_count", "deployment_replica_count"); err != nil {
 		return FiretitanProvisioningConfig{}, nil, err
 	}
+	if err := PopAlias(kwargs, "lora_alpha", "loraAlpha"); err != nil {
+		return FiretitanProvisioningConfig{}, nil, err
+	}
 
 	var deprecated []string
 	for _, field := range []string{"accelerator_type", "accelerator_count"} {
@@ -183,6 +186,8 @@ func firetitanProvisioningConfigFromCanonicalMap(values map[string]any) (Firetit
 			config.TokenizerModel, err = asString(value, key)
 		case "lora_rank":
 			config.LoraRank, err = asInt(value, key)
+		case "lora_alpha":
+			config.LoraAlpha, err = asIntPointer(value, key)
 		case "training_shape_id":
 			config.TrainingShapeID, err = asString(value, key)
 		case "reference_training_shape_id":

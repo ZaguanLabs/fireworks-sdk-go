@@ -39,5 +39,6 @@ func ManagedTrainingClientKey(config FiretitanProvisioningConfig) TrainingClient
 		trainMLP,
 		trainAttn,
 		trainUnembed,
+		config.LoraAlpha,
 	)
 }

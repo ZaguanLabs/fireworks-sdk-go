@@ -2640,6 +2640,13 @@ type SharedDeployedModelRef struct {
 	State      *string `json:"state,omitempty"`
 }
 
+// SharedDPOConfigDpoConfig mirrors fireworks.types.shared.dpo_config.DpoConfig.
+type SharedDPOConfigDpoConfig struct {
+	Beta                *float64 `json:"beta,omitempty"`
+	RefCacheConcurrency *int     `json:"refCacheConcurrency,omitempty"`
+	RefCacheBatchSize   *int     `json:"refCacheBatchSize,omitempty"`
+}
+
 // SharedLogProbs mirrors fireworks.types.shared.log_probs.LogProbs.
 type SharedLogProbs struct {
 	TextOffset    []int                `json:"text_offset,omitempty"`
@@ -2694,8 +2701,9 @@ type SharedRawOutput struct {
 
 // SharedReinforcementLearningLossConfig mirrors fireworks.types.shared.reinforcement_learning_loss_config.ReinforcementLearningLossConfig.
 type SharedReinforcementLearningLossConfig struct {
-	KlBeta *float64 `json:"klBeta,omitempty"`
-	Method *string  `json:"method,omitempty"`
+	DPO    *SharedDPOConfigDpoConfig `json:"dpo,omitempty"`
+	KlBeta *float64                  `json:"klBeta,omitempty"`
+	Method *string                   `json:"method,omitempty"`
 }
 
 // SharedStatus mirrors fireworks.types.shared.status.Status.
@@ -2802,10 +2810,18 @@ type SharedParamsChatMessage struct {
 	ToolCalls        []SharedParamsChatCompletionMessageToolCall `json:"tool_calls,omitempty"`
 }
 
+// SharedParamsDPOConfigDpoConfig mirrors fireworks.types.shared_params.dpo_config.DpoConfig.
+type SharedParamsDPOConfigDpoConfig struct {
+	Beta                any `json:"beta,omitempty"`
+	RefCacheConcurrency any `json:"refCacheConcurrency,omitempty"`
+	RefCacheBatchSize   any `json:"refCacheBatchSize,omitempty"`
+}
+
 // SharedParamsReinforcementLearningLossConfig mirrors fireworks.types.shared_params.reinforcement_learning_loss_config.ReinforcementLearningLossConfig.
 type SharedParamsReinforcementLearningLossConfig struct {
-	KlBeta any    `json:"klBeta,omitempty"`
-	Method string `json:"method,omitempty"`
+	DPO    SharedParamsDPOConfigDpoConfig `json:"dpo,omitempty"`
+	KlBeta any                            `json:"klBeta,omitempty"`
+	Method string                         `json:"method,omitempty"`
 }
 
 // SharedParamsStatus mirrors fireworks.types.shared_params.status.Status.

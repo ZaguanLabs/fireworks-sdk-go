@@ -200,6 +200,7 @@ func TestManagedConfigFromMapAcceptsAliases(t *testing.T) {
 		"training_shape":           "accounts/acct/trainingShapes/shape",
 		"trainer_id":               "trainer-1",
 		"deployment_replica_count": 2,
+		"loraAlpha":                24,
 		"trainer_timeout_s":        30,
 		"deployment_extra_args":    []any{"--a", "--b"},
 		"deployment_extra_values":  map[string]any{"k": "v"},
@@ -215,6 +216,9 @@ func TestManagedConfigFromMapAcceptsAliases(t *testing.T) {
 	}
 	if config.ReplicaCount == nil || *config.ReplicaCount != 2 {
 		t.Fatalf("replica count = %#v", config.ReplicaCount)
+	}
+	if config.LoraAlpha == nil || *config.LoraAlpha != 24 {
+		t.Fatalf("lora alpha = %#v", config.LoraAlpha)
 	}
 	if config.TrainerTimeout != 30*time.Second {
 		t.Fatalf("trainer timeout = %v", config.TrainerTimeout)

@@ -39,6 +39,7 @@ func TestManagedTrainingClientKeyUsesImmutableConfig(t *testing.T) {
 	config := FiretitanProvisioningConfig{
 		BaseModel:    "accounts/acct/models/base",
 		LoraRank:     8,
+		LoraAlpha:    intPointer(16),
 		Seed:         intPointer(123),
 		TrainMLP:     boolPointer(false),
 		TrainAttn:    boolPointer(true),
@@ -50,6 +51,9 @@ func TestManagedTrainingClientKeyUsesImmutableConfig(t *testing.T) {
 	}
 	if !key.HasSeed || key.Seed != 123 {
 		t.Fatalf("seed key = %#v", key)
+	}
+	if !key.HasLoraAlpha || key.LoraAlpha != 16 {
+		t.Fatalf("lora alpha key = %#v", key)
 	}
 	if key.TrainMLP || !key.TrainAttn || key.TrainUnembed {
 		t.Fatalf("train flags = %#v", key)

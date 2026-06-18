@@ -10,9 +10,11 @@ type TrainingClientKey struct {
 	TrainMLP     bool
 	TrainAttn    bool
 	TrainUnembed bool
+	LoraAlpha    int
+	HasLoraAlpha bool
 }
 
-func NewTrainingClientKey(baseModel string, loraRank int, seed *int, trainMLP, trainAttn, trainUnembed bool) TrainingClientKey {
+func NewTrainingClientKey(baseModel string, loraRank int, seed *int, trainMLP, trainAttn, trainUnembed bool, loraAlpha ...*int) TrainingClientKey {
 	key := TrainingClientKey{
 		BaseModel:    baseModel,
 		LoraRank:     loraRank,
@@ -23,6 +25,10 @@ func NewTrainingClientKey(baseModel string, loraRank int, seed *int, trainMLP, t
 	if seed != nil {
 		key.Seed = *seed
 		key.HasSeed = true
+	}
+	if len(loraAlpha) > 0 && loraAlpha[0] != nil {
+		key.LoraAlpha = *loraAlpha[0]
+		key.HasLoraAlpha = true
 	}
 	return key
 }

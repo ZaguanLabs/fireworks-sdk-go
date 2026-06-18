@@ -841,6 +841,12 @@ func (s *DeploymentSampler) StreamCompletions(ctx context.Context, prompt []int,
 	for key, value := range opts.Extra {
 		payload[key] = value
 	}
+	if _, exists := payload["top_p"]; !exists {
+		payload["top_p"] = 1.0
+	}
+	if _, exists := payload["top_k"]; !exists {
+		payload["top_k"] = 0
+	}
 	if _, hasImages := opts.Extra["images"]; hasImages {
 		if _, exists := payload["return_token_ids"]; !exists {
 			payload["return_token_ids"] = true
