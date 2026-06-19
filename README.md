@@ -2,11 +2,11 @@
 
 Unofficial Go port of the official Fireworks AI Python SDK.
 
-This project targets Fireworks Python SDK `1.2.0-alpha.82` and keeps the Go
+This project targets Fireworks Python SDK `1.2.0-alpha.83` and keeps the Go
 package version aligned exactly:
 
 ```go
-fireworks.Version // "1.2.0-alpha.82"
+fireworks.Version // "1.2.0-alpha.83"
 ```
 
 Upstream references:
@@ -28,9 +28,9 @@ Current parity checks cover:
 - FireTitan training lifecycle helpers and opt-in live contract tests
 
 The latest local parity report is in
-[`docs/resource-type-parity-alpha82.md`](docs/resource-type-parity-alpha82.md).
+[`docs/resource-type-parity-alpha83.md`](docs/resource-type-parity-alpha83.md).
 The broader training parity matrix is in
-[`docs/parity-alpha82.md`](docs/parity-alpha82.md).
+[`docs/parity-alpha83.md`](docs/parity-alpha83.md).
 
 ## Install
 
@@ -325,14 +325,14 @@ The Python SDK source snapshot is intentionally ignored by git. To regenerate
 types, provide a local copy of the official Python SDK source:
 
 ```sh
-FIREWORKS_PY_TYPES_ROOT=/path/to/python-sdk-1.2.0-alpha.82/src/fireworks/types \
+FIREWORKS_PY_TYPES_ROOT=/path/to/python-sdk-1.2.0-alpha.83/src/fireworks/types \
   go generate ./types
 ```
 
 The default generator path is:
 
 ```text
-docs/fireworks-py/python-sdk-1.2.0-alpha.82/src/fireworks/types
+docs/fireworks-py/python-sdk-1.2.0-alpha.83/src/fireworks/types
 ```
 
 ## Development
@@ -360,8 +360,8 @@ Releases are created from git tags by
 Use Go module semver tags:
 
 ```sh
-git tag v1.2.0-alpha.82
-git push origin v1.2.0-alpha.82
+git tag v1.2.0-alpha.83
+git push origin v1.2.0-alpha.83
 ```
 
 The workflow checks that `version.go` matches the tag, runs `go test ./...`,
@@ -370,7 +370,7 @@ compare changelog link between the previous release and the new tag.
 
 Tag push defaults:
 
-- tags with a prerelease suffix, such as `v1.2.0-alpha.82`, create a
+- tags with a prerelease suffix, such as `v1.2.0-alpha.83`, create a
   prerelease and do not become Latest
 - stable tags, such as `v1.2.0`, create a normal release and become Latest
 

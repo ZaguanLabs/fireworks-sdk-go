@@ -1,6 +1,7 @@
 package sdk
 
 import (
+	"encoding/json"
 	"reflect"
 	"strings"
 	"testing"
@@ -80,6 +81,38 @@ func TestRoutingMatricesFromModelInputAnySlice(t *testing.T) {
 	if got := RoutingMatricesFromModelInput(map[string]any{}); got != nil {
 		t.Fatalf("missing routing matrices = %#v", got)
 	}
+}
+
+func TestForwardBackwardWirePayloadPreservesRoutingMatrices(t *testing.T) {
+	data := []TrainingDatum{{
+		ModelInput: ModelInputFromInts([]int{1, 2, 3}, []string{"", "rm1", "rm2"}),
+		LossFnInputs: map[string]TensorData{
+			"target_tokens": {
+				Data:  []int{2, 3, 4},
+				DType: "int64",
+				Shape: []int{3},
+			},
+		},
+	}}
+	forwardPayload := struct {
+		ForwardInput struct {
+			Data []TrainingDatum `json:"data"`
+		} `json:"forward_input"`
+		ModelID string `json:"model_id"`
+		SeqID   int    `json:"seq_id"`
+	}{ModelID: "model", SeqID: 1}
+	forwardPayload.ForwardInput.Data = data
+	assertNestedRoutingMatrices(t, forwardPayload, "forward_input")
+
+	forwardBackwardPayload := struct {
+		ForwardBackwardInput struct {
+			Data []TrainingDatum `json:"data"`
+		} `json:"forward_backward_input"`
+		ModelID string `json:"model_id"`
+		SeqID   int    `json:"seq_id"`
+	}{ModelID: "model", SeqID: 2}
+	forwardBackwardPayload.ForwardBackwardInput.Data = data
+	assertNestedRoutingMatrices(t, forwardBackwardPayload, "forward_backward_input")
 }
 
 func TestCountResponseTokensPrefersNonZeroWeights(t *testing.T) {
@@ -201,5 +234,36 @@ func TestDisableParallelForwardBackward(t *testing.T) {
 	}
 	if DisableParallelForwardBackward(false) {
 		t.Fatal("false should remain false")
+	}
+}
+
+func assertNestedRoutingMatrices(t *testing.T, payload any, field string) {
+	t.Helper()
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	input, ok := decoded[field].(map[string]any)
+	if !ok {
+		t.Fatalf("%s = %#v", field, decoded[field])
+	}
+	rows, ok := input["data"].([]any)
+	if !ok || len(rows) != 1 {
+		t.Fatalf("%s.data = %#v", field, input["data"])
+	}
+	row, ok := rows[0].(map[string]any)
+	if !ok {
+		t.Fatalf("%s.data[0] = %#v", field, rows[0])
+	}
+	modelInput, ok := row["model_input"].(map[string]any)
+	if !ok {
+		t.Fatalf("%s.data[0].model_input = %#v", field, row["model_input"])
+	}
+	if !reflect.DeepEqual(modelInput["routing_matrices"], []any{"", "rm1", "rm2"}) {
+		t.Fatalf("routing_matrices = %#v", modelInput["routing_matrices"])
 	}
 }

@@ -10,7 +10,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-PYTHON_SDK_VERSION = "1.2.0-alpha.82"
+PYTHON_SDK_VERSION = "1.2.0-alpha.83"
 DEFAULT_FIREWORKS_ROOT = REPO_ROOT / f"docs/fireworks-py/python-sdk-{PYTHON_SDK_VERSION}/src/fireworks"
 FIREWORKS_ROOT = Path(os.environ.get("FIREWORKS_PY_ROOT", DEFAULT_FIREWORKS_ROOT)).expanduser()
 
@@ -47,6 +47,13 @@ def require_root() -> None:
         f"Fireworks Python SDK source not found: {FIREWORKS_ROOT}\n"
         f"Set FIREWORKS_PY_ROOT=/path/to/python-sdk-{PYTHON_SDK_VERSION}/src/fireworks"
     )
+
+
+def display_path(path: Path) -> str:
+    try:
+        return str(path.relative_to(REPO_ROOT))
+    except ValueError:
+        return str(path)
 
 
 def pascal(name: str) -> str:
@@ -115,7 +122,7 @@ def main() -> None:
     actual_types = go_type_names()
 
     print(f"# Fireworks SDK Go resource/type parity report ({PYTHON_SDK_VERSION})\n")
-    print(f"Python SDK source: `{FIREWORKS_ROOT}`.\n")
+    print(f"Python SDK source: `{display_path(FIREWORKS_ROOT)}`.\n")
     print("## Resource Methods\n")
     print("| Resource | Python methods | Missing in Go | Extra Go methods |")
     print("| --- | ---: | --- | --- |")
