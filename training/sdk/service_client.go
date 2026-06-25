@@ -2,6 +2,7 @@ package sdk
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -10,6 +11,7 @@ import (
 type FiretitanServiceClientOptions struct {
 	APIKey              string
 	BaseURL             string
+	TrainingSessionID   string
 	Config              FiretitanProvisioningConfig
 	DefaultUserMetadata map[string]string
 	DefaultProjectID    string
@@ -19,17 +21,20 @@ type FiretitanServiceClientOptions struct {
 }
 
 type FiretitanServiceClient struct {
-	Config              FiretitanProvisioningConfig
-	DefaultUserMetadata map[string]string
-	DefaultProjectID    string
-	Fireworks           *FireworksClient
-	Registry            *TrainingClientConfigRegistry
-	ManagedHandle       *ManagedHandleMetadata
-	ProvisionedHandle   *ManagedProvisionedHandle
-	ReferenceHandle     *ManagedProvisionedHandle
-	SamplerBackend      *TinkerSamplerBackend
-	SyncState           ManagedSamplerSyncState
-	Now                 func() time.Time
+	Config                    FiretitanProvisioningConfig
+	ServerlessSessionID       string
+	AccountIDCache            string
+	DefaultUserMetadata       map[string]string
+	DefaultProjectID          string
+	Fireworks                 *FireworksClient
+	Registry                  *TrainingClientConfigRegistry
+	ManagedHandle             *ManagedHandleMetadata
+	ProvisionedHandle         *ManagedProvisionedHandle
+	ReferenceHandle           *ManagedProvisionedHandle
+	OwnedInferenceDeployments []OwnedInferenceDeployment
+	SamplerBackend            *TinkerSamplerBackend
+	SyncState                 ManagedSamplerSyncState
+	Now                       func() time.Time
 
 	ListCheckpointsFunc                func(context.Context, string, int) ([]map[string]any, error)
 	PromoteCheckpointFunc              func(context.Context, PromoteCheckpointOptions) (map[string]any, error)
@@ -56,6 +61,7 @@ func NewFiretitanServiceClient(opts FiretitanServiceClientOptions) (*FiretitanSe
 	}
 	client := &FiretitanServiceClient{
 		Config:              config,
+		ServerlessSessionID: strings.TrimSpace(opts.TrainingSessionID),
 		DefaultUserMetadata: cloneStringMap(opts.DefaultUserMetadata),
 		DefaultProjectID:    opts.DefaultProjectID,
 		Fireworks:           fireworks,
@@ -67,6 +73,63 @@ func NewFiretitanServiceClient(opts FiretitanServiceClientOptions) (*FiretitanSe
 	client.ListTrainingSessionCheckpointsFunc = fireworks.ListTrainingSessionCheckpoints
 	client.PromoteSessionCheckpointFunc = fireworks.PromoteSessionCheckpoint
 	return client, nil
+}
+
+func (c *FiretitanServiceClient) CurrentSessionID() string {
+	if c == nil {
+		return ""
+	}
+	return c.ServerlessSessionID
+}
+
+func (c *FiretitanServiceClient) TrainingSessionID() string {
+	sessionID := c.CurrentSessionID()
+	if IsServerlessSessionID(sessionID) {
+		return sessionID
+	}
+	return ""
+}
+
+func (c *FiretitanServiceClient) ResolvedAccountID(ctx context.Context) string {
+	if c == nil {
+		return ""
+	}
+	if c.AccountIDCache != "" {
+		return c.AccountIDCache
+	}
+	if c.Fireworks == nil {
+		return ""
+	}
+	accountID, err := c.Fireworks.AccountID(ctx)
+	if err != nil {
+		return ""
+	}
+	c.AccountIDCache = accountID
+	return accountID
+}
+
+func (c *FiretitanServiceClient) TrainingSessionName(ctx context.Context) string {
+	sessionID := c.TrainingSessionID()
+	if sessionID == "" {
+		return ""
+	}
+	accountID := c.ResolvedAccountID(ctx)
+	if accountID == "" {
+		return ""
+	}
+	return "accounts/" + accountID + "/trainingSessions/" + sessionID
+}
+
+func (c *FiretitanServiceClient) ServerlessRunName(ctx context.Context, modelID any) string {
+	runID := RunIDFromModelID(modelID)
+	if runID == "" {
+		return ""
+	}
+	accountID := c.ResolvedAccountID(ctx)
+	if accountID == "" {
+		return ""
+	}
+	return "accounts/" + accountID + "/trainingRuns/" + runID
 }
 
 func (c *FiretitanServiceClient) ResolvedMetadata() ManagedResolvedMetadata {
@@ -163,17 +226,46 @@ func (c *FiretitanServiceClient) ReleaseReferences(ctx context.Context) error {
 	return handle.Close(ctx)
 }
 
+type OwnedInferenceDeployment struct {
+	DeploymentManager ManagedDeploymentCleanup
+	DeploymentID      string
+	CleanupOnClose    string
+}
+
+func (c *FiretitanServiceClient) TrackInferenceDeploymentCleanup(manager ManagedDeploymentCleanup, deploymentID string, cleanupOnClose string) {
+	if c == nil || manager == nil || strings.TrimSpace(deploymentID) == "" || strings.TrimSpace(cleanupOnClose) == "" {
+		return
+	}
+	c.OwnedInferenceDeployments = append(c.OwnedInferenceDeployments, OwnedInferenceDeployment{
+		DeploymentManager: manager,
+		DeploymentID:      deploymentID,
+		CleanupOnClose:    cleanupOnClose,
+	})
+}
+
 func (c *FiretitanServiceClient) Close(ctx context.Context) error {
 	if c == nil {
 		return nil
 	}
+	var closeErr error
 	if err := c.ReleaseReferences(ctx); err != nil {
-		return err
+		closeErr = errors.Join(closeErr, err)
 	}
+	for _, owned := range c.OwnedInferenceDeployments {
+		switch owned.CleanupOnClose {
+		case string(CleanupDeploymentOnCloseScaleToZero):
+			closeErr = errors.Join(closeErr, owned.DeploymentManager.ScaleToZero(ctx, owned.DeploymentID))
+		case string(CleanupDeploymentOnCloseDelete):
+			closeErr = errors.Join(closeErr, owned.DeploymentManager.DeleteInfo(ctx, owned.DeploymentID))
+		default:
+			closeErr = errors.Join(closeErr, fmt.Errorf("cleanup_on_close must be one of: %s, %s", CleanupDeploymentOnCloseDelete, CleanupDeploymentOnCloseScaleToZero))
+		}
+	}
+	c.OwnedInferenceDeployments = nil
 	if c.ProvisionedHandle != nil {
-		return c.ProvisionedHandle.Close(ctx)
+		closeErr = errors.Join(closeErr, c.ProvisionedHandle.Close(ctx))
 	}
-	return nil
+	return closeErr
 }
 
 func (c *FiretitanServiceClient) GetTelemetry() any {
@@ -323,6 +415,129 @@ func (c *FiretitanServiceClient) CreateDeploymentSampler(ctx context.Context, mo
 	return client.DeploymentSampler, nil
 }
 
+type CreateInferenceDeploymentSamplerOptions struct {
+	Timeout               time.Duration
+	CleanupOnClose        string
+	Tokenizer             DeploymentTokenizer
+	ConcurrencyController SamplingConcurrencyController
+	Deployment            ManagedDeploymentController
+}
+
+func (c *FiretitanServiceClient) CreateDeploymentSamplerForModel(_ context.Context, model string, tokenizer DeploymentTokenizer, controller SamplingConcurrencyController, inferenceURL ...string) (*DeploymentSampler, error) {
+	if c == nil {
+		return nil, fmt.Errorf("FiretitanServiceClient is nil")
+	}
+	if strings.TrimSpace(model) == "" {
+		return nil, fmt.Errorf("model must be a non-empty string")
+	}
+	baseURL := ""
+	if len(inferenceURL) > 0 {
+		baseURL = inferenceURL[0]
+	}
+	if baseURL == "" && c.ProvisionedHandle != nil && c.ProvisionedHandle.ConcreteDeploymentManager != nil {
+		baseURL = c.ProvisionedHandle.ConcreteDeploymentManager.InferenceURL
+	}
+	if baseURL == "" && c.Fireworks != nil {
+		baseURL = c.Fireworks.BaseURL()
+	}
+	if baseURL == "" {
+		baseURL = DefaultFireworksAPIURL
+	}
+	apiKey := ""
+	if c.Fireworks != nil {
+		apiKey = c.Fireworks.APIKey()
+	}
+	var samplerOpts []DeploymentSamplerOption
+	if tokenizer != nil {
+		samplerOpts = append(samplerOpts, WithDeploymentSamplerTokenizer(tokenizer))
+	}
+	if controller != nil {
+		samplerOpts = append(samplerOpts, WithDeploymentSamplerConcurrencyController(controller))
+	}
+	return NewDeploymentSampler(baseURL, model, apiKey, samplerOpts...), nil
+}
+
+func (c *FiretitanServiceClient) CreateInferenceDeploymentSampler(ctx context.Context, config DeploymentConfig, opts ...CreateInferenceDeploymentSamplerOptions) (*DeploymentSampler, error) {
+	if c == nil {
+		return nil, fmt.Errorf("FiretitanServiceClient is nil")
+	}
+	var opt CreateInferenceDeploymentSamplerOptions
+	if len(opts) > 0 {
+		opt = opts[0]
+	}
+	if config.MaxReplicaCount != nil && *config.MaxReplicaCount <= 0 {
+		return nil, fmt.Errorf("DeploymentConfig.max_replica_count must be positive for inference sampling")
+	}
+	deployment := opt.Deployment
+	var concrete *DeploymentManager
+	if deployment == nil && c.ProvisionedHandle != nil {
+		deployment = c.ProvisionedHandle.DeploymentManager
+		concrete = c.ProvisionedHandle.ConcreteDeploymentManager
+	}
+	if deployment == nil && c.Fireworks != nil {
+		concrete = NewDeploymentManager(c.Fireworks.APIKey(), c.Fireworks.BaseURL())
+		deployment = concrete
+	}
+	if deployment == nil {
+		return nil, fmt.Errorf("inference deployment sampler requires a deployment manager")
+	}
+	managedRegion := c.Config.Region
+	if config.Region != "" && managedRegion != "" && config.Region != managedRegion {
+		return nil, fmt.Errorf("inference deployment region conflicts with managed trainer region: region=%q, managed region=%q", config.Region, managedRegion)
+	}
+	if config.Region == "" {
+		config.Region = managedRegion
+	}
+	if config.DeploymentShape == "" && config.BaseModel == c.Config.BaseModel {
+		config.DeploymentShape = c.ManagedDeploymentShape()
+	}
+	info, found, err := deployment.GetInfo(ctx, config.DeploymentID)
+	if err != nil {
+		return nil, err
+	}
+	if found {
+		if DeploymentTerminalStates[info.State] {
+			return nil, fmt.Errorf("inference deployment %q is in terminal state %q. Use a different deployment_id or restore/delete the old resource", config.DeploymentID, info.State)
+		}
+	} else {
+		info, err = deployment.CreateOrGet(ctx, config, false)
+		if err != nil {
+			return nil, err
+		}
+		if cleanup, ok := deployment.(ManagedDeploymentCleanup); ok {
+			c.TrackInferenceDeploymentCleanup(cleanup, config.DeploymentID, opt.CleanupOnClose)
+		}
+	}
+	timeout := opt.Timeout
+	if timeout == 0 {
+		timeout = DeploymentReadyTimeout
+	}
+	ready, err := deployment.WaitForReady(ctx, config.DeploymentID, DeploymentWaitOptions{Timeout: timeout})
+	if err != nil {
+		return nil, err
+	}
+	model := ready.InferenceModel
+	if model == "" {
+		if concrete != nil {
+			accountID, _ := concrete.AccountID(ctx)
+			if accountID != "" {
+				model = "accounts/" + accountID + "/deployments/" + config.DeploymentID
+			}
+		}
+		if model == "" {
+			model = info.InferenceModel
+		}
+		if model == "" {
+			model = "deployments/" + config.DeploymentID
+		}
+	}
+	inferenceURL := ""
+	if concrete != nil {
+		inferenceURL = concrete.InferenceURL
+	}
+	return c.CreateDeploymentSamplerForModel(ctx, model, opt.Tokenizer, opt.ConcurrencyController, inferenceURL)
+}
+
 type CreateFiretitanTrainingClientOptions struct {
 	ConfigOverride             *FiretitanProvisioningConfig
 	BaseModel                  string
@@ -336,6 +551,7 @@ type CreateFiretitanTrainingClientOptions struct {
 	AdapterLoader              TrainingAdapterLoader
 	ComputeBackend             TrainingComputeBackend
 	ModelID                    string
+	RunName                    string
 	TrainerBaseURL             string
 	RequiresInitialSamplerSync bool
 	SkipRegistry               bool
@@ -366,6 +582,7 @@ type OptimStepOptions struct {
 	SeqID                         int
 	AdamParams                    any
 	GradAccumulationNormalization string
+	EmitGradNormMetrics           any
 }
 
 type ForwardBackwardOptions struct {
@@ -428,13 +645,14 @@ type FiretitanTrainingClient struct {
 	AdapterLoader   TrainingAdapterLoader
 	ComputeBackend  TrainingComputeBackend
 	ModelID         string
+	RunName         string
 	TrainerBaseURL  string
 	RequestSeqID    int
 	SavedStateNames map[string]bool
 	SyncState       ManagedSamplerSyncState
 }
 
-func (c *FiretitanServiceClient) CreateTrainingClient(_ context.Context, opts ...CreateFiretitanTrainingClientOptions) (*FiretitanTrainingClient, error) {
+func (c *FiretitanServiceClient) CreateTrainingClient(ctx context.Context, opts ...CreateFiretitanTrainingClientOptions) (*FiretitanTrainingClient, error) {
 	if c == nil {
 		return nil, fmt.Errorf("FiretitanServiceClient is nil")
 	}
@@ -501,6 +719,10 @@ func (c *FiretitanServiceClient) CreateTrainingClient(_ context.Context, opts ..
 	if !state.RequiresInitialSamplerSync {
 		state = c.SyncState
 	}
+	runName := opt.RunName
+	if runName == "" {
+		runName = c.ServerlessRunName(ctx, opt.ModelID)
+	}
 	return &FiretitanTrainingClient{
 		Service:         c,
 		Config:          config,
@@ -513,6 +735,7 @@ func (c *FiretitanServiceClient) CreateTrainingClient(_ context.Context, opts ..
 		AdapterLoader:   opt.AdapterLoader,
 		ComputeBackend:  opt.ComputeBackend,
 		ModelID:         opt.ModelID,
+		RunName:         runName,
 		TrainerBaseURL:  opt.TrainerBaseURL,
 		SavedStateNames: map[string]bool{},
 		SyncState:       state,
@@ -740,13 +963,26 @@ func (c *FiretitanTrainingClient) AttachComputeBackend(backend TrainingComputeBa
 }
 
 func (c *FiretitanTrainingClient) OptimStep(ctx context.Context, adamParams any, gradAccumulationNormalization any) (map[string]any, error) {
+	return c.OptimStepExt(ctx, adamParams, OptimStepExtOptions{GradAccumulationNormalization: gradAccumulationNormalization})
+}
+
+type OptimStepExtOptions struct {
+	GradAccumulationNormalization any
+	EmitGradNormMetrics           any
+}
+
+func (c *FiretitanTrainingClient) OptimStepExt(ctx context.Context, adamParams any, opts OptimStepExtOptions) (map[string]any, error) {
 	if c == nil || c.ComputeBackend == nil {
 		return nil, fmt.Errorf("FiretitanTrainingClient requires a ComputeBackend to optim_step")
 	}
 	if strings.TrimSpace(c.ModelID) == "" {
 		return nil, fmt.Errorf("model_id must be a non-empty string")
 	}
-	normalization, err := NormalizeGradAccNormalization(gradAccumulationNormalization)
+	normalization, err := NormalizeGradAccNormalization(opts.GradAccumulationNormalization)
+	if err != nil {
+		return nil, err
+	}
+	gradNormMode, err := NormalizeGradNormMetricsMode(opts.EmitGradNormMetrics)
 	if err != nil {
 		return nil, err
 	}
@@ -756,7 +992,15 @@ func (c *FiretitanTrainingClient) OptimStep(ctx context.Context, adamParams any,
 		SeqID:                         c.RequestSeqID,
 		AdamParams:                    adamParams,
 		GradAccumulationNormalization: normalization,
+		EmitGradNormMetrics:           gradNormMode,
 	})
+}
+
+func (c *FiretitanTrainingClient) RunID() string {
+	if c == nil {
+		return ""
+	}
+	return RunIDFromModelID(c.ModelID)
 }
 
 func (c *FiretitanTrainingClient) ForwardBackward(ctx context.Context, data []TrainingDatum, lossFn string, lossFnConfig map[string]any) (ForwardBackwardOutput, error) {

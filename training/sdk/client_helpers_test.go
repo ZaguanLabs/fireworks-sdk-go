@@ -1,6 +1,7 @@
 package sdk
 
 import (
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -151,6 +152,47 @@ func TestNormalizeGradAccNormalization(t *testing.T) {
 	_, err := NormalizeGradAccNormalization("tokens")
 	if err == nil || !strings.Contains(err.Error(), "num_loss_tokens") {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestNormalizeGradNormMetricsMode(t *testing.T) {
+	tests := []struct {
+		name  string
+		value any
+		want  any
+	}{
+		{name: "nil", value: nil, want: nil},
+		{name: "bool", value: true, want: true},
+		{name: "enum", value: GradNormMetricsModeDetailed, want: "detailed"},
+		{name: "case insensitive string", value: "BASIC", want: "basic"},
+		{name: "off", value: "off", want: "off"},
+	}
+	for _, test := range tests {
+		got, err := NormalizeGradNormMetricsMode(test.value)
+		if err != nil {
+			t.Fatalf("%s error = %v", test.name, err)
+		}
+		if !reflect.DeepEqual(got, test.want) {
+			t.Fatalf("%s got %#v, want %#v", test.name, got, test.want)
+		}
+	}
+	_, err := NormalizeGradNormMetricsMode("global")
+	if err == nil || !strings.Contains(err.Error(), "emit_grad_norm_metrics") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestServerlessIdentityHelpers(t *testing.T) {
+	if !IsServerlessSessionID("ts-012345") || IsServerlessSessionID("run-abc:train:0") || IsServerlessSessionID(nil) {
+		t.Fatal("serverless session detection mismatch")
+	}
+	if got := RunIDFromModelID("run-ceb524:train:0"); got != "run-ceb524" {
+		t.Fatalf("run id = %q", got)
+	}
+	for _, value := range []any{"base-xyz", "ts-abc", "model-without-suffix", nil} {
+		if got := RunIDFromModelID(value); got != "" {
+			t.Fatalf("RunIDFromModelID(%#v) = %q", value, got)
+		}
 	}
 }
 

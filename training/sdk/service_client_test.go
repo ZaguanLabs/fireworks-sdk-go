@@ -219,7 +219,7 @@ func TestFiretitanServiceClientReferenceIDsAndRelease(t *testing.T) {
 		ProfileResolver: fakeProfileResolver{profiles: map[string]TrainingShapeProfile{
 			"accounts/acct/trainingShapes/ref": {
 				TrainingShapeVersion: "accounts/acct/trainingShapes/ref/versions/4",
-				TrainerMode:          ForwardOnlyMode,
+				TrainerMode:          LoraTrainerMode,
 			},
 		}},
 		Trainer:    trainer,
@@ -422,7 +422,7 @@ func TestFiretitanServiceClientCreateReferenceClientSeparateHandle(t *testing.T)
 		ProfileResolver: fakeProfileResolver{profiles: map[string]TrainingShapeProfile{
 			"accounts/acct/trainingShapes/ref": {
 				TrainingShapeVersion: "accounts/acct/trainingShapes/ref/versions/4",
-				TrainerMode:          ForwardOnlyMode,
+				TrainerMode:          LoraTrainerMode,
 			},
 		}},
 		Trainer:    trainer,
@@ -861,6 +861,112 @@ func TestFiretitanTrainingClientOptimStepDelegates(t *testing.T) {
 	}
 	if client.AttachComputeBackend(backend) != client {
 		t.Fatal("AttachComputeBackend should return client")
+	}
+}
+
+func TestFiretitanTrainingClientOptimStepExtGradNormMetrics(t *testing.T) {
+	backend := &fakeTrainingComputeBackend{optimResult: map[string]any{"status": "ok"}}
+	svc, err := NewFiretitanServiceClient(FiretitanServiceClientOptions{
+		Config: FiretitanProvisioningConfig{BaseModel: "accounts/acct/models/base"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := svc.CreateTrainingClient(context.Background(), CreateFiretitanTrainingClientOptions{
+		ComputeBackend: backend,
+		ModelID:        "model-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.OptimStepExt(context.Background(), map[string]any{"learning_rate": 0.1}, OptimStepExtOptions{
+		EmitGradNormMetrics: GradNormMetricsModeDetailed,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := backend.optimCalls[0].EmitGradNormMetrics; got != "detailed" {
+		t.Fatalf("emit grad norm metrics = %#v", got)
+	}
+	_, err = client.OptimStepExt(context.Background(), map[string]any{}, OptimStepExtOptions{EmitGradNormMetrics: "global"})
+	if err == nil || !strings.Contains(err.Error(), "emit_grad_norm_metrics") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestFiretitanServiceClientServerlessIdentityAccessors(t *testing.T) {
+	fireworks := NewFireworksClient("fw-key", "https://api.example.com")
+	fireworks.SetAccountID("pyroworks-dev")
+	svc, err := NewFiretitanServiceClient(FiretitanServiceClientOptions{
+		Config:            FiretitanProvisioningConfig{BaseModel: "accounts/acct/models/base"},
+		FireworksClient:   fireworks,
+		TrainingSessionID: "ts-abc123",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if svc.TrainingSessionID() != "ts-abc123" {
+		t.Fatalf("session id = %q", svc.TrainingSessionID())
+	}
+	if got := svc.TrainingSessionName(context.Background()); got != "accounts/pyroworks-dev/trainingSessions/ts-abc123" {
+		t.Fatalf("session name = %q", got)
+	}
+	if got := svc.ServerlessRunName(context.Background(), "run-ceb524:train:0"); got != "accounts/pyroworks-dev/trainingRuns/run-ceb524" {
+		t.Fatalf("run name = %q", got)
+	}
+	client, err := svc.CreateTrainingClient(context.Background(), CreateFiretitanTrainingClientOptions{
+		ComputeBackend: &fakeTrainingComputeBackend{},
+		ModelID:        "run-ceb524:train:0",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.RunID() != "run-ceb524" || client.RunName != "accounts/pyroworks-dev/trainingRuns/run-ceb524" {
+		t.Fatalf("run id/name = %q %q", client.RunID(), client.RunName)
+	}
+}
+
+func TestFiretitanServiceClientCreateInferenceDeploymentSamplerTracksCleanup(t *testing.T) {
+	deployment := &fakeManagedDeployment{existing: map[string]DeploymentInfo{}}
+	svc, err := NewFiretitanServiceClient(FiretitanServiceClientOptions{
+		Config: FiretitanProvisioningConfig{
+			BaseModel:       "accounts/acct/models/base",
+			Region:          "US_OHIO_1",
+			DeploymentShape: "accounts/acct/deploymentShapes/student/versions/v1",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc.ManagedHandle = &ManagedHandleMetadata{
+		DeploymentShape: "accounts/acct/deploymentShapes/student/versions/v1",
+	}
+	svc.ProvisionedHandle = &ManagedProvisionedHandle{
+		DeploymentManager: deployment,
+	}
+	maxReplicas := 1
+	sampler, err := svc.CreateInferenceDeploymentSampler(context.Background(), DeploymentConfig{
+		DeploymentID:    "teacher-unit",
+		BaseModel:       "accounts/acct/models/base",
+		MinReplicaCount: 1,
+		MaxReplicaCount: &maxReplicas,
+	}, CreateInferenceDeploymentSamplerOptions{
+		CleanupOnClose: string(CleanupDeploymentOnCloseScaleToZero),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sampler.Model == "" || len(deployment.created) != 1 || deployment.created[0].DeploymentShape != "accounts/acct/deploymentShapes/student/versions/v1" || deployment.created[0].Region != "US_OHIO_1" {
+		t.Fatalf("sampler=%#v created=%#v", sampler, deployment.created)
+	}
+	if len(svc.OwnedInferenceDeployments) != 1 {
+		t.Fatalf("owned inference deployments = %#v", svc.OwnedInferenceDeployments)
+	}
+	if err := svc.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(deployment.scaledToZero) != 1 || deployment.scaledToZero[0] != "teacher-unit" {
+		t.Fatalf("scaled deployments = %#v", deployment.scaledToZero)
 	}
 }
 

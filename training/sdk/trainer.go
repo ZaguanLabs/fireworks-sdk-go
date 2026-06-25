@@ -66,6 +66,7 @@ type TrainerJobConfig struct {
 	AcceleratorCount          *int
 	TrainingShapeRef          string
 	ForwardOnly               bool
+	AutoSelectTrainingShape   bool
 	InactivityTimeout         any
 	DisableInactivityCleanup  bool
 	SkipValidations           bool
@@ -105,15 +106,16 @@ func (c TrainerJobConfig) Validate() error {
 	if c.DisplayName != "" && len(c.DisplayName) >= displayNameLengthLimit {
 		errors = append(errors, "display_name must be fewer than 64 characters")
 	}
-	if c.TrainingShapeRef != "" {
+	shapeOwnedPath := c.TrainingShapeRef != "" || c.AutoSelectTrainingShape
+	if c.TrainingShapeRef != "" && c.AutoSelectTrainingShape {
+		errors = append(errors, "training_shape_ref and auto_select_training_shape cannot both be set")
+	}
+	if shapeOwnedPath {
 		if c.AcceleratorType != "" {
 			errors = append(errors, shapeOwnedFieldError("accelerator_type"))
 		}
 		if c.AcceleratorCount != nil && *c.AcceleratorCount != 0 {
 			errors = append(errors, shapeOwnedFieldError("accelerator_count"))
-		}
-		if c.CustomImageTag != "" {
-			errors = append(errors, shapeOwnedFieldError("custom_image_tag"))
 		}
 		if c.NodeCount != nil && *c.NodeCount != 0 {
 			errors = append(errors, shapeOwnedFieldError("node_count"))
@@ -559,7 +561,7 @@ func (m *TrainerJobManager) CreateRaw(ctx context.Context, config TrainerJobConf
 		if config.SkipValidations {
 			query.Set("skipValidations", "true")
 		}
-	} else {
+	} else if !config.AutoSelectTrainingShape {
 		query.Set("skipValidations", "true")
 	}
 	query.Set("rlorTrainerJobId", requestedJobID)
@@ -630,6 +632,7 @@ func ExtractJobStatusMessage(job map[string]any) string {
 
 func BuildTrainerCreatePayload(config TrainerJobConfig) map[string]any {
 	isShapePath := config.TrainingShapeRef != ""
+	isAutoShapePath := config.AutoSelectTrainingShape
 	learningRate := config.LearningRate
 	if learningRate == 0 {
 		learningRate = 1e-5
@@ -648,18 +651,18 @@ func BuildTrainerCreatePayload(config TrainerJobConfig) map[string]any {
 	if config.TrainerReplicaCount != nil {
 		payload["trainerReplicaCount"] = *config.TrainerReplicaCount
 	}
-	if !isShapePath {
-		if config.MaxContextLength != nil {
-			trainingConfig["maxContextLength"] = *config.MaxContextLength
-		}
+	if config.MaxContextLength != nil && !isShapePath {
+		trainingConfig["maxContextLength"] = *config.MaxContextLength
+	}
+	if config.CustomImageTag != "" {
+		trainingConfig["customImageTag"] = config.CustomImageTag
+	}
+	if !isShapePath && !isAutoShapePath {
 		nodeCount := 1
 		if config.NodeCount != nil {
 			nodeCount = *config.NodeCount
 		}
 		payload["nodeCount"] = nodeCount
-		if config.CustomImageTag != "" {
-			trainingConfig["customImageTag"] = config.CustomImageTag
-		}
 		if config.AcceleratorType != "" {
 			trainingConfig["acceleratorType"] = config.AcceleratorType
 		}

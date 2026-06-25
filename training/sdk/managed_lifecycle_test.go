@@ -366,7 +366,7 @@ func TestProvisionManagedHandleProvisionsSeparateReference(t *testing.T) {
 	deployment := &fakeManagedDeployment{existing: map[string]DeploymentInfo{}}
 	referenceProfile := TrainingShapeProfile{
 		TrainingShapeVersion: "accounts/acct/trainingShapes/ref/versions/4",
-		TrainerMode:          ForwardOnlyMode,
+		TrainerMode:          LoraTrainerMode,
 	}
 	handle, err := ProvisionManagedHandle(context.Background(), ManagedProvisionOptions{
 		Config: FiretitanProvisioningConfig{

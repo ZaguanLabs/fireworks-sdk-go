@@ -32,6 +32,14 @@ const (
 	GradAccNormalizationNone          GradAccNormalization = "none"
 )
 
+type GradNormMetricsMode string
+
+const (
+	GradNormMetricsModeOff      GradNormMetricsMode = "off"
+	GradNormMetricsModeBasic    GradNormMetricsMode = "basic"
+	GradNormMetricsModeDetailed GradNormMetricsMode = "detailed"
+)
+
 func NormalizeGradAccNormalization(value any) (string, error) {
 	if value == nil {
 		return "", nil
@@ -51,6 +59,31 @@ func NormalizeGradAccNormalization(value any) (string, error) {
 		return normalized, nil
 	default:
 		return "", fmt.Errorf("unknown grad_accumulation_normalization %q; expected one of: num_loss_tokens, num_sequences, none", raw)
+	}
+}
+
+func NormalizeGradNormMetricsMode(value any) (any, error) {
+	if value == nil {
+		return nil, nil
+	}
+	if boolValue, ok := value.(bool); ok {
+		return boolValue, nil
+	}
+	var raw string
+	switch v := value.(type) {
+	case GradNormMetricsMode:
+		raw = string(v)
+	case string:
+		raw = v
+	default:
+		raw = fmt.Sprint(v)
+	}
+	normalized := strings.ToLower(raw)
+	switch GradNormMetricsMode(normalized) {
+	case GradNormMetricsModeOff, GradNormMetricsModeBasic, GradNormMetricsModeDetailed:
+		return normalized, nil
+	default:
+		return nil, fmt.Errorf("unknown emit_grad_norm_metrics %q; expected bool or one of: off, basic, detailed", raw)
 	}
 }
 
@@ -87,6 +120,23 @@ func GenerateSessionID() (string, error) {
 
 func QualifySnapshotName(sessionID, name string) string {
 	return name + "-" + sessionID
+}
+
+func IsServerlessSessionID(sessionID any) bool {
+	value, ok := sessionID.(string)
+	return ok && strings.HasPrefix(value, "ts-")
+}
+
+func RunIDFromModelID(modelID any) string {
+	value, ok := modelID.(string)
+	if !ok {
+		return ""
+	}
+	runID, _, found := strings.Cut(value, ":train:")
+	if found && strings.HasPrefix(runID, "run-") {
+		return runID
+	}
+	return ""
 }
 
 func ResolveCheckpointPath(checkpointName string, sourceJobID ...string) (string, error) {

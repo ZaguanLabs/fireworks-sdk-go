@@ -354,26 +354,49 @@ func BuildManagedTrainerJobConfig(config FiretitanProvisioningConfig, maxContext
 	if profile != nil {
 		trainingShapeRef = profile.TrainingShapeVersion
 	}
+	autoSelectTrainingShape := trainingShapeRef == "" && !usesManualTrainingInfra(config)
+	nodeCount := cloneIntPointer(config.NodeCount)
+	acceleratorType := config.AcceleratorType
+	acceleratorCount := cloneIntPointer(config.AcceleratorCount)
+	if autoSelectTrainingShape {
+		nodeCount = nil
+		acceleratorType = ""
+		acceleratorCount = nil
+	}
 	return TrainerJobConfig{
 		BaseModel:                 config.BaseModel,
 		LoraRank:                  config.LoraRank,
 		MaxContextLength:          cloneIntPointer(maxContextLength),
 		LearningRate:              config.LearningRate,
 		GradientAccumulationSteps: intPointer(config.GradientAccumulationSteps),
-		NodeCount:                 cloneIntPointer(config.NodeCount),
+		NodeCount:                 nodeCount,
 		TrainerReplicaCount:       cloneIntPointer(config.TrainerReplicaCount),
 		DisplayName:               config.DisplayName,
 		Region:                    config.Region,
 		CustomImageTag:            config.CustomImageTag,
 		ExtraArgs:                 append([]string(nil), config.ExtraArgs...),
-		AcceleratorType:           config.AcceleratorType,
-		AcceleratorCount:          cloneIntPointer(config.AcceleratorCount),
+		AcceleratorType:           acceleratorType,
+		AcceleratorCount:          acceleratorCount,
 		TrainingShapeRef:          trainingShapeRef,
 		ForwardOnly:               config.ForwardOnly,
+		AutoSelectTrainingShape:   autoSelectTrainingShape,
 		SkipValidations:           config.SkipValidations,
 		Purpose:                   config.Purpose,
 		ManagedBy:                 config.ManagedBy,
 	}
+}
+
+func usesManualTrainingInfra(config FiretitanProvisioningConfig) bool {
+	if config.AcceleratorType != "" {
+		return true
+	}
+	if config.AcceleratorCount != nil && *config.AcceleratorCount != 0 {
+		return true
+	}
+	if config.NodeCount != nil && *config.NodeCount != 0 {
+		return true
+	}
+	return len(config.ExtraArgs) > 0
 }
 
 func provisionManagedTrainer(ctx context.Context, trainer ManagedTrainerController, config FiretitanProvisioningConfig, maxContextLength *int, profile *TrainingShapeProfile, explicitTrainerJobID bool, opts ManagedProvisionOptions) (startedManagedTrainer, error) {

@@ -102,6 +102,12 @@ func (c *FiretitanTrainingClient) OptimStepFuture(ctx context.Context, adamParam
 	})
 }
 
+func (c *FiretitanTrainingClient) OptimStepExtFuture(ctx context.Context, adamParams any, opts OptimStepExtOptions) *Future[map[string]any] {
+	return SubmitFuture(func() (map[string]any, error) {
+		return c.OptimStepExt(ctx, adamParams, opts)
+	})
+}
+
 func (c *FiretitanTrainingClient) ForwardBackwardFuture(ctx context.Context, data []TrainingDatum, lossFn string, lossFnConfig map[string]any) *Future[ForwardBackwardOutput] {
 	return SubmitFuture(func() (ForwardBackwardOutput, error) {
 		return c.ForwardBackward(ctx, data, lossFn, lossFnConfig)

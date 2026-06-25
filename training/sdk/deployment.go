@@ -44,6 +44,7 @@ type DeploymentConfig struct {
 	BaseModel                  string
 	Description                string
 	DeploymentShape            string
+	ExpectedDeploymentShape    string
 	Region                     string
 	MinReplicaCount            int
 	MaxReplicaCount            *int
@@ -57,6 +58,44 @@ type DeploymentConfig struct {
 	ExtraArgs                  []string
 	ExtraValues                map[string]string
 	Annotations                map[string]string
+}
+
+func DeploymentConfigFromTrainingProfile(deploymentID, baseModel string, profile TrainingShapeProfile, opts ...DeploymentConfig) (DeploymentConfig, error) {
+	deploymentShape := profile.DeploymentShape()
+	if strings.TrimSpace(deploymentShape) == "" {
+		return DeploymentConfig{}, fmt.Errorf("training profile does not include a deployment_shape_version")
+	}
+	config := DeploymentConfig{
+		DeploymentID:            deploymentID,
+		BaseModel:               baseModel,
+		DeploymentShape:         deploymentShape,
+		ExpectedDeploymentShape: deploymentShape,
+	}
+	if len(opts) > 0 {
+		opt := opts[0]
+		opt.DeploymentID = deploymentID
+		opt.BaseModel = baseModel
+		opt.DeploymentShape = deploymentShape
+		opt.ExpectedDeploymentShape = deploymentShape
+		config = opt
+	}
+	return config, nil
+}
+
+func (c DeploymentConfig) Validate() error {
+	expected := strings.TrimSpace(c.ExpectedDeploymentShape)
+	if expected == "" {
+		return nil
+	}
+	actual := strings.TrimSpace(c.DeploymentShape)
+	if actual == expected {
+		return nil
+	}
+	return fmt.Errorf(
+		"deployment_shape does not match the RFT deployment shape resolved from the training profile: expected %q, got %q. Use DeploymentConfigFromTrainingProfile(...) or pass the profile's deployment shape version exactly",
+		expected,
+		actual,
+	)
 }
 
 type DeploymentManager struct {
@@ -271,6 +310,9 @@ func (m *DeploymentManager) DeleteDeployment(ctx context.Context, deploymentID s
 }
 
 func (m *DeploymentManager) CreateDeployment(ctx context.Context, config DeploymentConfig) (map[string]any, error) {
+	if err := config.Validate(); err != nil {
+		return nil, err
+	}
 	accountID, err := m.AccountID(ctx)
 	if err != nil {
 		return nil, err
@@ -324,6 +366,7 @@ func (m *DeploymentManager) CreateDeployment(ctx context.Context, config Deploym
 }
 
 func BuildDeploymentBody(config DeploymentConfig, resolvedRegion ...string) map[string]any {
+	_ = config.Validate()
 	region := config.Region
 	if len(resolvedRegion) > 0 {
 		region = resolvedRegion[0]

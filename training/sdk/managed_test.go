@@ -120,10 +120,13 @@ func TestShouldProvisionReference(t *testing.T) {
 	}
 }
 
-func TestReferenceManagedConfigRequiresReference(t *testing.T) {
-	_, err := ReferenceManagedConfig(FiretitanProvisioningConfig{BaseModel: "accounts/acct/models/base"}, 0)
-	if err == nil || !strings.Contains(err.Error(), "reference_training_shape_id") {
-		t.Fatalf("err = %v", err)
+func TestReferenceManagedConfigAutoSelectsReferenceShape(t *testing.T) {
+	got, err := ReferenceManagedConfig(FiretitanProvisioningConfig{BaseModel: "accounts/acct/models/base"}, 0)
+	if err != nil {
+		t.Fatalf("ReferenceManagedConfig() error = %v", err)
+	}
+	if got.TrainingShapeID != "" || !got.ForwardOnly || got.LoraRank != 0 || got.CreateDeployment == nil || *got.CreateDeployment {
+		t.Fatalf("got = %#v", got)
 	}
 }
 
@@ -226,18 +229,18 @@ func TestValidateReferenceTrainingShapeDefaultsMissingModeToPolicy(t *testing.T)
 		FiretitanProvisioningConfig{TrainingShapeID: "ts-ref"},
 		TrainingShapeProfile{},
 	)
-	if err == nil || !strings.Contains(err.Error(), "trainer_mode='POLICY_TRAINER'") || !strings.Contains(err.Error(), "FORWARD_ONLY") || !strings.Contains(err.Error(), "LORA_TRAINER") {
+	if err == nil || !strings.Contains(err.Error(), "trainer_mode='POLICY_TRAINER'") || !strings.Contains(err.Error(), "LORA_TRAINER") {
 		t.Fatalf("err = %v", err)
 	}
 }
 
-func TestValidateReferenceTrainingShapeForwardOnlyMatch(t *testing.T) {
+func TestValidateReferenceTrainingShapeForwardOnlyMismatch(t *testing.T) {
 	err := ValidateReferenceTrainingShape(
 		FiretitanProvisioningConfig{TrainingShapeID: "ts-ref"},
 		TrainingShapeProfile{TrainerMode: ForwardOnlyMode},
 	)
-	if err != nil {
-		t.Fatalf("ValidateReferenceTrainingShape() error = %v", err)
+	if err == nil || !strings.Contains(err.Error(), "trainer_mode in {LORA_TRAINER}") {
+		t.Fatalf("err = %v", err)
 	}
 }
 

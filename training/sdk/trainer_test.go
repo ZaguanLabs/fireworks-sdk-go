@@ -262,10 +262,11 @@ func TestTrainerJobShapePathOmitsInfraFields(t *testing.T) {
 		BaseModel:        "accounts/test/models/m",
 		TrainingShapeRef: "accounts/test-account/trainingShapes/ts-test/versions/shape-v1",
 		Region:           "US_OHIO_1",
+		CustomImageTag:   "0.33.0",
 		ExtraArgs:        []string{"--flag"},
 	})
 	tc := payload["trainingConfig"].(map[string]any)
-	for _, key := range []string{"acceleratorType", "acceleratorCount", "customImageTag", "maxContextLength"} {
+	for _, key := range []string{"acceleratorType", "acceleratorCount", "maxContextLength"} {
 		if _, ok := tc[key]; ok {
 			t.Fatalf("training config unexpectedly includes %s: %#v", key, tc)
 		}
@@ -276,9 +277,39 @@ func TestTrainerJobShapePathOmitsInfraFields(t *testing.T) {
 	if tc["region"] != "US_OHIO_1" {
 		t.Fatalf("training config = %#v", tc)
 	}
+	if tc["customImageTag"] != "0.33.0" {
+		t.Fatalf("training config = %#v", tc)
+	}
 	extra := tc["extraArgs"].([]string)
 	if len(extra) != 1 || extra[0] != "--flag" {
 		t.Fatalf("extra args = %#v", extra)
+	}
+}
+
+func TestTrainerJobAutoShapePathOmitsManualInfra(t *testing.T) {
+	maxContext := 8192
+	payload := BuildTrainerCreatePayload(TrainerJobConfig{
+		BaseModel:               "accounts/test/models/m",
+		AutoSelectTrainingShape: true,
+		MaxContextLength:        &maxContext,
+		Region:                  "US_OHIO_1",
+		CustomImageTag:          "0.33.0",
+		ForwardOnly:             true,
+	})
+	tc := payload["trainingConfig"].(map[string]any)
+	if tc["maxContextLength"] != 8192 || tc["region"] != "US_OHIO_1" || tc["customImageTag"] != "0.33.0" {
+		t.Fatalf("training config = %#v", tc)
+	}
+	for _, key := range []string{"acceleratorType", "acceleratorCount"} {
+		if _, ok := tc[key]; ok {
+			t.Fatalf("training config unexpectedly includes %s: %#v", key, tc)
+		}
+	}
+	if _, ok := payload["nodeCount"]; ok {
+		t.Fatalf("payload unexpectedly includes nodeCount: %#v", payload)
+	}
+	if payload["forwardOnly"] != true {
+		t.Fatalf("payload = %#v", payload)
 	}
 }
 
@@ -301,6 +332,32 @@ func TestTrainerJobManualPathSendsAllFields(t *testing.T) {
 	}
 	if payload["nodeCount"] != 4 {
 		t.Fatalf("payload = %#v", payload)
+	}
+}
+
+func TestTrainerJobConfigValidateRejectsAutoShapeManualInfra(t *testing.T) {
+	accelCount := 8
+	nodeCount := 4
+	config := TrainerJobConfig{
+		BaseModel:               "accounts/test/models/m",
+		AutoSelectTrainingShape: true,
+		AcceleratorCount:        &accelCount,
+		NodeCount:               &nodeCount,
+		CustomImageTag:          "0.33.0",
+	}
+	err := config.Validate()
+	if err == nil || !strings.Contains(err.Error(), "accelerator_count") || !strings.Contains(err.Error(), "node_count") {
+		t.Fatalf("err = %v", err)
+	}
+	if strings.Contains(err.Error(), "custom_image_tag") {
+		t.Fatalf("custom_image_tag should be allowed as an auto-shape selector: %v", err)
+	}
+	if err := (TrainerJobConfig{
+		BaseModel:               "accounts/test/models/m",
+		TrainingShapeRef:        "accounts/fw/trainingShapes/ts-x/versions/1",
+		AutoSelectTrainingShape: true,
+	}).Validate(); err == nil || !strings.Contains(err.Error(), "cannot both be set") {
+		t.Fatalf("err = %v", err)
 	}
 }
 
@@ -395,10 +452,13 @@ func TestTrainerJobConfigValidate(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected validation error")
 	}
-	for _, want := range []string{"accelerator_type", "accelerator_count", "custom_image_tag", "node_count"} {
+	for _, want := range []string{"accelerator_type", "accelerator_count", "node_count"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("error = %v, want %s", err, want)
 		}
+	}
+	if strings.Contains(err.Error(), "custom_image_tag") {
+		t.Fatalf("custom_image_tag should be allowed as a shape selector: %v", err)
 	}
 
 	if err := (TrainerJobConfig{

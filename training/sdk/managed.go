@@ -151,11 +151,6 @@ func ShouldProvisionReference(config FiretitanProvisioningConfig) bool {
 }
 
 func ReferenceManagedConfig(config FiretitanProvisioningConfig, policyLoraRank int) (FiretitanProvisioningConfig, error) {
-	if config.ReferenceTrainingShapeID == "" && config.ReferenceTrainerJobID == "" {
-		return FiretitanProvisioningConfig{}, fmt.Errorf(
-			"cannot provision a separate reference trainer without reference_training_shape_id or reference_trainer_job_id",
-		)
-	}
 	out := config
 	out.TrainingShapeID = config.ReferenceTrainingShapeID
 	if config.ReferenceTrainingShapeID != "" && policyLoraRank > 0 {
@@ -210,13 +205,7 @@ func ValidateReferenceTrainingShape(config FiretitanProvisioningConfig, profile 
 }
 
 func AllowedReferenceTrainerModes(loraRank int) map[string]bool {
-	if loraRank > 0 {
-		return map[string]bool{LoraTrainerMode: true}
-	}
-	return map[string]bool{
-		LoraTrainerMode: true,
-		ForwardOnlyMode: true,
-	}
+	return map[string]bool{LoraTrainerMode: true}
 }
 
 func DeploymentShapeConflict(requested, existingVersion string) bool {

@@ -235,7 +235,7 @@ func TestFiretitanServiceClientCreateReferenceClientFuture(t *testing.T) {
 		ProfileResolver: fakeProfileResolver{profiles: map[string]TrainingShapeProfile{
 			"accounts/acct/trainingShapes/ref": {
 				TrainingShapeVersion: "accounts/acct/trainingShapes/ref/versions/4",
-				TrainerMode:          ForwardOnlyMode,
+				TrainerMode:          LoraTrainerMode,
 			},
 		}},
 		Trainer:    trainer,

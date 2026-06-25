@@ -125,6 +125,43 @@ func TestBuildDeploymentBodyShapeOmitsAcceleratorType(t *testing.T) {
 	}
 }
 
+func TestDeploymentConfigFromTrainingProfilePinsShape(t *testing.T) {
+	profile := TrainingShapeProfile{
+		DeploymentShapeVersion: "accounts/fireworks/deploymentShapes/rft-qwen3/versions/v1",
+	}
+	config, err := DeploymentConfigFromTrainingProfile(
+		"dep-1",
+		"accounts/fireworks/models/qwen3",
+		profile,
+		DeploymentConfig{Region: "US_VIRGINIA_1"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.DeploymentShape != profile.DeploymentShapeVersion || config.ExpectedDeploymentShape != profile.DeploymentShapeVersion || config.Region != "US_VIRGINIA_1" {
+		t.Fatalf("config = %#v", config)
+	}
+	body := BuildDeploymentBody(config)
+	if body["deploymentShape"] != profile.DeploymentShapeVersion {
+		t.Fatalf("body = %#v", body)
+	}
+}
+
+func TestDeploymentConfigValidateExpectedShape(t *testing.T) {
+	err := (DeploymentConfig{
+		DeploymentID:            "dep-1",
+		BaseModel:               "accounts/fireworks/models/qwen3",
+		DeploymentShape:         "accounts/fireworks/deploymentShapes/qwen3-fast/versions/v2",
+		ExpectedDeploymentShape: "accounts/fireworks/deploymentShapes/rft-qwen3/versions/v1",
+	}).Validate()
+	if err == nil || !strings.Contains(err.Error(), "does not match the RFT deployment shape") {
+		t.Fatalf("err = %v", err)
+	}
+	if _, err := DeploymentConfigFromTrainingProfile("dep-1", "accounts/fireworks/models/qwen3", TrainingShapeProfile{}); err == nil || !strings.Contains(err.Error(), "deployment_shape_version") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 func TestDeploymentHotloadHeaders(t *testing.T) {
 	mgr := NewDeploymentManager(
 		"test-key",
