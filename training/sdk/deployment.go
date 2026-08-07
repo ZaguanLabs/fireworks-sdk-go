@@ -22,6 +22,9 @@ const (
 	HotloadWaitPoll               = 5 * time.Second
 	DefaultDeploymentDescription  = "Fireworks training deployment"
 	HotloadSourceURLHeader        = "x-fireworks-hot-load-source-url"
+	HotloadCMEKResourceHeader     = "x-fireworks-hot-load-cmek-resource"
+	HotLoadTransitionTypeAsync    = "ASYNC"
+	HotLoadTransitionTypeSync     = "SYNC"
 	HotloadRecoverySteps          = "Use the Fireworks training cookbook skill's hotload recovery self-check. Common recoveries are: reattach or recreate a stale deployment; for full-parameter training, retry from a matching base checkpoint or resume from DCP; for LoRA, fix deployment attachment rather than changing checkpoint_type."
 )
 
@@ -31,6 +34,7 @@ type DeploymentInfo struct {
 	State                  string
 	HotLoadBucketURL       string
 	HotLoadTrainerJob      string
+	HotLoadTransitionType  string
 	DeploymentShapeVersion string
 	InferenceModel         string
 }
@@ -51,6 +55,7 @@ type DeploymentConfig struct {
 	AcceleratorType            string
 	HotLoadBucketType          *string
 	HotLoadTrainerJob          string
+	HotLoadTransitionType      string
 	EnableHotLoad              *bool
 	ForTraining                bool
 	SkipShapeValidation        bool
@@ -58,6 +63,34 @@ type DeploymentConfig struct {
 	ExtraArgs                  []string
 	ExtraValues                map[string]string
 	Annotations                map[string]string
+	Preemptible                bool
+}
+
+func NormalizeHotLoadTransitionType(value string) (string, error) {
+	normalized := strings.ToUpper(strings.TrimSpace(value))
+	if normalized == "" {
+		return "", nil
+	}
+	if normalized != HotLoadTransitionTypeAsync && normalized != HotLoadTransitionTypeSync {
+		return "", fmt.Errorf("hot_load_transition_type must be one of [ASYNC SYNC], got %q", value)
+	}
+	return normalized, nil
+}
+
+func ParseHotLoadTransitionType(value string) (string, error) {
+	normalized := strings.ToUpper(strings.TrimSpace(value))
+	if normalized == "" || normalized == "UNSPECIFIED" || normalized == "HOT_LOAD_TRANSITION_TYPE_UNSPECIFIED" {
+		return "", nil
+	}
+	return NormalizeHotLoadTransitionType(value)
+}
+
+func EffectiveHotLoadTransitionType(value string) string {
+	normalized, err := ParseHotLoadTransitionType(value)
+	if err != nil || normalized == "" {
+		return HotLoadTransitionTypeAsync
+	}
+	return normalized
 }
 
 func DeploymentConfigFromTrainingProfile(deploymentID, baseModel string, profile TrainingShapeProfile, opts ...DeploymentConfig) (DeploymentConfig, error) {
@@ -83,6 +116,9 @@ func DeploymentConfigFromTrainingProfile(deploymentID, baseModel string, profile
 }
 
 func (c DeploymentConfig) Validate() error {
+	if _, err := NormalizeHotLoadTransitionType(c.HotLoadTransitionType); err != nil {
+		return err
+	}
 	expected := strings.TrimSpace(c.ExpectedDeploymentShape)
 	if expected == "" {
 		return nil
@@ -177,7 +213,7 @@ func NewDeploymentManager(apiKey, baseURL string, opts ...DeploymentManagerOptio
 	}
 }
 
-func (m *DeploymentManager) HotloadHeaders(ctx context.Context, deploymentID, baseModel, path string) (http.Header, error) {
+func (m *DeploymentManager) HotloadHeaders(ctx context.Context, deploymentID, baseModel, path string, cmekResource ...string) (http.Header, error) {
 	accountID, err := m.AccountID(ctx)
 	if err != nil {
 		return nil, err
@@ -189,6 +225,9 @@ func (m *DeploymentManager) HotloadHeaders(ctx context.Context, deploymentID, ba
 	}
 	if path != "" {
 		extra[HotloadSourceURLHeader] = path
+	}
+	if len(cmekResource) > 0 && cmekResource[0] != "" {
+		extra[HotloadCMEKResourceHeader] = cmekResource[0]
 	}
 	return m.Headers(extra), nil
 }
@@ -411,6 +450,10 @@ func BuildDeploymentBody(config DeploymentConfig, resolvedRegion ...string) map[
 	if config.HotLoadTrainerJob != "" {
 		body["hotLoadTrainerJob"] = config.HotLoadTrainerJob
 	}
+	if config.HotLoadTransitionType != "" {
+		transitionType, _ := NormalizeHotLoadTransitionType(config.HotLoadTransitionType)
+		body["hotLoadTransitionType"] = transitionType
+	}
 	if config.DeploymentShape != "" {
 		body["deploymentShape"] = config.DeploymentShape
 	} else {
@@ -425,6 +468,9 @@ func BuildDeploymentBody(config DeploymentConfig, resolvedRegion ...string) map[
 	if len(config.Annotations) > 0 {
 		body["annotations"] = cloneStringMap(config.Annotations)
 	}
+	if config.Preemptible {
+		body["preemptible"] = true
+	}
 	return body
 }
 
@@ -434,12 +480,14 @@ func (m *DeploymentManager) ParseDeploymentInfo(deploymentID string, data map[st
 	if len(stateOverride) > 0 && stateOverride[0] != "" {
 		state = stateOverride[0]
 	}
+	transitionType, _ := ParseHotLoadTransitionType(firstString(data, "hotLoadTransitionType", "hot_load_transition_type"))
 	return DeploymentInfo{
 		DeploymentID:           deploymentID,
 		Name:                   stringFromAny(data["name"]),
 		State:                  state,
 		HotLoadBucketURL:       stringFromAny(data["hotLoadBucketUrl"]),
 		HotLoadTrainerJob:      firstString(data, "hotLoadTrainerJob", "hot_load_trainer_job"),
+		HotLoadTransitionType:  transitionType,
 		DeploymentShapeVersion: firstString(data, "deploymentShape", "deployment_shape"),
 		InferenceModel:         "accounts/" + accountID + "/deployments/" + deploymentID,
 	}
@@ -623,6 +671,7 @@ type HotloadOptions struct {
 	ResetPromptCache            *bool
 	Timeout                     time.Duration
 	Path                        string
+	CMEKResource                string
 }
 
 func (m *DeploymentManager) Hotload(ctx context.Context, deploymentID, baseModel, snapshotIdentity string, opts ...HotloadOptions) (map[string]any, error) {
@@ -638,7 +687,7 @@ func (m *DeploymentManager) Hotload(ctx context.Context, deploymentID, baseModel
 	if opt.ResetPromptCache != nil {
 		resetPromptCache = *opt.ResetPromptCache
 	}
-	headers, err := m.HotloadHeaders(ctx, deploymentID, baseModel, opt.Path)
+	headers, err := m.HotloadHeaders(ctx, deploymentID, baseModel, opt.Path, opt.CMEKResource)
 	if err != nil {
 		return nil, err
 	}
@@ -807,6 +856,7 @@ func (m *DeploymentManager) HotloadAndWait(ctx context.Context, deploymentID, ba
 		ResetPromptCache:            opt.ResetPromptCache,
 		Timeout:                     opt.RequestTimeout,
 		Path:                        opt.Path,
+		CMEKResource:                opt.CMEKResource,
 	})
 	if err != nil {
 		return false, err
@@ -819,23 +869,37 @@ type HotloadAndWaitOptions struct {
 	ResetPromptCache            *bool
 	RequestTimeout              time.Duration
 	Path                        string
+	CMEKResource                string
 	Wait                        HotloadWaitOptions
 }
 
 type ReattachTrainerOptions struct {
-	Timeout             time.Duration
-	PollInterval        time.Duration
-	Now                 func() time.Time
-	Sleep               func(time.Duration)
-	ReadReplicaIdentity func(context.Context, string, string) (string, error)
-	Update              func(context.Context, string, map[string]any, any) (DeploymentInfo, error)
+	Timeout               time.Duration
+	PollInterval          time.Duration
+	Now                   func() time.Time
+	Sleep                 func(time.Duration)
+	ReadReplicaIdentity   func(context.Context, string, string) (string, error)
+	Update                func(context.Context, string, map[string]any, any) (DeploymentInfo, error)
+	HotLoadTransitionType string
+	updateTrainer         bool
+	updateTransition      bool
+	reconcileExplicit     bool
 }
 
 func (m *DeploymentManager) ReattachTrainer(ctx context.Context, deployment DeploymentInfo, baseModel, trainerJobName string, opts ...ReattachTrainerOptions) (DeploymentInfo, error) {
-	if DeploymentHotLoadTrainerJob(deployment) == trainerJobName {
+	opt := reattachTrainerOptions(opts...)
+	transitionType, err := NormalizeHotLoadTransitionType(opt.HotLoadTransitionType)
+	if err != nil {
+		return DeploymentInfo{}, err
+	}
+	if DeploymentHotLoadTrainerJob(deployment) == trainerJobName && (transitionType == "" || EffectiveHotLoadTransitionType(deployment.HotLoadTransitionType) == transitionType) {
 		return deployment, nil
 	}
-	return m.reattachTrainer(ctx, deployment.DeploymentID, baseModel, trainerJobName, opts...)
+	opt.HotLoadTransitionType = transitionType
+	opt.updateTrainer = DeploymentHotLoadTrainerJob(deployment) != trainerJobName
+	opt.updateTransition = transitionType != "" && EffectiveHotLoadTransitionType(deployment.HotLoadTransitionType) != transitionType
+	opt.reconcileExplicit = true
+	return m.reattachTrainer(ctx, deployment.DeploymentID, baseModel, trainerJobName, opt)
 }
 
 func (m *DeploymentManager) ReattachTrainerByID(ctx context.Context, deploymentID, baseModel, trainerJobName string, opts ...ReattachTrainerOptions) (DeploymentInfo, error) {
@@ -858,7 +922,23 @@ func (m *DeploymentManager) reattachTrainer(ctx context.Context, deploymentID, b
 		opt.Update = m.Update
 	}
 	prevIdentity, _ := opt.ReadReplicaIdentity(ctx, deploymentID, baseModel)
-	updated, err := opt.Update(ctx, deploymentID, map[string]any{"hotLoadTrainerJob": trainerJobName}, "hot_load_trainer_job")
+	body := map[string]any{}
+	mask := []string{}
+	updateTrainer := opt.updateTrainer
+	updateTransition := opt.updateTransition
+	if !opt.reconcileExplicit {
+		updateTrainer = true
+		updateTransition = opt.HotLoadTransitionType != ""
+	}
+	if updateTrainer {
+		body["hotLoadTrainerJob"] = trainerJobName
+		mask = append(mask, "hot_load_trainer_job")
+	}
+	if updateTransition {
+		body["hotLoadTransitionType"] = opt.HotLoadTransitionType
+		mask = append(mask, "hot_load_transition_type")
+	}
+	updated, err := opt.Update(ctx, deploymentID, body, mask)
 	if err != nil {
 		return DeploymentInfo{}, err
 	}
@@ -895,10 +975,10 @@ func (m *DeploymentManager) ReadReplicaIdentity(ctx context.Context, deploymentI
 	if replica == nil {
 		return "", nil
 	}
-	if identity := stringFromAny(replica["current_snapshot_identity"]); identity != "" {
+	if identity := stringFromAny(replica["identity"]); identity != "" {
 		return identity, nil
 	}
-	return stringFromAny(replica["identity"]), nil
+	return stringFromAny(replica["current_snapshot_identity"]), nil
 }
 
 type WarmupOptions struct {
@@ -1172,6 +1252,10 @@ func reattachTrainerOptions(opts ...ReattachTrainerOptions) ReattachTrainerOptio
 		if provided.Update != nil {
 			opt.Update = provided.Update
 		}
+		opt.HotLoadTransitionType = provided.HotLoadTransitionType
+		opt.updateTrainer = provided.updateTrainer
+		opt.updateTransition = provided.updateTransition
+		opt.reconcileExplicit = provided.reconcileExplicit
 	}
 	return opt
 }

@@ -3,10 +3,12 @@ package sdk
 import (
 	"bytes"
 	"context"
+	cryptorand "crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"math"
 	"math/rand"
 	"net"
@@ -36,30 +38,86 @@ type SampledCompletion struct {
 	FinishReason      string
 	CompletionLen     int
 	InferenceLogprobs []float64
+	SamplingLogprobs  []*float64
 	LogprobsEchoed    bool
 	RoutingMatrices   []string
 }
 
-type DeploymentSamplerTimeoutError struct {
-	Message string
-	Err     error
+type SamplingRequestError struct {
+	Message          string
+	LogicalRequestID string
+	Model            string
+	Attempts         int
+	FinalStatus      int
+	FinalErrorKind   string
+	RequestID        string
+	Context          map[string]any
+	Err              error
 }
 
-func (e *DeploymentSamplerTimeoutError) Error() string {
+func (e *SamplingRequestError) Error() string {
 	if e.Message != "" {
 		return e.Message
 	}
-	return "deployment sampler timeout"
+	parts := []string{fmt.Sprintf("Sampling request failed after %d attempts:", e.Attempts)}
+	if e.FinalStatus != 0 {
+		parts = append(parts, fmt.Sprintf("HTTP %d", e.FinalStatus))
+	} else if e.FinalErrorKind != "" {
+		parts = append(parts, e.FinalErrorKind)
+	}
+	if e.Model != "" {
+		parts = append(parts, "model="+e.Model)
+	}
+	if e.RequestID != "" {
+		parts = append(parts, "request_id="+e.RequestID)
+	}
+	for _, key := range samplingContextKeys {
+		if value, ok := e.Context[key]; ok {
+			parts = append(parts, fmt.Sprintf("%s=%v", key, value))
+		}
+	}
+	if e.LogicalRequestID != "" {
+		parts = append(parts, "logical_request_id="+e.LogicalRequestID)
+	}
+	return strings.Join(parts, " ")
 }
 
-func (e *DeploymentSamplerTimeoutError) Unwrap() error {
+func (e *SamplingRequestError) Unwrap() error {
 	return e.Err
 }
 
+func (e *SamplingRequestError) AsErrorRecord() map[string]any {
+	record := map[string]any{
+		"logical_request_id": e.LogicalRequestID,
+		"model":              e.Model,
+		"attempts":           e.Attempts,
+		"final_status":       e.FinalStatus,
+		"final_error_kind":   e.FinalErrorKind,
+		"request_id":         e.RequestID,
+	}
+	if len(e.Context) > 0 {
+		record["context"] = cloneAnyMap(e.Context)
+	}
+	return record
+}
+
+type DeploymentSamplerTimeoutError struct {
+	SamplingRequestError
+}
+
+func (e *DeploymentSamplerTimeoutError) As(target any) bool {
+	if value, ok := target.(**SamplingRequestError); ok {
+		*value = &e.SamplingRequestError
+		return true
+	}
+	return false
+}
+
 type FiretitanSampledSequence struct {
-	StopReason string    `json:"stop_reason"`
-	Tokens     []int     `json:"_tokens_list"`
-	Logprobs   []float64 `json:"_logprobs_list"`
+	StopReason      string    `json:"stop_reason"`
+	Tokens          []int     `json:"_tokens_list"`
+	Logprobs        []float64 `json:"_logprobs_list"`
+	RoutingMatrices []string  `json:"routing_matrices,omitempty"`
 }
 
 type FiretitanSampleResponse struct {
@@ -68,12 +126,13 @@ type FiretitanSampleResponse struct {
 }
 
 type FiretitanSamplingParams struct {
-	MaxTokens   *int
-	Stop        any
-	Temperature *float64
-	TopP        *float64
-	TopK        *int
-	Seed        *int
+	MaxTokens            *int
+	Stop                 any
+	Temperature          *float64
+	TopP                 *float64
+	TopK                 *int
+	Seed                 *int
+	IncludeRoutingMatrix bool
 }
 
 type FiretitanSampleOptions struct {
@@ -89,6 +148,8 @@ type DeploymentTokenizer interface {
 type SamplingConcurrencyController interface {
 	Acquire(context.Context) error
 	Release(*ServerMetrics)
+	WindowSize() int
+	StepCompleted() map[string]float64
 }
 
 type CompletionRequestOptions struct {
@@ -100,6 +161,7 @@ type CompletionRequestOptions struct {
 	IncludeRoutingMatrix bool
 	Stop                 []string
 	Extra                map[string]any
+	LogicalRequestID     string
 }
 
 type CompletionRequester func(context.Context, []int, CompletionRequestOptions) (map[string]any, ServerMetrics, error)
@@ -116,10 +178,13 @@ type DeploymentSampler struct {
 	Now                   func() time.Time
 	Sleep                 func(time.Duration)
 	RetryJitter           func() float64
+	AdditionalHeaders     map[string]string
+	RequestContext        map[string]any
 	maxConcurrency        int
 
-	mu            sync.Mutex
-	recentMetrics []ServerMetrics
+	mu                           sync.Mutex
+	recentMetrics                []ServerMetrics
+	warnedMissingSamplingLogprob bool
 }
 
 type DeploymentSamplerOption func(*DeploymentSampler)
@@ -173,12 +238,24 @@ func WithDeploymentSamplerRetryJitter(jitter func() float64) DeploymentSamplerOp
 	}
 }
 
+func WithDeploymentSamplerAdditionalHeaders(headers map[string]string) DeploymentSamplerOption {
+	return func(s *DeploymentSampler) { s.AdditionalHeaders = cloneStringMap(headers) }
+}
+
+func WithDeploymentSamplerRequestContext(requestContext map[string]any) DeploymentSamplerOption {
+	return func(s *DeploymentSampler) { s.RequestContext = cleanSamplingContext(requestContext) }
+}
+
 func NewDeploymentSampler(inferenceURL, model, apiKey string, opts ...DeploymentSamplerOption) *DeploymentSampler {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.MaxConnsPerHost = 256
+	transport.MaxIdleConns = 256
+	transport.MaxIdleConnsPerHost = 64
 	sampler := &DeploymentSampler{
 		InferenceURL: strings.TrimRight(inferenceURL, "/"),
 		Model:        model,
 		APIKey:       apiKey,
-		HTTPClient:   &http.Client{Timeout: 10 * time.Minute},
+		HTTPClient:   &http.Client{Timeout: 10 * time.Minute, Transport: transport},
 		Now:          time.Now,
 		Sleep:        time.Sleep,
 		RetryJitter:  rand.Float64,
@@ -191,8 +268,12 @@ func NewDeploymentSampler(inferenceURL, model, apiKey string, opts ...Deployment
 	if sampler.CompletionRequester == nil {
 		sampler.CompletionRequester = sampler.defaultCompletionRequest
 	}
-	if sampler.ConcurrencyController == nil && sampler.maxConcurrency > 0 {
-		sampler.ConcurrencyController = NewFixedConcurrencyController(sampler.maxConcurrency)
+	if sampler.ConcurrencyController == nil {
+		if sampler.maxConcurrency > 0 {
+			sampler.ConcurrencyController = NewFixedConcurrencyController(sampler.maxConcurrency)
+		} else {
+			sampler.ConcurrencyController = NewAdaptiveConcurrencyController()
+		}
 	}
 	return sampler
 }
@@ -208,6 +289,7 @@ type SampleOptions struct {
 	Stop                     any
 	Extra                    map[string]any
 	TimeoutDiagnosticContext any
+	SamplingContext          map[string]any
 }
 
 const (
@@ -219,17 +301,21 @@ const (
 )
 
 var samplerRetryHTTPTransientCodes = map[int]bool{
-	http.StatusRequestTimeout:     true,
-	http.StatusTooManyRequests:    true,
-	http.StatusBadGateway:         true,
-	http.StatusServiceUnavailable: true,
-	http.StatusGatewayTimeout:     true,
+	http.StatusInternalServerError: true,
+	http.StatusRequestTimeout:      true,
+	http.StatusTooManyRequests:     true,
+	http.StatusBadGateway:          true,
+	http.StatusServiceUnavailable:  true,
+	http.StatusGatewayTimeout:      true,
 }
 
 type CompletionHTTPStatusError struct {
 	StatusCode int
 	Body       []byte
+	Headers    http.Header
 }
+
+func (e *CompletionHTTPStatusError) RequestID() string { return extractSamplingRequestID(e.Headers) }
 
 func (e *CompletionHTTPStatusError) Error() string {
 	return fmt.Sprintf("completions: HTTP %d: %s", e.StatusCode, ParseAPIErrorBody(e.Body))
@@ -353,13 +439,14 @@ func (c *FiretitanSamplingClient) Sample(ctx context.Context, prompt []int, numS
 		extra["seed"] = *params.Seed
 	}
 	completions, err := c.DeploymentSampler.SampleWithPromptTokens(ctx, prompt, SampleOptions{
-		N:           numSamples,
-		MaxTokens:   maxTokens,
-		Temperature: temperature,
-		Stop:        params.Stop,
-		Logprobs:    true,
-		Echo:        opt.IncludePromptLogprobs,
-		Extra:       extra,
+		N:                    numSamples,
+		MaxTokens:            maxTokens,
+		Temperature:          temperature,
+		Stop:                 params.Stop,
+		Logprobs:             true,
+		Echo:                 opt.IncludePromptLogprobs,
+		IncludeRoutingMatrix: params.IncludeRoutingMatrix,
+		Extra:                extra,
 	})
 	if err != nil {
 		return FiretitanSampleResponse{}, err
@@ -368,7 +455,16 @@ func (c *FiretitanSamplingClient) Sample(ctx context.Context, prompt []int, numS
 	response := FiretitanSampleResponse{Sequences: make([]FiretitanSampledSequence, 0, len(completions))}
 	for _, completion := range completions {
 		completionTokens := append([]int(nil), completion.FullTokens[completion.PromptLen:]...)
-		completionLogprobs := append([]float64(nil), completion.InferenceLogprobs...)
+		completionLogprobs, usedFallback, err := firetitanBehaviorLogprobs(completion, temperature, extra)
+		if err != nil {
+			return FiretitanSampleResponse{}, err
+		}
+		if usedFallback {
+			c.DeploymentSampler.warnMissingSamplingLogprobFallback()
+		}
+		if len(completionLogprobs) != len(completionTokens) {
+			return FiretitanSampleResponse{}, fmt.Errorf("deployment response sampling_logprobs are not aligned with completion tokens (%d != %d)", len(completionLogprobs), len(completionTokens))
+		}
 		if completion.LogprobsEchoed && completion.InferenceLogprobs != nil {
 			if completion.PromptLen == 0 {
 				response.PromptLogprobs = []*float64{}
@@ -379,24 +475,99 @@ func (c *FiretitanSamplingClient) Sample(ctx context.Context, prompt []int, numS
 					response.PromptLogprobs[i] = &value
 				}
 			}
+		}
+		routingMatrices := append([]string(nil), completion.RoutingMatrices...)
+		if completion.LogprobsEchoed {
 			start := completion.PromptLen - 1
 			if start < 0 {
 				start = 0
 			}
-			if start <= len(completion.InferenceLogprobs) {
-				completionLogprobs = append([]float64(nil), completion.InferenceLogprobs[start:]...)
+			if start <= len(routingMatrices) {
+				routingMatrices = routingMatrices[start:]
 			}
 		}
+		if routingMatrices != nil && len(routingMatrices) != len(completionTokens) {
+			return FiretitanSampleResponse{}, fmt.Errorf("deployment response routing matrices are not aligned with completion tokens (%d != %d)", len(routingMatrices), len(completionTokens))
+		}
 		response.Sequences = append(response.Sequences, FiretitanSampledSequence{
-			StopReason: firetitanStopReason(completion.FinishReason),
-			Tokens:     completionTokens,
-			Logprobs:   completionLogprobs,
+			StopReason:      firetitanStopReason(completion.FinishReason),
+			Tokens:          completionTokens,
+			Logprobs:        completionLogprobs,
+			RoutingMatrices: routingMatrices,
 		})
 	}
 	if !opt.IncludePromptLogprobs {
 		response.PromptLogprobs = nil
 	}
 	return response, nil
+}
+
+func firetitanBehaviorLogprobs(completion SampledCompletion, temperature float64, extra map[string]any) ([]float64, bool, error) {
+	start := 0
+	if completion.LogprobsEchoed {
+		start = completion.PromptLen - 1
+		if start < 0 {
+			start = 0
+		}
+	}
+	if completion.SamplingLogprobs != nil {
+		values := completion.SamplingLogprobs
+		if start <= len(values) {
+			values = values[start:]
+		}
+		allMissing := true
+		for _, value := range values {
+			if value != nil {
+				allMissing = false
+				break
+			}
+		}
+		if allMissing && temperature == 1 && topPAndTopKAreFullDistribution(extra) {
+			raw := append([]float64(nil), completion.InferenceLogprobs...)
+			if start <= len(raw) {
+				raw = raw[start:]
+			}
+			return raw, true, nil
+		}
+		out := make([]float64, len(values))
+		for i, value := range values {
+			if value == nil {
+				return nil, false, fmt.Errorf("sampling response omitted logprobs.content[].sampling_logprob for a generated token")
+			}
+			out[i] = *value
+		}
+		return out, false, nil
+	}
+	if temperature != 1 || !topPAndTopKAreFullDistribution(extra) {
+		return nil, false, fmt.Errorf("sampling response omitted logprobs.content[].sampling_logprob while the behavior distribution differs from the raw model distribution")
+	}
+	values := append([]float64(nil), completion.InferenceLogprobs...)
+	if start <= len(values) {
+		values = values[start:]
+	}
+	return values, true, nil
+}
+
+func (s *DeploymentSampler) warnMissingSamplingLogprobFallback() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.warnedMissingSamplingLogprob {
+		return
+	}
+	s.warnedMissingSamplingLogprob = true
+	log.Printf("Deployment response omitted logprobs.content[].sampling_logprob; falling back to raw logprob because the request uses full-distribution sampling (temperature=1, top_p=1, top_k=0)")
+}
+
+func topPAndTopKAreFullDistribution(extra map[string]any) bool {
+	topP := 1.0
+	if value, ok := extra["top_p"]; ok {
+		topP = floatFromAny(value)
+	}
+	topK := 0
+	if value, ok := extra["top_k"]; ok {
+		topK = int(floatFromAny(value))
+	}
+	return topP == 1 && topK == 0
 }
 
 func (c *FiretitanSamplingClient) ComputeLogprobs(ctx context.Context, prompt []int) ([]*float64, error) {
@@ -467,6 +638,11 @@ func (s *DeploymentSampler) Close() {
 
 func (s *DeploymentSampler) doOneCompletion(ctx context.Context, promptIDs []int, opt SampleOptions, stop []string) ([]SampledCompletion, error) {
 	backoff := SamplerRetryBaseBackoff
+	logicalRequestID := newSamplingRequestID()
+	requestContext := cleanSamplingContext(s.RequestContext)
+	for key, value := range cleanSamplingContext(opt.SamplingContext) {
+		requestContext[key] = value
+	}
 	for attempt := 1; attempt <= SamplerRetryMaxAttempts; attempt++ {
 		if s.ConcurrencyController != nil {
 			if err := s.ConcurrencyController.Acquire(ctx); err != nil {
@@ -483,6 +659,7 @@ func (s *DeploymentSampler) doOneCompletion(ctx context.Context, promptIDs []int
 			IncludeRoutingMatrix: opt.IncludeRoutingMatrix,
 			Stop:                 stop,
 			Extra:                cloneAnyMap(opt.Extra),
+			LogicalRequestID:     logicalRequestID,
 		})
 		if err == nil {
 			metrics = &serverMetrics
@@ -503,20 +680,88 @@ func (s *DeploymentSampler) doOneCompletion(ctx context.Context, promptIDs []int
 		}
 		if attempt == SamplerRetryMaxAttempts {
 			if samplerTimeoutLikeError(err) {
-				return nil, &DeploymentSamplerTimeoutError{
-					Message: s.timeoutDiagnostic(err.Error(), promptIDs, opt, true),
-					Err:     err,
-				}
+				base := s.samplingRequestError(err, logicalRequestID, attempt, requestContext, promptIDs, opt)
+				base.Message = s.timeoutDiagnostic(err.Error(), promptIDs, opt, true)
+				return nil, &DeploymentSamplerTimeoutError{SamplingRequestError: *base}
 			}
-			return nil, err
+			return nil, s.samplingRequestError(err, logicalRequestID, attempt, requestContext, promptIDs, opt)
 		}
-		s.Sleep(s.retryBackoffDelay(backoff))
+		delay := s.retryBackoffDelay(backoff)
+		var statusErr *CompletionHTTPStatusError
+		if errors.As(err, &statusErr) {
+			if retryAfter := ParseRetryAfter(&http.Response{Header: statusErr.Headers}, s.Now()); retryAfter != nil && *retryAfter > delay {
+				delay = *retryAfter
+			}
+		}
+		if delay > SamplerRetryMaxBackoff {
+			delay = SamplerRetryMaxBackoff
+		}
+		s.Sleep(delay)
 		backoff *= 2
 		if backoff > SamplerRetryMaxBackoff {
 			backoff = SamplerRetryMaxBackoff
 		}
 	}
 	return nil, fmt.Errorf("unreachable: sampler retry loop exited")
+}
+
+var samplingContextKeys = []string{"session", "run", "checkpoint", "step", "group", "item"}
+
+func cleanSamplingContext(raw map[string]any) map[string]any {
+	out := map[string]any{}
+	for _, key := range samplingContextKeys {
+		if value, ok := raw[key]; ok && value != nil {
+			out[key] = value
+		}
+	}
+	return out
+}
+
+func newSamplingRequestID() string {
+	var id [16]byte
+	if _, err := cryptorand.Read(id[:]); err == nil {
+		return fmt.Sprintf("%x", id[:])
+	}
+	return fmt.Sprintf("sampling-%d", time.Now().UnixNano())
+}
+
+func extractSamplingRequestID(headers http.Header) string {
+	for _, name := range []string{"X-Request-Id", "X-Fireworks-Request-Id", "Cf-Ray"} {
+		if value := headers.Get(name); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func (s *DeploymentSampler) samplingRequestError(err error, logicalRequestID string, attempts int, requestContext map[string]any, promptIDs []int, opt SampleOptions) *SamplingRequestError {
+	result := &SamplingRequestError{
+		LogicalRequestID: logicalRequestID,
+		Model:            s.Model,
+		Attempts:         attempts,
+		Context:          cleanSamplingContext(requestContext),
+		Err:              err,
+	}
+	var statusErr *CompletionHTTPStatusError
+	if errors.As(err, &statusErr) {
+		result.FinalStatus = statusErr.StatusCode
+		if statusErr.StatusCode == http.StatusRequestTimeout || statusErr.StatusCode == http.StatusGatewayTimeout {
+			result.FinalErrorKind = "timeout"
+		} else {
+			result.FinalErrorKind = "http_status"
+		}
+		result.RequestID = statusErr.RequestID()
+	} else if samplerTimeoutLikeError(err) {
+		result.FinalErrorKind = "timeout"
+	} else {
+		var truncation *SSETruncationError
+		if errors.As(err, &truncation) {
+			result.FinalErrorKind = "sse_truncation"
+		} else {
+			result.FinalErrorKind = "connection"
+		}
+	}
+	return result
 }
 
 func samplerTimeoutLikeError(err error) bool {
@@ -710,8 +955,10 @@ func (s *DeploymentSampler) ParseCompletionsResult(result map[string]any, prompt
 		}
 
 		var tokenLogprobs []float64
+		var samplingLogprobs []*float64
 		if userRequestedLogprobs {
 			tokenLogprobs, _ = ExtractLogprobs(choice)
+			samplingLogprobs, _ = ExtractSamplingLogprobs(choice)
 		}
 		var routingMatrices []string
 		if routingRequested {
@@ -740,13 +987,16 @@ func (s *DeploymentSampler) ParseCompletionsResult(result map[string]any, prompt
 				if len(tokenLogprobs) > 0 {
 					tokenLogprobs = append([]float64(nil), tokenLogprobs[1:]...)
 				}
-				logprobsEchoed = true
+			}
+			if samplingLogprobs != nil && len(samplingLogprobs) > 0 {
+				samplingLogprobs = append([]*float64(nil), samplingLogprobs[1:]...)
 			}
 			if routingMatrices != nil {
 				if len(routingMatrices) > 0 {
 					routingMatrices = append([]string(nil), routingMatrices[1:]...)
 				}
 			}
+			logprobsEchoed = tokenLogprobs != nil || samplingLogprobs != nil || routingMatrices != nil
 		}
 
 		fullTokens := append(append([]int(nil), promptForFull...), completionIDs...)
@@ -760,11 +1010,32 @@ func (s *DeploymentSampler) ParseCompletionsResult(result map[string]any, prompt
 			FinishReason:      finishReason,
 			CompletionLen:     len(completionIDs),
 			InferenceLogprobs: tokenLogprobs,
+			SamplingLogprobs:  samplingLogprobs,
 			LogprobsEchoed:    logprobsEchoed,
 			RoutingMatrices:   routingMatrices,
 		})
 	}
 	return completions, nil
+}
+
+func ExtractSamplingLogprobs(choice map[string]any) ([]*float64, bool) {
+	lpData, _ := choice["logprobs"].(map[string]any)
+	content, _ := lpData["content"].([]any)
+	if len(content) == 0 {
+		return nil, false
+	}
+	out := make([]*float64, 0, len(content))
+	for _, item := range content {
+		token, _ := item.(map[string]any)
+		value, ok := token["sampling_logprob"]
+		if !ok || value == nil {
+			out = append(out, nil)
+			continue
+		}
+		parsed := floatFromAny(value)
+		out = append(out, &parsed)
+	}
+	return out, true
 }
 
 func ExtractLogprobs(choice map[string]any) ([]float64, bool) {
@@ -779,7 +1050,11 @@ func ExtractLogprobs(choice map[string]any) ([]float64, bool) {
 	out := make([]float64, 0, len(content))
 	for _, item := range content {
 		token, _ := item.(map[string]any)
-		out = append(out, floatFromAny(token["logprob"]))
+		value, ok := token["logprob"]
+		if !ok || value == nil {
+			return nil, false
+		}
+		out = append(out, floatFromAny(value))
 	}
 	return out, true
 }
@@ -865,6 +1140,12 @@ func (s *DeploymentSampler) StreamCompletions(ctx context.Context, prompt []int,
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("X-Api-Key", s.APIKey)
 		req.Header.Set("Authorization", "Bearer "+s.APIKey)
+		for key, value := range s.AdditionalHeaders {
+			req.Header.Set(key, value)
+		}
+		if opts.LogicalRequestID != "" {
+			req.Header.Set("X-Request-Id", opts.LogicalRequestID)
+		}
 		resp, err := s.HTTPClient.Do(req)
 		if err != nil {
 			return nil, ServerMetrics{}, err
@@ -877,7 +1158,7 @@ func (s *DeploymentSampler) StreamCompletions(ctx context.Context, prompt []int,
 			continue
 		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			return nil, ServerMetricsFromHTTPHeaders(resp.Header), &CompletionHTTPStatusError{StatusCode: resp.StatusCode, Body: body}
+			return nil, ServerMetricsFromHTTPHeaders(resp.Header), &CompletionHTTPStatusError{StatusCode: resp.StatusCode, Body: body, Headers: resp.Header.Clone()}
 		}
 		return s.assembleStreamResponse(body, resp.Header)
 	}
@@ -1161,6 +1442,9 @@ func mapKeys(values map[string]any) []string {
 }
 
 func samplerRetryableCompletionError(err error) bool {
+	if errors.Is(err, context.Canceled) {
+		return false
+	}
 	var trunc *SSETruncationError
 	if errors.As(err, &trunc) {
 		return true
@@ -1168,6 +1452,10 @@ func samplerRetryableCompletionError(err error) bool {
 	var statusErr *CompletionHTTPStatusError
 	if errors.As(err, &statusErr) {
 		return samplerRetryHTTPTransientCodes[statusErr.StatusCode]
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return true
 	}
 	return false
 }
@@ -1248,6 +1536,7 @@ type AdaptiveConcurrencyOptions struct {
 	AdditiveIncrease       float64
 	MultiplicativeDecrease float64
 	EMAAlpha               float64
+	AdjustmentInterval     *int
 }
 
 type AdaptiveConcurrencyController struct {
@@ -1259,6 +1548,8 @@ type AdaptiveConcurrencyController struct {
 	additiveIncrease       float64
 	multiplicativeDecrease float64
 	emaAlpha               float64
+	adjustmentInterval     int
+	intervalRequests       int
 	emaPrefillQueue        *float64
 	sem                    chan struct{}
 
@@ -1279,6 +1570,8 @@ func NewAdaptiveConcurrencyController(opts ...AdaptiveConcurrencyOptions) *Adapt
 		MultiplicativeDecrease: 0.5,
 		EMAAlpha:               0.3,
 	}
+	defaultAdjustmentInterval := 32
+	opt.AdjustmentInterval = &defaultAdjustmentInterval
 	if len(opts) > 0 {
 		provided := opts[0]
 		if provided.InitialWindow != 0 {
@@ -1302,6 +1595,13 @@ func NewAdaptiveConcurrencyController(opts ...AdaptiveConcurrencyOptions) *Adapt
 		if provided.EMAAlpha != 0 {
 			opt.EMAAlpha = provided.EMAAlpha
 		}
+		if provided.AdjustmentInterval != nil {
+			opt.AdjustmentInterval = provided.AdjustmentInterval
+		}
+	}
+	if *opt.AdjustmentInterval < 0 {
+		zero := 0
+		opt.AdjustmentInterval = &zero
 	}
 	if opt.InitialWindow < opt.MinWindow {
 		opt.InitialWindow = opt.MinWindow
@@ -1321,6 +1621,7 @@ func NewAdaptiveConcurrencyController(opts ...AdaptiveConcurrencyOptions) *Adapt
 		additiveIncrease:       opt.AdditiveIncrease,
 		multiplicativeDecrease: opt.MultiplicativeDecrease,
 		emaAlpha:               opt.EMAAlpha,
+		adjustmentInterval:     *opt.AdjustmentInterval,
 		sem:                    sem,
 	}
 }
@@ -1362,18 +1663,27 @@ func (c *AdaptiveConcurrencyController) Release(metrics *ServerMetrics) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.completedRequests++
-	if metrics == nil {
-		return
+	if metrics != nil {
+		if metrics.PrefillQueueDuration != nil {
+			c.stepPrefillQueues = append(c.stepPrefillQueues, *metrics.PrefillQueueDuration)
+		}
+		c.stepMetricsCount++
+		if metrics.CachedPromptTokens != nil {
+			c.stepCacheHits += *metrics.CachedPromptTokens
+		}
+		if metrics.PromptTokens != nil {
+			c.stepCacheTotal += *metrics.PromptTokens
+		}
 	}
-	if metrics.PrefillQueueDuration != nil {
-		c.stepPrefillQueues = append(c.stepPrefillQueues, *metrics.PrefillQueueDuration)
-	}
-	c.stepMetricsCount++
-	if metrics.CachedPromptTokens != nil {
-		c.stepCacheHits += *metrics.CachedPromptTokens
-	}
-	if metrics.PromptTokens != nil {
-		c.stepCacheTotal += *metrics.PromptTokens
+	if c.adjustmentInterval > 0 {
+		c.intervalRequests++
+		if c.intervalRequests >= c.adjustmentInterval {
+			if len(c.stepPrefillQueues) > 0 {
+				c.updateWindowLocked(averageFloat64(c.stepPrefillQueues))
+			}
+			c.stepPrefillQueues = nil
+			c.intervalRequests = 0
+		}
 	}
 }
 
@@ -1399,6 +1709,7 @@ func (c *AdaptiveConcurrencyController) StepCompleted() map[string]float64 {
 	}
 
 	c.stepPrefillQueues = nil
+	c.intervalRequests = 0
 	c.stepMetricsCount = 0
 	c.stepCacheHits = 0
 	c.stepCacheTotal = 0
@@ -1424,14 +1735,16 @@ func (c *AdaptiveConcurrencyController) updateWindowLocked(avgPrefillQueue float
 	}
 	c.window = maxFloat64(float64(c.minWindow), minFloat64(float64(c.maxWindow), c.window))
 	newWindow := c.windowSizeLocked()
-	c.resizeSemaphoreLocked(oldWindow, newWindow)
+	if actual := c.resizeSemaphoreLocked(oldWindow, newWindow); actual != newWindow {
+		c.window = float64(actual)
+	}
 }
 
 func (c *AdaptiveConcurrencyController) windowSizeLocked() int {
 	return maxInt(c.minWindow, minInt(c.maxWindow, int(c.window)))
 }
 
-func (c *AdaptiveConcurrencyController) resizeSemaphoreLocked(oldSize, newSize int) {
+func (c *AdaptiveConcurrencyController) resizeSemaphoreLocked(oldSize, newSize int) int {
 	delta := newSize - oldSize
 	if delta > 0 {
 		for i := 0; i < delta; i++ {
@@ -1440,14 +1753,18 @@ func (c *AdaptiveConcurrencyController) resizeSemaphoreLocked(oldSize, newSize i
 			default:
 			}
 		}
-		return
+		return newSize
 	}
+	actual := oldSize
 	for i := 0; i < -delta; i++ {
 		select {
 		case <-c.sem:
+			actual--
 		default:
+			return actual
 		}
 	}
+	return actual
 }
 
 func parseOptionalInt(raw string) *int {

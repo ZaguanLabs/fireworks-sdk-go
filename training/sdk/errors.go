@@ -9,6 +9,8 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -30,7 +32,137 @@ var HTTPStatusHints = map[int]string{
 	http.StatusConflict:            "Resource conflict. It may already exist or be in a transitional state.",
 	http.StatusTooManyRequests:     "Rate limited. Wait and retry, or reach out on Discord: " + DiscordURL,
 	http.StatusInternalServerError: "Internal server error. Try again. If persistent, reach out on Discord: " + DiscordURL,
+	http.StatusBadGateway:          "Bad gateway. Retry after a short wait.",
 	http.StatusServiceUnavailable:  "Service temporarily unavailable. Retry after a short wait.",
+	http.StatusGatewayTimeout:      "Gateway timeout. The request took too long upstream. Retry after a short wait.",
+}
+
+const errorInfoType = "type.googleapis.com/google.rpc.ErrorInfo"
+
+var safeErrorInfoMetadataKeys = map[string]bool{
+	"quota_required":  true,
+	"quota_available": true,
+}
+
+type TrainingAPIError struct {
+	Message    string
+	StatusCode int
+	Reason     string
+	Metadata   map[string]string
+}
+
+func (e *TrainingAPIError) Error() string { return e.Message }
+
+func ParseTrainingAPIError(resp *http.Response, contextLabel string) *TrainingAPIError {
+	if resp == nil {
+		return &TrainingAPIError{Message: contextLabel}
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body = io.NopCloser(bytes.NewReader(body))
+	message := ParseAPIErrorBody(body)
+	reason, metadata := parseTrainingErrorInfo(body)
+	if contextLabel != "" {
+		message = fmt.Sprintf("%s (HTTP %d): %s", contextLabel, resp.StatusCode, message)
+	}
+	return &TrainingAPIError{
+		Message:    message,
+		StatusCode: resp.StatusCode,
+		Reason:     reason,
+		Metadata:   metadata,
+	}
+}
+
+func parseTrainingErrorInfo(body []byte) (string, map[string]string) {
+	var payload map[string]any
+	if json.Unmarshal(body, &payload) != nil {
+		return "", nil
+	}
+	status := payload
+	if nested, ok := payload["error"].(map[string]any); ok {
+		status = nested
+	}
+	details, _ := status["details"].([]any)
+	for _, item := range details {
+		detail, _ := item.(map[string]any)
+		if detail == nil || stringFromAny(detail["@type"]) != errorInfoType {
+			continue
+		}
+		reason := strings.TrimSpace(stringFromAny(detail["reason"]))
+		if reason == "" {
+			continue
+		}
+		metadata := map[string]string{}
+		if raw, ok := detail["metadata"].(map[string]any); ok {
+			keys := make([]string, 0, len(safeErrorInfoMetadataKeys))
+			for key := range safeErrorInfoMetadataKeys {
+				keys = append(keys, key)
+			}
+			sort.Strings(keys)
+			for _, key := range keys {
+				value, ok := raw[key].(string)
+				if !ok {
+					continue
+				}
+				if len(value) > 128 {
+					value = value[:128]
+				}
+				metadata[key] = value
+			}
+		}
+		return reason, metadata
+	}
+	return "", nil
+}
+
+func FormatCheckpointPromotionError(resp *http.Response, checkpointID string) string {
+	return formatPromotionError(resp, "Failed to promote checkpoint '"+checkpointID+"'", "Use a checkpoint name returned by list_checkpoints, ensure the row is promotable, and pass the base_model that matches the trainer.\n  Console: "+ConsoleURL)
+}
+
+func FormatSessionCheckpointPromotionError(resp *http.Response, checkpointID string) string {
+	return formatPromotionError(resp, "Failed to promote session checkpoint '"+checkpointID+"'", "Use a checkpoint name returned by list_training_session_checkpoints, ensure the row is promotable, and pass the base_model that matches the trainer.\n  Console: "+ConsoleURL)
+}
+
+func formatPromotionError(resp *http.Response, what, clientSolution string) string {
+	if resp == nil {
+		return FormatSDKError(what, "empty response", clientSolution, SDKErrorFormatOptions{DocsURL: DocsSDK})
+	}
+	solution := clientSolution
+	showSupport := false
+	if resp.StatusCode >= 500 {
+		solution = "Retry checkpoint promotion. If the error persists, contact Fireworks support."
+		showSupport = true
+	}
+	return FormatSDKError(fmt.Sprintf("%s (HTTP %d)", what, resp.StatusCode), ParseAPIError(resp), solution, SDKErrorFormatOptions{DocsURL: DocsSDK, ShowSupport: showSupport})
+}
+
+func ParseRetryAfter(resp *http.Response, now ...time.Time) *time.Duration {
+	if resp == nil {
+		return nil
+	}
+	raw := strings.TrimSpace(resp.Header.Get("Retry-After"))
+	if raw == "" {
+		return nil
+	}
+	if seconds, err := strconv.ParseFloat(raw, 64); err == nil {
+		if seconds < 0 {
+			seconds = 0
+		}
+		delay := time.Duration(seconds * float64(time.Second))
+		return &delay
+	}
+	when, err := http.ParseTime(raw)
+	if err != nil {
+		return nil
+	}
+	current := time.Now()
+	if len(now) > 0 {
+		current = now[0]
+	}
+	delay := when.Sub(current)
+	if delay < 0 {
+		delay = 0
+	}
+	return &delay
 }
 
 var RetryableStatusCodes = map[int]bool{

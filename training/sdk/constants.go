@@ -12,12 +12,13 @@ const (
 )
 
 const (
-	DefaultTrainerTimeout  = 3600 * time.Second
-	TrainerReadyTimeout    = 15 * time.Minute
-	DeploymentReadyTimeout = 5400 * time.Second
-	ReattachSettleTimeout  = 600 * time.Second
-	ReconnectTimeout       = 600 * time.Second
-	ResumableWaitTimeout   = 120 * time.Second
+	DefaultTrainerTimeout        = 3600 * time.Second
+	DefaultTrainerPendingTimeout = 48 * time.Hour
+	TrainerReadyTimeout          = 15 * time.Minute
+	DeploymentReadyTimeout       = 5400 * time.Second
+	ReattachSettleTimeout        = 600 * time.Second
+	ReconnectTimeout             = 600 * time.Second
+	ResumableWaitTimeout         = 120 * time.Second
 
 	HotloadTimeout      = 600 * time.Second
 	HotloadReadyTimeout = 300 * time.Second

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 )
@@ -39,6 +40,7 @@ type FiretitanProvisioningConfig struct {
 	TokenizerModel  string
 	LoraRank        int
 	LoraAlpha       *int
+	MaxLoraRank     *int
 	TrainingShapeID string
 
 	ReferenceTrainingShapeID       string
@@ -71,19 +73,24 @@ type FiretitanProvisioningConfig struct {
 	TrainerReplicaCount       *int
 	ReplicaCount              *int
 
-	TrainerTimeout        time.Duration
-	DeploymentTimeout     time.Duration
-	HotloadTimeout        time.Duration
-	ReattachSettleTimeout time.Duration
-	ReattachPollInterval  time.Duration
+	TrainerTimeout           time.Duration
+	TrainerPendingTimeout    time.Duration
+	InactivityTimeout        any
+	DisableInactivityCleanup bool
+	DeploymentTimeout        time.Duration
+	HotloadTimeout           time.Duration
+	ReattachSettleTimeout    time.Duration
+	ReattachPollInterval     time.Duration
 
 	CleanupTrainerOnClose      bool
 	CleanupDeploymentOnClose   string
 	DisplayName                string
 	Purpose                    string
+	Preemptible                bool
 	ManagedBy                  string
 	SkipValidations            bool
 	DisableSpeculativeDecoding bool
+	HotLoadTransitionType      string
 }
 
 type ManagedDeploymentShapeResolver interface {
@@ -118,6 +125,9 @@ func (c FiretitanProvisioningConfig) Normalize() (FiretitanProvisioningConfig, e
 	if out.TrainerTimeout == 0 {
 		out.TrainerTimeout = DefaultTrainerTimeout
 	}
+	if out.TrainerPendingTimeout == 0 {
+		out.TrainerPendingTimeout = DefaultTrainerPendingTimeout
+	}
 	if out.DeploymentTimeout == 0 {
 		out.DeploymentTimeout = DeploymentReadyTimeout
 	}
@@ -133,9 +143,21 @@ func (c FiretitanProvisioningConfig) Normalize() (FiretitanProvisioningConfig, e
 	if out.GradientAccumulationSteps == 0 {
 		out.GradientAccumulationSteps = 1
 	}
+	if out.MaxLoraRank != nil && *out.MaxLoraRank <= 0 {
+		return FiretitanProvisioningConfig{}, fmt.Errorf("max_lora_rank must be positive when set")
+	}
+	if out.MaxLoraRank != nil && (out.LoraRank != 0 || out.LoraAlpha != nil) {
+		return FiretitanProvisioningConfig{}, fmt.Errorf("max_lora_rank cannot be combined with service-level lora_rank or lora_alpha; pass model rank/alpha to CreateTrainingClient")
+	}
+	transitionType, err := NormalizeHotLoadTransitionType(out.HotLoadTransitionType)
+	if err != nil {
+		return FiretitanProvisioningConfig{}, err
+	}
+	out.HotLoadTransitionType = transitionType
 
 	out.AcceleratorType = ""
 	out.AcceleratorCount = nil
+	out.NodeCount = nil
 	out.ExtraArgs = append([]string(nil), out.ExtraArgs...)
 	out.DeploymentExtraArgs = append([]string(nil), out.DeploymentExtraArgs...)
 	out.DeploymentExtraValues = cloneStringMap(out.DeploymentExtraValues)
@@ -147,7 +169,14 @@ func UseSharedBaseReference(config FiretitanProvisioningConfig, policyLoraRank i
 }
 
 func ShouldProvisionReference(config FiretitanProvisioningConfig) bool {
-	return config.ReferenceRequired && !config.ForwardOnly && !UseSharedBaseReference(config, config.LoraRank)
+	return config.ReferenceRequired && !config.ForwardOnly && config.MaxLoraRank == nil && !UseSharedBaseReference(config, TrainerLoraCapacity(config))
+}
+
+func TrainerLoraCapacity(config FiretitanProvisioningConfig) int {
+	if config.MaxLoraRank != nil {
+		return *config.MaxLoraRank
+	}
+	return config.LoraRank
 }
 
 func ReferenceManagedConfig(config FiretitanProvisioningConfig, policyLoraRank int) (FiretitanProvisioningConfig, error) {
@@ -162,8 +191,10 @@ func ReferenceManagedConfig(config FiretitanProvisioningConfig, policyLoraRank i
 	out.DeploymentID = ""
 	out.CreateDeployment = boolPointer(false)
 	out.ForwardOnly = true
+	out.MaxLoraRank = nil
 	out.ReferenceRequired = false
 	out.TrainerReplicaCount = nil
+	out.ExtraArgs = ReferenceExtraArgs(config.ExtraArgs)
 	cleanupReference := true
 	if config.CleanupReferenceTrainerOnClose != nil {
 		cleanupReference = *config.CleanupReferenceTrainerOnClose
@@ -205,7 +236,53 @@ func ValidateReferenceTrainingShape(config FiretitanProvisioningConfig, profile 
 }
 
 func AllowedReferenceTrainerModes(loraRank int) map[string]bool {
-	return map[string]bool{LoraTrainerMode: true}
+	allowed := map[string]bool{LoraTrainerMode: true}
+	if loraRank == 0 {
+		allowed[ForwardOnlyMode] = true
+	}
+	return allowed
+}
+
+func ReferenceUserMetadata(metadata map[string]string) map[string]string {
+	out := cloneStringMap(metadata)
+	delete(out, "fireworks_cmek_resource")
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func ReferenceExtraArgs(args []string) []string {
+	if args == nil {
+		return nil
+	}
+	policyOnly := map[string]bool{
+		"--fireworks-gateway-target":       true,
+		"--cmek-output-model-resource":     true,
+		"--require-cmek-output-encryption": true,
+	}
+	out := make([]string, 0, len(args))
+	skipNext := false
+	for _, arg := range args {
+		if skipNext {
+			skipNext = false
+			continue
+		}
+		trimmed := strings.TrimSpace(arg)
+		if trimmed == "" {
+			out = append(out, arg)
+			continue
+		}
+		option := strings.Fields(strings.SplitN(trimmed, "=", 2)[0])[0]
+		if !policyOnly[option] {
+			out = append(out, arg)
+			continue
+		}
+		if trimmed == option && option != "--require-cmek-output-encryption" {
+			skipNext = true
+		}
+	}
+	return out
 }
 
 func DeploymentShapeConflict(requested, existingVersion string) bool {
@@ -243,6 +320,8 @@ type TinkerSamplerBackend struct {
 	DeployMgr         *DeploymentManager
 	DeploymentID      string
 	BaseModel         string
+	HotLoadBucketURL  string
+	CMEKResource      string
 	HotloadTimeout    time.Duration
 	ResetPromptCache  *bool
 	LoraRank          int
@@ -250,28 +329,42 @@ type TinkerSamplerBackend struct {
 
 	HotloadAndWait func(context.Context, string, string, string, ...HotloadAndWaitOptions) (bool, error)
 
+	mu            sync.Mutex
 	snapshotTypes map[string]string
+	snapshotRanks map[string]int
 	baseIdentity  string
 }
 
-func (b *TinkerSamplerBackend) RememberSavedSnapshot(modelPath, checkpointType string) {
-	if checkpointType == "" {
-		return
+func (b *TinkerSamplerBackend) RememberSavedSnapshot(modelPath, checkpointType string, loraRank ...int) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if checkpointType != "" {
+		if b.snapshotTypes == nil {
+			b.snapshotTypes = map[string]string{}
+		}
+		b.snapshotTypes[modelPath] = strings.ToLower(checkpointType)
 	}
-	if b.snapshotTypes == nil {
-		b.snapshotTypes = map[string]string{}
+	if len(loraRank) > 0 {
+		if b.snapshotRanks == nil {
+			b.snapshotRanks = map[string]int{}
+		}
+		b.snapshotRanks[modelPath] = loraRank[0]
 	}
-	b.snapshotTypes[modelPath] = strings.ToLower(checkpointType)
 }
 
 func (b *TinkerSamplerBackend) ResetSnapshotChain() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	b.snapshotTypes = map[string]string{}
+	b.snapshotRanks = map[string]int{}
 	b.baseIdentity = ""
 }
 
 func (b *TinkerSamplerBackend) HotloadSavedSnapshot(ctx context.Context, modelPath string) (bool, error) {
-	if b.CompressionFormat == "" {
-		b.CompressionFormat = DefaultDeltaCompression
+	b.mu.Lock()
+	compressionFormat := b.CompressionFormat
+	if compressionFormat == "" {
+		compressionFormat = DefaultDeltaCompression
 	}
 	timeout := b.HotloadTimeout
 	if timeout == 0 {
@@ -285,7 +378,21 @@ func (b *TinkerSamplerBackend) HotloadSavedSnapshot(ctx context.Context, modelPa
 	if b.snapshotTypes != nil {
 		checkpointType = b.snapshotTypes[modelPath]
 	}
-	incremental := BuildIncrementalMetadata(b.LoraRank, checkpointType, b.baseIdentity, b.CompressionFormat)
+	loraRank := b.LoraRank
+	if rank, ok := b.snapshotRanks[modelPath]; ok {
+		loraRank = rank
+	}
+	baseIdentity := b.baseIdentity
+	b.mu.Unlock()
+	incremental := BuildIncrementalMetadata(loraRank, checkpointType, baseIdentity, compressionFormat)
+	sourcePath := ""
+	if b.CMEKResource != "" {
+		bucketRoot := strings.TrimRight(b.HotLoadBucketURL, "/")
+		if bucketRoot == "" {
+			return false, fmt.Errorf("CMEK hot-load requires the deployment hot_load_bucket_url; refusing to issue an undecryptable hot-load request")
+		}
+		sourcePath = bucketRoot + "/" + strings.Trim(modelPath, "/") + "/"
+	}
 	hotload := b.HotloadAndWait
 	if hotload == nil {
 		if b.DeployMgr == nil {
@@ -297,7 +404,8 @@ func (b *TinkerSamplerBackend) HotloadSavedSnapshot(ctx context.Context, modelPa
 		IncrementalSnapshotMetadata: incremental,
 		ResetPromptCache:            &resetPromptCache,
 		RequestTimeout:              timeout,
-		Path:                        "",
+		Path:                        sourcePath,
+		CMEKResource:                b.CMEKResource,
 		Wait: HotloadWaitOptions{
 			Timeout: timeout,
 		},
@@ -306,7 +414,9 @@ func (b *TinkerSamplerBackend) HotloadSavedSnapshot(ctx context.Context, modelPa
 		return false, err
 	}
 	if ok {
+		b.mu.Lock()
 		b.baseIdentity = modelPath
+		b.mu.Unlock()
 	}
 	return ok, nil
 }

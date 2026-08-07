@@ -82,6 +82,7 @@ type ManagedProvisionedHandle struct {
 	ConcreteDeploymentManager  *DeploymentManager
 	CleanupTrainerOnClose      bool
 	CleanupDeploymentOnClose   string
+	TrainingClients            []*FiretitanTrainingClient
 	closed                     bool
 }
 
@@ -130,6 +131,14 @@ func (c *FiretitanServiceClient) ProvisionManagedHandle(ctx context.Context, opt
 	if c == nil {
 		return nil, fmt.Errorf("FiretitanServiceClient is nil")
 	}
+	c.lifecycleMu.Lock()
+	defer c.lifecycleMu.Unlock()
+	if c.closed {
+		return nil, fmt.Errorf("FiretitanServiceClient is closed")
+	}
+	if c.ProvisionedHandle != nil {
+		return c.ProvisionedHandle, nil
+	}
 	var opt ManagedProvisionOptions
 	if len(opts) > 0 {
 		opt = opts[0]
@@ -172,6 +181,9 @@ func (c *FiretitanServiceClient) CreateManagedTrainingClient(ctx context.Context
 	handle, err := c.ProvisionManagedHandle(ctx, opts...)
 	if err != nil {
 		return nil, err
+	}
+	if handle.Config.MaxLoraRank != nil {
+		return nil, fmt.Errorf("max_lora_rank provisions shared resources only; call CreateTrainingClient with an explicit LoraRank")
 	}
 	config := handle.Config
 	return c.CreateTrainingClient(ctx, CreateFiretitanTrainingClientOptions{
@@ -255,6 +267,9 @@ func ProvisionManagedHandle(ctx context.Context, opts ManagedProvisionOptions) (
 		return nil, err
 	}
 	trainerEndpoint := startedTrainer.Endpoint
+	if maxContextLength == nil {
+		maxContextLength = cloneIntPointer(trainerEndpoint.MaxContextLength)
+	}
 
 	var deployment *DeploymentInfo
 	var samplerBackend *TinkerSamplerBackend
@@ -274,10 +289,16 @@ func ProvisionManagedHandle(ctx context.Context, opts ManagedProvisionOptions) (
 		requiresInitialSync = attached.ResetSnapshotChain
 		deploymentCreated = attached.Created
 		if opts.DeploymentManager != nil {
+			cmekResource := ""
+			if opts.UserMetadata != nil {
+				cmekResource = opts.UserMetadata["fireworks_cmek_resource"]
+			}
 			samplerBackend = &TinkerSamplerBackend{
 				DeployMgr:         opts.DeploymentManager,
 				DeploymentID:      attached.Info.DeploymentID,
 				BaseModel:         config.BaseModel,
+				HotLoadBucketURL:  attached.Info.HotLoadBucketURL,
+				CMEKResource:      cmekResource,
 				HotloadTimeout:    config.HotloadTimeout,
 				LoraRank:          config.LoraRank,
 				CompressionFormat: DefaultDeltaCompression,
@@ -303,6 +324,7 @@ func ProvisionManagedHandle(ctx context.Context, opts ManagedProvisionOptions) (
 	if referenceConfig != nil {
 		referenceOpts := opts
 		referenceOpts.Config = *referenceConfig
+		referenceOpts.UserMetadata = ReferenceUserMetadata(opts.UserMetadata)
 		referenceHandle, err = ProvisionManagedHandle(ctx, referenceOpts)
 		if err != nil {
 			return nil, err
@@ -365,7 +387,7 @@ func BuildManagedTrainerJobConfig(config FiretitanProvisioningConfig, maxContext
 	}
 	return TrainerJobConfig{
 		BaseModel:                 config.BaseModel,
-		LoraRank:                  config.LoraRank,
+		LoraRank:                  TrainerLoraCapacity(config),
 		MaxContextLength:          cloneIntPointer(maxContextLength),
 		LearningRate:              config.LearningRate,
 		GradientAccumulationSteps: intPointer(config.GradientAccumulationSteps),
@@ -382,7 +404,10 @@ func BuildManagedTrainerJobConfig(config FiretitanProvisioningConfig, maxContext
 		AutoSelectTrainingShape:   autoSelectTrainingShape,
 		SkipValidations:           config.SkipValidations,
 		Purpose:                   config.Purpose,
+		Preemptible:               config.Preemptible,
 		ManagedBy:                 config.ManagedBy,
+		InactivityTimeout:         config.InactivityTimeout,
+		DisableInactivityCleanup:  config.DisableInactivityCleanup,
 	}
 }
 
@@ -393,16 +418,15 @@ func usesManualTrainingInfra(config FiretitanProvisioningConfig) bool {
 	if config.AcceleratorCount != nil && *config.AcceleratorCount != 0 {
 		return true
 	}
-	if config.NodeCount != nil && *config.NodeCount != 0 {
-		return true
-	}
-	return len(config.ExtraArgs) > 0
+	return false
 }
 
 func provisionManagedTrainer(ctx context.Context, trainer ManagedTrainerController, config FiretitanProvisioningConfig, maxContextLength *int, profile *TrainingShapeProfile, explicitTrainerJobID bool, opts ManagedProvisionOptions) (startedManagedTrainer, error) {
 	if trainer == nil {
 		return startedManagedTrainer{}, fmt.Errorf("managed provisioning requires Trainer")
 	}
+	opts.TrainerPollOptions = managedTrainerPollOptions(config, opts.TrainerPollOptions)
+	opts.ReconnectOptions.PollOptions = managedTrainerPollOptions(config, opts.ReconnectOptions.PollOptions)
 	if explicitTrainerJobID {
 		if opts.ReconnectExistingJob {
 			endpoint, err := trainer.ReconnectAndWait(ctx, config.TrainerJobID, opts.ReconnectOptions)
@@ -446,6 +470,16 @@ func provisionManagedTrainer(ctx context.Context, trainer ManagedTrainerControll
 	return startedManagedTrainer{Endpoint: endpoint, Created: true}, err
 }
 
+func managedTrainerPollOptions(config FiretitanProvisioningConfig, opt TrainerPollOptions) TrainerPollOptions {
+	if opt.Timeout == 0 {
+		opt.Timeout = config.TrainerTimeout
+	}
+	if opt.PendingTimeout == 0 {
+		opt.PendingTimeout = config.TrainerPendingTimeout
+	}
+	return opt
+}
+
 func attachManagedDeployment(ctx context.Context, deployment ManagedDeploymentController, config FiretitanProvisioningConfig, trainerJobName, deploymentShape string, now func() time.Time, explicitDeploymentID bool, opts ManagedProvisionOptions) (managedDeploymentAttachment, error) {
 	if deployment == nil {
 		return managedDeploymentAttachment{}, fmt.Errorf("managed deployment provisioning requires Deployment")
@@ -470,6 +504,9 @@ func attachManagedDeployment(ctx context.Context, deployment ManagedDeploymentCo
 	case ManagedDeploymentActionReuse:
 		info = *existing
 	case ManagedDeploymentActionReattach:
+		if opts.ReattachOptions.HotLoadTransitionType == "" {
+			opts.ReattachOptions.HotLoadTransitionType = config.HotLoadTransitionType
+		}
 		info, err = deployment.ReattachTrainer(ctx, *existing, config.BaseModel, trainerJobName, opts.ReattachOptions)
 	case ManagedDeploymentActionCreate:
 		info, err = deployment.CreateOrGet(ctx, *plan.CreateConfig, false)

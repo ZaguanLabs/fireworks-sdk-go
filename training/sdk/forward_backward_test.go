@@ -229,8 +229,8 @@ func TestRejectProtoForwardBackwardTransport(t *testing.T) {
 }
 
 func TestDisableParallelForwardBackward(t *testing.T) {
-	if DisableParallelForwardBackward(true) {
-		t.Fatal("parallel forward/backward should be disabled")
+	if !DisableParallelForwardBackward(true) {
+		t.Fatal("parallel forward/backward should be preserved")
 	}
 	if DisableParallelForwardBackward(false) {
 		t.Fatal("false should remain false")

@@ -11,7 +11,7 @@ import (
 func TestFiretitanTinkerClientConfigDefaults(t *testing.T) {
 	cfg := CloneFiretitanTinkerClientConfig()
 	want := map[string]bool{
-		"parallel_fwdbwd_chunks": false,
+		"parallel_fwdbwd_chunks": true,
 		"proto_write_fwdbwd":     false,
 		"proto_compress_fwdbwd":  false,
 		"sample_no_retries":      false,

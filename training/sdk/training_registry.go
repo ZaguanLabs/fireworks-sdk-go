@@ -1,6 +1,9 @@
 package sdk
 
-import "fmt"
+import (
+	"fmt"
+	"sync"
+)
 
 type TrainingClientKey struct {
 	BaseModel    string
@@ -34,6 +37,7 @@ func NewTrainingClientKey(baseModel string, loraRank int, seed *int, trainMLP, t
 }
 
 type TrainingClientConfigRegistry struct {
+	mu      sync.RWMutex
 	created map[TrainingClientKey]bool
 }
 
@@ -46,6 +50,12 @@ func NewTrainingClientConfigRegistry(keys ...TrainingClientKey) *TrainingClientC
 }
 
 func (r *TrainingClientConfigRegistry) Record(key TrainingClientKey) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.recordLocked(key)
+}
+
+func (r *TrainingClientConfigRegistry) recordLocked(key TrainingClientKey) {
 	if r.created == nil {
 		r.created = map[TrainingClientKey]bool{}
 	}
@@ -53,24 +63,36 @@ func (r *TrainingClientConfigRegistry) Record(key TrainingClientKey) {
 }
 
 func (r *TrainingClientConfigRegistry) Has(key TrainingClientKey) bool {
-	if r == nil || r.created == nil {
+	if r == nil {
 		return false
 	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	return r.created[key]
 }
 
 func (r *TrainingClientConfigRegistry) CheckDuplicate(key TrainingClientKey) error {
-	if r.Has(key) {
+	if r == nil {
+		return nil
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if r.created[key] {
 		return DuplicateTrainingClientError(key)
 	}
 	return nil
 }
 
 func (r *TrainingClientConfigRegistry) Add(key TrainingClientKey) error {
-	if err := r.CheckDuplicate(key); err != nil {
-		return err
+	if r == nil {
+		return nil
 	}
-	r.Record(key)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.created[key] {
+		return DuplicateTrainingClientError(key)
+	}
+	r.recordLocked(key)
 	return nil
 }
 

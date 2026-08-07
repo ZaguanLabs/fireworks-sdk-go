@@ -1,11 +1,19 @@
 package sdk
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
+	"strconv"
 	"strings"
 )
 
 const ResponseTokensMetric = "response_tokens"
+
+const (
+	ParallelChunkSendConcurrencyEnv     = "FIREWORKS_TRAINING_PARALLEL_CHUNK_SEND_CONCURRENCY"
+	DefaultParallelChunkSendConcurrency = 128
+)
 
 type LossFn string
 
@@ -127,10 +135,86 @@ func RejectProtoForwardBackwardTransport(protoWrite, protoCompress bool) error {
 }
 
 func DisableParallelForwardBackward(parallel bool) bool {
-	if parallel {
-		return false
-	}
 	return parallel
+}
+
+func R3RequestIssues(data []TrainingDatum) []string {
+	var issues []string
+	for datumIndex, datum := range data {
+		matrices := RoutingMatricesFromModelInput(datum.ModelInput)
+		if _, present := datum.ModelInput["routing_matrices"]; !present {
+			continue
+		}
+		positionCount, ok := modelInputPositionCount(datum.ModelInput)
+		if !ok {
+			continue
+		}
+		if len(matrices) == 0 {
+			issues = append(issues, fmt.Sprintf("datum[%d] routing_matrices is empty; expected %d", datumIndex, positionCount))
+		} else if len(matrices) != positionCount {
+			issues = append(issues, fmt.Sprintf("datum[%d] routing_matrix_count=%d; expected %d", datumIndex, len(matrices), positionCount))
+		}
+	}
+	return issues
+}
+
+func modelInputPositionCount(modelInput map[string]any) (int, bool) {
+	chunks, ok := modelInput["chunks"].([]map[string]any)
+	if !ok {
+		if raw, rawOK := modelInput["chunks"].([]any); rawOK {
+			chunks = make([]map[string]any, 0, len(raw))
+			for _, item := range raw {
+				chunk, chunkOK := item.(map[string]any)
+				if !chunkOK {
+					return 0, false
+				}
+				chunks = append(chunks, chunk)
+			}
+		} else {
+			return 0, false
+		}
+	}
+	total := 0
+	for _, chunk := range chunks {
+		if tokens, ok := chunk["tokens"]; ok {
+			total += tensorLen(tokens)
+			continue
+		}
+		expected, ok := chunk["expected_tokens"]
+		if !ok {
+			return 0, false
+		}
+		count, ok := expected.(int)
+		if !ok || count < 0 {
+			return 0, false
+		}
+		total += count
+	}
+	return total, true
+}
+
+func RoutingMatricesWireBytes(modelInput map[string]any) int {
+	matrices, present := modelInput["routing_matrices"]
+	if !present || matrices == nil {
+		return 0
+	}
+	encoded, err := json.Marshal(matrices)
+	if err != nil {
+		return 0
+	}
+	return len(`,"routing_matrices":`) + len(encoded)
+}
+
+func ParallelChunkSendConcurrency() (int, error) {
+	raw := strings.TrimSpace(os.Getenv(ParallelChunkSendConcurrencyEnv))
+	if raw == "" {
+		return DefaultParallelChunkSendConcurrency, nil
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || value < 1 {
+		return 0, fmt.Errorf("%s must be a positive integer; got %q", ParallelChunkSendConcurrencyEnv, raw)
+	}
+	return value, nil
 }
 
 func tensorLen(data any) int {

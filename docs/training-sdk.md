@@ -146,6 +146,10 @@ Managed provisioning supports:
 - optional separate reference trainer provisioning
 - cleanup plans for trainer deletion, deployment deletion, or deployment scale-to-zero
 - sampler synchronization state for hotload-backed sampling
+- separate 48-hour capacity-placement and post-placement readiness budgets
+- preemptible trainers/deployments and bounded inactivity cleanup controls
+- `ASYNC` or `SYNC` deployment hotload transitions
+- shared trainer capacity through `MaxLoraRank` for multiple LoRA models
 
 ## Training Shapes
 
@@ -231,6 +235,21 @@ fmt.Println(result.Sequences)
 `SaveWeightsAndHotload` provide Python-compatible sampler checkpoint behavior.
 For full-parameter training, the checkpoint chain defaults to a base checkpoint
 followed by delta checkpoints; LoRA checkpoints remain base checkpoints.
+
+Sampling uses behavior-policy `sampling_logprob` values for generated tokens,
+keeps one logical `X-Request-Id` across retries, honors `Retry-After`, and
+returns `SamplingRequestError` with payload-free request identity and status
+metadata. The default concurrency controller is adaptive.
+
+For serverless training sessions, `CreateSamplingClient` routes checkpoint
+paths through `/training/v1/serverless` and adds `X-Session-Affinity`.
+`CreateServerlessBaseSamplingClient` selects the session base-model route.
+
+Router Replay callers can request routing matrices with
+`FiretitanSamplingParams.IncludeRoutingMatrix`. `ModelIsMoE`,
+`R3RequestIssues`, `RoutingMatricesWireBytes`, and
+`ParallelChunkSendConcurrency` expose the corresponding control-plane and
+request-validation behavior without Python runtime model monkeypatches.
 
 ## Cross-Job Checkpoint References
 

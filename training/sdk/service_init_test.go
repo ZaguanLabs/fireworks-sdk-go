@@ -13,7 +13,7 @@ func TestNewFiretitanServiceClientInitOptionsSetsFireworksAPIKeyHeader(t *testin
 	if _, ok := opts.DefaultHeaders["Authorization"]; ok {
 		t.Fatalf("headers should not include Authorization: %#v", opts.DefaultHeaders)
 	}
-	if !opts.ClientConfig["use_pyqwest_transport"] || opts.ClientConfig["parallel_fwdbwd_chunks"] {
+	if !opts.ClientConfig["use_pyqwest_transport"] || !opts.ClientConfig["parallel_fwdbwd_chunks"] {
 		t.Fatalf("client config = %#v", opts.ClientConfig)
 	}
 	opts.ClientConfig["use_pyqwest_transport"] = false

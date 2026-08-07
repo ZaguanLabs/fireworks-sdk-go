@@ -867,8 +867,8 @@ func TestFiretitanSamplingClientSampleReturnsTinkerShapedResponse(t *testing.T) 
 				"finish_reason": "stop",
 				"raw_output":    map[string]any{"completion_token_ids": completionIDs},
 				"logprobs": map[string]any{"content": []any{
-					map[string]any{"logprob": -0.3},
-					map[string]any{"logprob": -0.4},
+					map[string]any{"logprob": -0.3, "sampling_logprob": -0.31},
+					map[string]any{"logprob": -0.4, "sampling_logprob": -0.41},
 				}},
 			}}}, ServerMetrics{}, nil
 		}),
@@ -898,7 +898,7 @@ func TestFiretitanSamplingClientSampleReturnsTinkerShapedResponse(t *testing.T) 
 	if seq.StopReason != "stop" || len(seq.Tokens) != 2 || seq.Tokens[0] != 40 || seq.Tokens[1] != 50 {
 		t.Fatalf("seq = %#v", seq)
 	}
-	if seq.Logprobs[0] != -0.3 || seq.Logprobs[1] != -0.4 {
+	if seq.Logprobs[0] != -0.31 || seq.Logprobs[1] != -0.41 {
 		t.Fatalf("seq = %#v", seq)
 	}
 	if response.PromptLogprobs != nil {

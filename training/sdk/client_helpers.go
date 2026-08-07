@@ -17,7 +17,7 @@ const (
 )
 
 var FiretitanTinkerClientConfig = map[string]bool{
-	"parallel_fwdbwd_chunks": false,
+	"parallel_fwdbwd_chunks": true,
 	"proto_write_fwdbwd":     false,
 	"proto_compress_fwdbwd":  false,
 	"sample_no_retries":      false,
@@ -205,7 +205,7 @@ func ManagedConfigFromMap(values map[string]any) (FiretitanProvisioningConfig, [
 	}
 
 	var deprecated []string
-	for _, field := range []string{"accelerator_type", "accelerator_count"} {
+	for _, field := range []string{"accelerator_type", "accelerator_count", "node_count"} {
 		if value, ok := kwargs[field]; ok {
 			if value != nil {
 				deprecated = append(deprecated, field)
@@ -238,6 +238,8 @@ func firetitanProvisioningConfigFromCanonicalMap(values map[string]any) (Firetit
 			config.LoraRank, err = asInt(value, key)
 		case "lora_alpha":
 			config.LoraAlpha, err = asIntPointer(value, key)
+		case "max_lora_rank":
+			config.MaxLoraRank, err = asIntPointer(value, key)
 		case "training_shape_id":
 			config.TrainingShapeID, err = asString(value, key)
 		case "reference_training_shape_id":
@@ -292,6 +294,12 @@ func firetitanProvisioningConfigFromCanonicalMap(values map[string]any) (Firetit
 			config.ReplicaCount, err = asIntPointer(value, key)
 		case "trainer_timeout", "trainer_timeout_s":
 			config.TrainerTimeout, err = asDuration(value, key)
+		case "trainer_pending_timeout", "trainer_pending_timeout_s":
+			config.TrainerPendingTimeout, err = asDuration(value, key)
+		case "inactivity_timeout":
+			config.InactivityTimeout = value
+		case "disable_inactivity_cleanup":
+			config.DisableInactivityCleanup, err = asBool(value, key)
 		case "deployment_timeout", "deployment_timeout_s":
 			config.DeploymentTimeout, err = asDuration(value, key)
 		case "hotload_timeout", "hotload_timeout_s":
@@ -308,12 +316,16 @@ func firetitanProvisioningConfigFromCanonicalMap(values map[string]any) (Firetit
 			config.DisplayName, err = asString(value, key)
 		case "purpose":
 			config.Purpose, err = asString(value, key)
+		case "preemptible":
+			config.Preemptible, err = asBool(value, key)
 		case "managed_by":
 			config.ManagedBy, err = asString(value, key)
 		case "skip_validations":
 			config.SkipValidations, err = asBool(value, key)
 		case "disable_speculative_decoding":
 			config.DisableSpeculativeDecoding, err = asBool(value, key)
+		case "hot_load_transition_type":
+			config.HotLoadTransitionType, err = asString(value, key)
 		default:
 			return FiretitanProvisioningConfig{}, fmt.Errorf("unknown FiretitanProvisioningConfig field %q", key)
 		}

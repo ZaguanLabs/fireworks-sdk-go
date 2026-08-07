@@ -36,3 +36,6 @@ __pycache__/
 # .vscode/
 
 /docs/fireworks-py/
+
+# Atlas Scout local data
+.atlas/

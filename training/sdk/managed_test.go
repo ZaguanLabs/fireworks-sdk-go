@@ -234,12 +234,12 @@ func TestValidateReferenceTrainingShapeDefaultsMissingModeToPolicy(t *testing.T)
 	}
 }
 
-func TestValidateReferenceTrainingShapeForwardOnlyMismatch(t *testing.T) {
+func TestValidateReferenceTrainingShapeRank0ForwardOnlyMatch(t *testing.T) {
 	err := ValidateReferenceTrainingShape(
 		FiretitanProvisioningConfig{TrainingShapeID: "ts-ref"},
 		TrainingShapeProfile{TrainerMode: ForwardOnlyMode},
 	)
-	if err == nil || !strings.Contains(err.Error(), "trainer_mode in {LORA_TRAINER}") {
+	if err != nil {
 		t.Fatalf("err = %v", err)
 	}
 }

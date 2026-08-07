@@ -10,8 +10,15 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
+	"regexp"
 	"strings"
 	"time"
+)
+
+var (
+	trainingClientSourceRE = regexp.MustCompile(`^fireworks-training-skill(?:/[0-9A-Za-z][0-9A-Za-z._+\-]{0,63})?$`)
+	trainingSessionIDRE    = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 )
 
 type TrainingRestClient struct {
@@ -156,6 +163,12 @@ func (c *TrainingRestClient) Headers(extra map[string]string) http.Header {
 	headers := make(http.Header)
 	headers.Set("Content-Type", "application/json")
 	headers.Set("X-Api-Key", c.apiKey)
+	if source := ValidatedTrainingClientSource(os.Getenv("FIREWORKS_CLIENT_SOURCE")); source != "" {
+		headers.Set("X-Fireworks-Client-Source", source)
+	}
+	if sessionID := ValidatedTrainingSessionID(os.Getenv("FIREWORKS_SESSION_ID")); sessionID != "" {
+		headers.Set("X-Fireworks-Session-Id", sessionID)
+	}
 	for key, value := range c.additionalHeaders {
 		headers.Set(key, value)
 	}
@@ -163,6 +176,20 @@ func (c *TrainingRestClient) Headers(extra map[string]string) http.Header {
 		headers.Set(key, value)
 	}
 	return headers
+}
+
+func ValidatedTrainingClientSource(value string) string {
+	if len(value) > 128 || !trainingClientSourceRE.MatchString(value) {
+		return ""
+	}
+	return value
+}
+
+func ValidatedTrainingSessionID(value string) string {
+	if len(value) > 36 || !trainingSessionIDRE.MatchString(value) {
+		return ""
+	}
+	return value
 }
 
 func (c *TrainingRestClient) Get(ctx context.Context, path string, headers map[string]string) (*http.Response, error) {
@@ -219,6 +246,9 @@ func (c *TrainingRestClient) request(ctx context.Context, method, path string, b
 
 func trainingHTTPClient(verifySSL bool, timeout time.Duration) *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.MaxConnsPerHost = 256
+	transport.MaxIdleConns = 256
+	transport.MaxIdleConnsPerHost = 64
 	if !verifySSL {
 		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 	}

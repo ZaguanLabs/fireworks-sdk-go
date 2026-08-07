@@ -1273,7 +1273,7 @@ func TestFiretitanTrainingClientWeightSyncerSaveWeightsForSampler(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Path != "step-1-session" || result.SnapshotName != "step-1-session" {
+	if result.Path != "raw/path" || result.SnapshotName != "step-1-session" {
 		t.Fatalf("result = %#v", result)
 	}
 	if len(saver.calls) != 1 || saver.calls[0].CheckpointType != "base" {
@@ -1310,7 +1310,7 @@ func TestFiretitanTrainingClientSaveWeightsForSamplerExtRecordsSnapshotType(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Path != "step-1-session" || result.SnapshotName != "step-1-session" {
+	if result.Path != "storage/path" || result.SnapshotName != "step-1-session" {
 		t.Fatalf("result = %#v", result)
 	}
 	if len(saver.calls) != 1 || saver.calls[0].CheckpointType != "delta" || saver.calls[0].TTL != time.Hour {

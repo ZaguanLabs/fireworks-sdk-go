@@ -8,9 +8,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -23,11 +25,18 @@ var (
 const GradientAccumulationStepsOneWarning = "TrainerJobConfig.gradient_accumulation_steps=1 is deprecated and ignored. Express gradient accumulation as client-side control flow (multiple forward_backward calls per optim_step) and pass grad_accumulation_normalization on the optim_step request."
 const displayNameLengthLimit = 64
 const autoTrainerJobIDPrefix = "training-api-service"
+const maxInactivityTimeout = 3 * time.Hour
+
+var trainerTombstoneStates = map[string]bool{
+	"JOB_STATE_DELETED":  true,
+	"JOB_STATE_ARCHIVED": true,
+}
 
 type TrainerServiceEndpoint struct {
-	JobName string
-	JobID   string
-	BaseURL string
+	JobName          string
+	JobID            string
+	BaseURL          string
+	MaxContextLength *int
 }
 
 type CreatedTrainerJob struct {
@@ -71,6 +80,7 @@ type TrainerJobConfig struct {
 	DisableInactivityCleanup  bool
 	SkipValidations           bool
 	Purpose                   string
+	Preemptible               bool
 	ManagedBy                 string
 	RequestedJobID            string
 }
@@ -99,8 +109,11 @@ func (c TrainerJobConfig) Validate() error {
 		errors = append(errors, "gradient_accumulation_steps must be 1. Server-side gradient accumulation is deprecated on the Tinker/RLOR path.")
 	}
 	if c.InactivityTimeout != nil {
-		if _, err := FormatProtoDuration(c.InactivityTimeout); err != nil {
+		formatted, err := FormatProtoDuration(c.InactivityTimeout)
+		if err != nil {
 			errors = append(errors, "inactivity_timeout "+err.Error())
+		} else if seconds, parseErr := strconv.ParseFloat(strings.TrimSuffix(formatted, "s"), 64); parseErr == nil && seconds > maxInactivityTimeout.Seconds() {
+			errors = append(errors, "inactivity_timeout must be at most 3 hours")
 		}
 	}
 	if c.DisplayName != "" && len(c.DisplayName) >= displayNameLengthLimit {
@@ -380,22 +393,24 @@ func (m *TrainerJobManager) TrainerGatewayURL(ctx context.Context, jobID string)
 }
 
 type TrainerPollOptions struct {
-	PollInterval time.Duration
-	Timeout      time.Duration
-	Now          func() time.Time
-	Sleep        func(time.Duration)
-	HealthCheck  func(context.Context, string) bool
-	GetJob       func(context.Context, string) (map[string]any, error)
+	PollInterval   time.Duration
+	Timeout        time.Duration
+	PendingTimeout time.Duration
+	Now            func() time.Time
+	Sleep          func(time.Duration)
+	HealthCheck    func(context.Context, string) bool
+	GetJob         func(context.Context, string) (map[string]any, error)
 }
 
 func (m *TrainerJobManager) PollUntilReady(ctx context.Context, jobID, jobName string, opts ...TrainerPollOptions) (TrainerServiceEndpoint, error) {
 	opt := TrainerPollOptions{
-		PollInterval: PollInterval,
-		Timeout:      TrainerReadyTimeout,
-		Now:          time.Now,
-		Sleep:        time.Sleep,
-		HealthCheck:  m.CheckHealthz,
-		GetJob:       m.GetJob,
+		PollInterval:   PollInterval,
+		Timeout:        TrainerReadyTimeout,
+		PendingTimeout: DefaultTrainerPendingTimeout,
+		Now:            time.Now,
+		Sleep:          time.Sleep,
+		HealthCheck:    m.CheckHealthz,
+		GetJob:         m.GetJob,
 	}
 	if len(opts) > 0 {
 		provided := opts[0]
@@ -404,6 +419,9 @@ func (m *TrainerJobManager) PollUntilReady(ctx context.Context, jobID, jobName s
 		}
 		if provided.Timeout != 0 {
 			opt.Timeout = provided.Timeout
+		}
+		if provided.PendingTimeout != 0 {
+			opt.PendingTimeout = provided.PendingTimeout
 		}
 		if provided.Now != nil {
 			opt.Now = provided.Now
@@ -420,17 +438,23 @@ func (m *TrainerJobManager) PollUntilReady(ctx context.Context, jobID, jobName s
 	}
 
 	start := opt.Now()
+	pendingDeadline := start.Add(opt.PendingTimeout)
+	var readinessDeadline time.Time
 	baseURL, err := m.TrainerGatewayURL(ctx, jobID)
 	if err != nil {
 		return TrainerServiceEndpoint{}, err
 	}
-	for opt.Now().Sub(start) < opt.Timeout {
+	for {
 		job, err := opt.GetJob(ctx, jobID)
 		if err != nil {
 			return TrainerServiceEndpoint{}, err
 		}
 		state := stringFromAny(job["state"])
 		statusMessage := ExtractJobStatusMessage(job)
+		now := opt.Now()
+		if trainerTombstoneStates[state] {
+			return TrainerServiceEndpoint{}, TrainerTombstoneError(jobID, job)
+		}
 		if state == "JOB_STATE_FAILED" {
 			if statusMessage == "" {
 				statusMessage = "unknown"
@@ -442,18 +466,41 @@ func (m *TrainerJobManager) PollUntilReady(ctx context.Context, jobID, jobName s
 				SDKErrorFormatOptions{DocsURL: DocsSDK, ShowSupport: true},
 			))
 		}
-		if state == "JOB_STATE_RUNNING" && opt.HealthCheck(ctx, baseURL) {
-			m.BootTime = opt.Now().Sub(start)
-			return TrainerServiceEndpoint{JobName: jobName, JobID: jobID, BaseURL: baseURL}, nil
+		if state == "JOB_STATE_RUNNING" {
+			readyURL := baseURL
+			ready := opt.HealthCheck(ctx, readyURL)
+			if !ready {
+				if directURL := ExtractDirectRouteHandle(job); directURL != "" && opt.HealthCheck(ctx, directURL) {
+					readyURL = directURL
+					ready = true
+				}
+			}
+			if ready {
+				m.BootTime = now.Sub(start)
+				return TrainerServiceEndpoint{JobName: jobName, JobID: jobID, BaseURL: readyURL, MaxContextLength: ExtractJobMaxContextLength(job)}, nil
+			}
+		}
+		if state == "JOB_STATE_PENDING" {
+			if !now.Before(pendingDeadline) {
+				return TrainerServiceEndpoint{}, fmt.Errorf("%s", FormatSDKError(
+					fmt.Sprintf("Trainer job %s remained pending for capacity longer than %.0fs", jobID, opt.PendingTimeout.Seconds()),
+					"The job did not leave JOB_STATE_PENDING before the capacity wait timeout.",
+					fmt.Sprintf("Increase the trainer pending timeout (current: %.0fs) and check job status in the Fireworks console: %s", opt.PendingTimeout.Seconds(), ConsoleURL),
+					SDKErrorFormatOptions{DocsURL: DocsSDK},
+				))
+			}
+		} else if readinessDeadline.IsZero() {
+			readinessDeadline = now.Add(opt.Timeout)
+		} else if !now.Before(readinessDeadline) {
+			return TrainerServiceEndpoint{}, fmt.Errorf("%s", FormatSDKError(
+				fmt.Sprintf("Trainer job %s did not become ready within %.0fs after placement", jobID, opt.Timeout.Seconds()),
+				"The job left JOB_STATE_PENDING but did not reach JOB_STATE_RUNNING with a healthy /api/v1/healthz response before the readiness timeout.",
+				fmt.Sprintf("Increase the trainer ready timeout (current: %.0fs) and check job status in the Fireworks console: %s", opt.Timeout.Seconds(), ConsoleURL),
+				SDKErrorFormatOptions{DocsURL: DocsSDK},
+			))
 		}
 		opt.Sleep(opt.PollInterval)
 	}
-	return TrainerServiceEndpoint{}, fmt.Errorf("%s", FormatSDKError(
-		fmt.Sprintf("Trainer job %s did not become ready within %.0fs", jobID, opt.Timeout.Seconds()),
-		"The job did not reach JOB_STATE_RUNNING with a healthy /api/v1/healthz response before the timeout.",
-		fmt.Sprintf("Increase the trainer ready timeout (current: %.0fs) and check job status in the Fireworks console: %s", opt.Timeout.Seconds(), ConsoleURL),
-		SDKErrorFormatOptions{DocsURL: DocsSDK},
-	))
 }
 
 func (m *TrainerJobManager) CheckHealthz(ctx context.Context, baseURL string) bool {
@@ -550,6 +597,9 @@ func (m *TrainerJobManager) CreateRaw(ctx context.Context, config TrainerJobConf
 	if err != nil {
 		return nil, err
 	}
+	if config.DisableInactivityCleanup && accountID != "fireworks" {
+		return nil, fmt.Errorf("disable_inactivity_cleanup is only supported for trainers in the fireworks account")
+	}
 	requestedJobID := ensureRequestedJobID(&config)
 	path := "/v1/accounts/" + accountID + "/rlorTrainerJobs"
 	query := url.Values{}
@@ -581,16 +631,16 @@ func (m *TrainerJobManager) CreateRaw(ctx context.Context, config TrainerJobConf
 			return nil, getErr
 		}
 		if found {
+			if trainerTombstoneStates[stringFromAny(existing["state"])] {
+				return nil, TrainerTombstoneError(requestedJobID, existing)
+			}
+			LogTrainerBackendWarning(existing)
 			return existing, nil
 		}
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("%s", FormatSDKError(
-			fmt.Sprintf("RLOR job creation failed (HTTP %d)", resp.StatusCode),
-			ParseAPIErrorBody(body),
-			HTTPStatusHints[resp.StatusCode],
-			SDKErrorFormatOptions{DocsURL: DocsSDK},
-		))
+		resp.Body = io.NopCloser(bytes.NewReader(body))
+		return nil, ParseTrainingAPIError(resp, "RLOR job creation failed")
 	}
 	var out map[string]any
 	if len(body) > 0 {
@@ -598,7 +648,15 @@ func (m *TrainerJobManager) CreateRaw(ctx context.Context, config TrainerJobConf
 			return nil, err
 		}
 	}
+	LogTrainerBackendWarning(out)
 	return out, nil
+}
+
+func LogTrainerBackendWarning(job map[string]any) {
+	message := strings.TrimSpace(ExtractJobStatusMessage(job))
+	if strings.HasPrefix(message, "Warning:") {
+		log.Printf("%s", message)
+	}
 }
 
 func ValidateTrainingShapeRef(ref string) error {
@@ -628,6 +686,39 @@ func ExtractJobStatusMessage(job map[string]any) string {
 		return ""
 	}
 	return stringFromAny(status)
+}
+
+func TrainerTombstoneError(jobID string, job map[string]any) error {
+	detail := ExtractJobStatusMessage(job)
+	if detail == "" {
+		detail = "Trainer job was deleted and is retained only for checkpoint recovery."
+	}
+	return fmt.Errorf("%s", FormatSDKError(
+		"Trainer job "+jobID+" is archived and cannot be recreated with the same ID",
+		detail,
+		"Use a new trainer job ID to provision again. The deleted row remains available for PromoteCheckpoint during the retention window.",
+		SDKErrorFormatOptions{DocsURL: DocsSDK, ShowSupport: true},
+	))
+}
+
+func ExtractDirectRouteHandle(job map[string]any) string {
+	return strings.TrimRight(firstString(job, "directRouteHandle", "direct_route_handle"), "/")
+}
+
+func ExtractJobMaxContextLength(job map[string]any) *int {
+	config, _ := job["trainingConfig"].(map[string]any)
+	if config == nil {
+		return nil
+	}
+	value, ok := config["maxContextLength"]
+	if !ok {
+		return nil
+	}
+	length := intFromAny(value, 0)
+	if length <= 0 {
+		return nil
+	}
+	return intPointer(length)
 }
 
 func BuildTrainerCreatePayload(config TrainerJobConfig) map[string]any {
@@ -687,6 +778,9 @@ func BuildTrainerCreatePayload(config TrainerJobConfig) map[string]any {
 	}
 	if config.Purpose != "" {
 		payload["purpose"] = config.Purpose
+	}
+	if config.Preemptible {
+		payload["preemptible"] = true
 	}
 	if config.ManagedBy != "" {
 		payload["managedBy"] = config.ManagedBy

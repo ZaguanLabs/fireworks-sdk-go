@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -931,7 +932,7 @@ func TestReattachTrainerPatchesAndWaitsForNewReplica(t *testing.T) {
 			return got, nil
 		},
 		Update: func(_ context.Context, deploymentID string, body map[string]any, updateMask any) (DeploymentInfo, error) {
-			if deploymentID != "dep-1" || updateMask != "hot_load_trainer_job" {
+			if deploymentID != "dep-1" || !reflect.DeepEqual(updateMask, []string{"hot_load_trainer_job"}) {
 				t.Fatalf("deploymentID=%q updateMask=%#v", deploymentID, updateMask)
 			}
 			updateBody = body

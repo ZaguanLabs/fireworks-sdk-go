@@ -45,7 +45,9 @@ func PlanManagedDeploymentAttachment(config FiretitanProvisioningConfig, trainer
 			)
 		}
 		plan.WaitForReady = !DeploymentServingStates[existing.State]
-		if DeploymentHotLoadTrainerJob(*existing) == trainerJobName {
+		trainerChanged := DeploymentHotLoadTrainerJob(*existing) != trainerJobName
+		transitionChanged := config.HotLoadTransitionType != "" && EffectiveHotLoadTransitionType(existing.HotLoadTransitionType) != config.HotLoadTransitionType
+		if !trainerChanged && !transitionChanged {
 			plan.Action = ManagedDeploymentActionReuse
 			return plan, nil
 		}
@@ -95,11 +97,13 @@ func ManagedDeploymentCreateConfig(config FiretitanProvisioningConfig, trainerJo
 		MaxReplicaCount:            &maxReplicaCount,
 		AcceleratorType:            config.AcceleratorType,
 		HotLoadTrainerJob:          trainerJobName,
+		HotLoadTransitionType:      config.HotLoadTransitionType,
 		ForTraining:                true,
 		SkipShapeValidation:        false,
 		DisableSpeculativeDecoding: config.DisableSpeculativeDecoding,
 		ExtraArgs:                  append([]string(nil), config.DeploymentExtraArgs...),
 		ExtraValues:                cloneStringMap(config.DeploymentExtraValues),
 		Annotations:                map[string]string{SDKManagedRolloutDeploymentAnnotation: "true"},
+		Preemptible:                config.Preemptible,
 	}, nil
 }

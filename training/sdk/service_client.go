@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -27,6 +28,7 @@ type FiretitanServiceClient struct {
 	DefaultUserMetadata       map[string]string
 	DefaultProjectID          string
 	Fireworks                 *FireworksClient
+	ManagedBaseURL            string
 	Registry                  *TrainingClientConfigRegistry
 	ManagedHandle             *ManagedHandleMetadata
 	ProvisionedHandle         *ManagedProvisionedHandle
@@ -35,6 +37,8 @@ type FiretitanServiceClient struct {
 	SamplerBackend            *TinkerSamplerBackend
 	SyncState                 ManagedSamplerSyncState
 	Now                       func() time.Time
+	lifecycleMu               sync.Mutex
+	closed                    bool
 
 	ListCheckpointsFunc                func(context.Context, string, int) ([]map[string]any, error)
 	PromoteCheckpointFunc              func(context.Context, PromoteCheckpointOptions) (map[string]any, error)
@@ -47,9 +51,12 @@ func NewFiretitanServiceClient(opts FiretitanServiceClientOptions) (*FiretitanSe
 	if err != nil {
 		return nil, err
 	}
+	managedBaseURL := strings.TrimRight(FireworksBaseURL(opts.BaseURL), "/")
 	fireworks := opts.FireworksClient
 	if fireworks == nil {
-		fireworks = NewFireworksClient(FireworksAPIKey(opts.APIKey), FireworksBaseURL(opts.BaseURL))
+		fireworks = NewFireworksClient(FireworksAPIKey(opts.APIKey), fireworksAPIRootURL(managedBaseURL))
+	} else if strings.TrimSpace(opts.BaseURL) == "" {
+		managedBaseURL = strings.TrimRight(fireworks.BaseURL(), "/")
 	}
 	registry := opts.Registry
 	if registry == nil {
@@ -65,6 +72,7 @@ func NewFiretitanServiceClient(opts FiretitanServiceClientOptions) (*FiretitanSe
 		DefaultUserMetadata: cloneStringMap(opts.DefaultUserMetadata),
 		DefaultProjectID:    opts.DefaultProjectID,
 		Fireworks:           fireworks,
+		ManagedBaseURL:      managedBaseURL,
 		Registry:            registry,
 		Now:                 now,
 	}
@@ -73,6 +81,20 @@ func NewFiretitanServiceClient(opts FiretitanServiceClientOptions) (*FiretitanSe
 	client.ListTrainingSessionCheckpointsFunc = fireworks.ListTrainingSessionCheckpoints
 	client.PromoteSessionCheckpointFunc = fireworks.PromoteSessionCheckpoint
 	return client, nil
+}
+
+func fireworksAPIRootURL(baseURL string) string {
+	root := strings.TrimRight(baseURL, "/")
+	for _, suffix := range []string{"/training/v1/serverless", "/training/v1"} {
+		if strings.HasSuffix(root, suffix) {
+			root = strings.TrimSuffix(root, suffix)
+			break
+		}
+	}
+	if root == "" {
+		return DefaultFireworksAPIURL
+	}
+	return root
 }
 
 func (c *FiretitanServiceClient) CurrentSessionID() string {
@@ -247,6 +269,12 @@ func (c *FiretitanServiceClient) Close(ctx context.Context) error {
 	if c == nil {
 		return nil
 	}
+	c.lifecycleMu.Lock()
+	defer c.lifecycleMu.Unlock()
+	if c.closed {
+		return nil
+	}
+	c.closed = true
 	var closeErr error
 	if err := c.ReleaseReferences(ctx); err != nil {
 		closeErr = errors.Join(closeErr, err)
@@ -395,6 +423,13 @@ func (c *FiretitanServiceClient) CreateSamplingClient(ctx context.Context, model
 		}
 		return NewFiretitanSamplingClient(sampler), nil
 	}
+	if modelPath != "" && c.SamplerBackend == nil && c.ProvisionedHandle == nil && c.TrainingSessionID() != "" {
+		model, err := c.serverlessSamplingModel(ctx, modelPath)
+		if err != nil {
+			return nil, err
+		}
+		return c.newServerlessSamplingClient(model, tokenizer, controller)
+	}
 	backend, err := c.requireSamplerBackend()
 	if err != nil {
 		return nil, err
@@ -405,6 +440,42 @@ func (c *FiretitanServiceClient) CreateSamplingClient(ctx context.Context, model
 		}
 	}
 	return backend.GetSamplingClient(ctx, tokenizer, controller)
+}
+
+func (c *FiretitanServiceClient) CreateServerlessBaseSamplingClient(ctx context.Context, tokenizer DeploymentTokenizer, controller SamplingConcurrencyController) (*FiretitanSamplingClient, error) {
+	model, err := c.serverlessSamplingModel(ctx, "")
+	if err != nil {
+		return nil, err
+	}
+	return c.newServerlessSamplingClient(model, tokenizer, controller)
+}
+
+func (c *FiretitanServiceClient) serverlessSamplingModel(ctx context.Context, modelPath string) (string, error) {
+	sessionID := c.TrainingSessionID()
+	accountID := c.ResolvedAccountID(ctx)
+	if sessionID == "" || accountID == "" {
+		return "", fmt.Errorf("serverless sampling requires a resolvable Fireworks account id and a bound training session")
+	}
+	model := "accounts/" + accountID + "/trainingSessions/" + sessionID
+	if checkpoint := strings.Trim(modelPath, "/"); checkpoint != "" {
+		model += "/checkpoints/" + checkpoint
+	}
+	return model, nil
+}
+
+func (c *FiretitanServiceClient) newServerlessSamplingClient(model string, tokenizer DeploymentTokenizer, controller SamplingConcurrencyController) (*FiretitanSamplingClient, error) {
+	baseURL := strings.TrimRight(c.ManagedBaseURL, "/")
+	if !strings.HasSuffix(baseURL, "/training/v1/serverless") {
+		return nil, fmt.Errorf("serverless sampling requires FiretitanServiceClient base_url to end with /training/v1/serverless; got %q", baseURL)
+	}
+	opts := []DeploymentSamplerOption{WithDeploymentSamplerAdditionalHeaders(map[string]string{"X-Session-Affinity": model})}
+	if tokenizer != nil {
+		opts = append(opts, WithDeploymentSamplerTokenizer(tokenizer))
+	}
+	if controller != nil {
+		opts = append(opts, WithDeploymentSamplerConcurrencyController(controller))
+	}
+	return NewFiretitanSamplingClient(NewDeploymentSampler(baseURL, model, c.Fireworks.APIKey(), opts...)), nil
 }
 
 func (c *FiretitanServiceClient) CreateDeploymentSampler(ctx context.Context, modelPath string, tokenizer DeploymentTokenizer, controller SamplingConcurrencyController) (*DeploymentSampler, error) {
@@ -621,6 +692,7 @@ type CreateTrainingClientFromStateOptions struct {
 type CreateReferenceClientOptions struct {
 	LoraRank     int
 	UserMetadata map[string]string
+	PolicyClient *FiretitanTrainingClient
 }
 
 type CreateLoraTrainingClientOptions struct {
@@ -656,6 +728,12 @@ func (c *FiretitanServiceClient) CreateTrainingClient(ctx context.Context, opts 
 	if c == nil {
 		return nil, fmt.Errorf("FiretitanServiceClient is nil")
 	}
+	c.lifecycleMu.Lock()
+	closed := c.closed
+	c.lifecycleMu.Unlock()
+	if closed {
+		return nil, fmt.Errorf("FiretitanServiceClient is closed")
+	}
 	var opt CreateFiretitanTrainingClientOptions
 	if len(opts) > 0 {
 		opt = opts[0]
@@ -677,7 +755,32 @@ func (c *FiretitanServiceClient) CreateTrainingClient(ctx context.Context, opts 
 	if config.LoraRank == 0 {
 		config.LoraAlpha = nil
 	}
-	if !opt.SkipRegistry {
+	multiModel := config.MaxLoraRank != nil
+	if multiModel {
+		resolvedBaseModel := config.BaseModel
+		if opt.BaseModel != "" {
+			resolvedBaseModel = strings.TrimSpace(opt.BaseModel)
+		}
+		if resolvedBaseModel != config.BaseModel {
+			return nil, fmt.Errorf("base_model=%q does not match the managed trainer base model %q", resolvedBaseModel, config.BaseModel)
+		}
+		if opt.LoraRank == nil || *opt.LoraRank < 1 || *opt.LoraRank > *config.MaxLoraRank {
+			got := 0
+			if opt.LoraRank != nil {
+				got = *opt.LoraRank
+			}
+			return nil, fmt.Errorf("lora_rank must be between 1 and max_lora_rank=%d, got %d", *config.MaxLoraRank, got)
+		}
+		config.LoraRank = *opt.LoraRank
+		config.LoraAlpha = intPointer(DefaultLoraAlpha)
+		if opt.LoraAlpha != nil {
+			config.LoraAlpha = cloneIntPointer(opt.LoraAlpha)
+		}
+		if _, err := c.ProvisionManagedHandle(ctx); err != nil {
+			return nil, err
+		}
+	}
+	if !opt.SkipRegistry && !multiModel {
 		key := ManagedTrainingClientKey(config)
 		if err := c.Registry.Add(key); err != nil {
 			return nil, err
@@ -723,7 +826,7 @@ func (c *FiretitanServiceClient) CreateTrainingClient(ctx context.Context, opts 
 	if runName == "" {
 		runName = c.ServerlessRunName(ctx, opt.ModelID)
 	}
-	return &FiretitanTrainingClient{
+	client := &FiretitanTrainingClient{
 		Service:         c,
 		Config:          config,
 		UserMetadata:    ResolveUserMetadata(c.DefaultUserMetadata, opt.UserMetadata),
@@ -739,7 +842,15 @@ func (c *FiretitanServiceClient) CreateTrainingClient(ctx context.Context, opts 
 		TrainerBaseURL:  opt.TrainerBaseURL,
 		SavedStateNames: map[string]bool{},
 		SyncState:       state,
-	}, nil
+	}
+	if multiModel {
+		c.lifecycleMu.Lock()
+		if c.ProvisionedHandle != nil {
+			c.ProvisionedHandle.TrainingClients = append(c.ProvisionedHandle.TrainingClients, client)
+		}
+		c.lifecycleMu.Unlock()
+	}
+	return client, nil
 }
 
 func (c *FiretitanServiceClient) CreateLoraTrainingClient(ctx context.Context, baseModel string, opts ...CreateLoraTrainingClientOptions) (*FiretitanTrainingClient, error) {
@@ -815,6 +926,29 @@ func (c *FiretitanServiceClient) CreateReferenceClient(ctx context.Context, base
 		opt = opts[0]
 	}
 	policyLoraRank := opt.LoraRank
+	if c.Config.MaxLoraRank != nil {
+		if opt.PolicyClient == nil {
+			return nil, fmt.Errorf("policy_client is required for a managed multi-model reference")
+		}
+		owned := false
+		c.lifecycleMu.Lock()
+		if c.ProvisionedHandle != nil {
+			for _, client := range c.ProvisionedHandle.TrainingClients {
+				if client == opt.PolicyClient {
+					owned = true
+					break
+				}
+			}
+		}
+		c.lifecycleMu.Unlock()
+		if !owned {
+			return nil, fmt.Errorf("policy_client was not created by this managed service")
+		}
+		if policyLoraRank != 0 && policyLoraRank != opt.PolicyClient.Config.LoraRank {
+			return nil, fmt.Errorf("lora_rank=%d does not match policy_client rank=%d", policyLoraRank, opt.PolicyClient.Config.LoraRank)
+		}
+		policyLoraRank = opt.PolicyClient.Config.LoraRank
+	}
 	if policyLoraRank == 0 {
 		policyLoraRank = c.Config.LoraRank
 	}
@@ -879,6 +1013,9 @@ func (c *FiretitanServiceClient) CreateTrainingClientFromStateWithOptimizer(ctx 
 func (c *FiretitanServiceClient) createTrainingClientFromState(ctx context.Context, path string, withOptimizer bool, opts ...CreateTrainingClientFromStateOptions) (*FiretitanTrainingClient, error) {
 	if c == nil {
 		return nil, fmt.Errorf("FiretitanServiceClient is nil")
+	}
+	if c.Config.MaxLoraRank != nil {
+		return nil, fmt.Errorf("managed multi-model resume requires checkpoint-derived rank and alpha, which is not implemented")
 	}
 	var opt CreateTrainingClientFromStateOptions
 	if len(opts) > 0 {
@@ -1215,9 +1352,11 @@ func (c *FiretitanTrainingClient) SaveWeightsForSamplerExt(ctx context.Context, 
 	if err != nil {
 		return SaveSamplerResult{}, err
 	}
-	result.Path = result.SnapshotName
 	if c.SamplerBackend != nil {
-		c.SamplerBackend.RememberSavedSnapshot(result.SnapshotName, opts.CheckpointType)
+		if result.Path != "" {
+			c.SamplerBackend.RememberSavedSnapshot(result.Path, opts.CheckpointType, c.Config.LoraRank)
+		}
+		c.SamplerBackend.RememberSavedSnapshot(result.SnapshotName, opts.CheckpointType, c.Config.LoraRank)
 	}
 	return result, nil
 }

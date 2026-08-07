@@ -1,6 +1,7 @@
 package sdk
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -77,6 +78,31 @@ func (p TrainingShapeProfile) SupportsLora() bool {
 
 func NewFireworksClient(apiKey, baseURL string, opts ...TrainingRestClientOption) *FireworksClient {
 	return &FireworksClient{TrainingRestClient: NewTrainingRestClient(apiKey, baseURL, opts...)}
+}
+
+func (c *FireworksClient) ModelIsMoE(ctx context.Context, model string) (bool, error) {
+	resp, err := c.Get(ctx, "/v1/"+strings.TrimLeft(model, "/"), nil)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return false, fmt.Errorf("failed to fetch model details for %q (HTTP %d): %s", model, resp.StatusCode, ParseAPIErrorBody(body))
+	}
+	var data map[string]any
+	if err := json.Unmarshal(body, &data); err != nil {
+		return false, err
+	}
+	details, _ := data["baseModelDetails"].(map[string]any)
+	if details == nil {
+		details, _ = data["base_model_details"].(map[string]any)
+	}
+	moe, ok := details["moe"].(bool)
+	if !ok {
+		return false, fmt.Errorf("base model %q is missing baseModelDetails.moe; cannot determine Router Replay support", model)
+	}
+	return moe, nil
 }
 
 func ValidateOutputModelID(outputModelID string) []string {
@@ -320,7 +346,7 @@ func (c *FireworksClient) PromoteCheckpoint(ctx context.Context, opts PromoteChe
 	if err != nil {
 		return nil, err
 	}
-	result, retry, err := c.decodePromoteResponse(resp)
+	result, retry, err := c.decodePromoteResponse(resp, checkpointID)
 	if err != nil {
 		return nil, err
 	}
@@ -329,7 +355,7 @@ func (c *FireworksClient) PromoteCheckpoint(ctx context.Context, opts PromoteChe
 		if err != nil {
 			return nil, err
 		}
-		result, _, err = c.decodePromoteResponse(resp)
+		result, _, err = c.decodePromoteResponse(resp, checkpointID)
 		if err != nil {
 			return nil, err
 		}
@@ -438,12 +464,8 @@ func (c *FireworksClient) PromoteSessionCheckpoint(ctx context.Context, opts Pro
 	defer resp.Body.Close()
 	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("%s", FormatSDKError(
-			"Failed to promote session checkpoint '"+checkpointID+"'",
-			ParseAPIErrorBody(respBody),
-			"Check that the checkpoint is valid and base_model is correct.\n  Console: "+ConsoleURL,
-			SDKErrorFormatOptions{DocsURL: DocsSDK},
-		))
+		resp.Body = io.NopCloser(bytes.NewReader(respBody))
+		return nil, fmt.Errorf("%s", FormatSessionCheckpointPromotionError(resp, checkpointID))
 	}
 	var result map[string]any
 	if len(respBody) > 0 {
@@ -540,19 +562,15 @@ func BuildPromoteRequest(accountID, jobID, checkpointID, outputModelID, baseMode
 	return path, body
 }
 
-func (c *FireworksClient) decodePromoteResponse(resp *http.Response) (map[string]any, bool, error) {
+func (c *FireworksClient) decodePromoteResponse(resp *http.Response, checkpointID string) (map[string]any, bool, error) {
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode == http.StatusBadRequest && isUnknownAsyncPromotionField(body) {
 		return nil, true, nil
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, false, fmt.Errorf("%s", FormatSDKError(
-			"Failed to promote checkpoint",
-			ParseAPIErrorBody(body),
-			"Use a checkpoint name returned by list_checkpoints, ensure the row is promotable, and pass the base_model that matches the trainer.\n  Console: "+ConsoleURL,
-			SDKErrorFormatOptions{DocsURL: DocsSDK},
-		))
+		resp.Body = io.NopCloser(bytes.NewReader(body))
+		return nil, false, fmt.Errorf("%s", FormatCheckpointPromotionError(resp, checkpointID))
 	}
 	var result map[string]any
 	if len(body) > 0 {

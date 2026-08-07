@@ -5,13 +5,14 @@ import ast
 import keyword
 import os
 import re
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-PYTHON_SDK_VERSION = "1.2.0-alpha.84"
+PYTHON_SDK_VERSION = "1.2.6"
 DEFAULT_ROOT = REPO_ROOT / f"docs/fireworks-py/python-sdk-{PYTHON_SDK_VERSION}/src/fireworks/types"
 ROOT = Path(os.environ.get("FIREWORKS_PY_TYPES_ROOT", DEFAULT_ROOT)).expanduser()
 OUT = REPO_ROOT / "types/generated.go"
@@ -482,6 +483,7 @@ def main() -> None:
     refs = collect_type_refs()
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(build_file(refs))
+    subprocess.run(["gofmt", "-w", str(OUT)], check=True)
 
 
 if __name__ == "__main__":

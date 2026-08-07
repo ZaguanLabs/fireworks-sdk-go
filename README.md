@@ -2,11 +2,11 @@
 
 Unofficial Go port of the official Fireworks AI Python SDK.
 
-This project targets Fireworks Python SDK `1.2.0-alpha.84` and keeps the Go
+This project targets Fireworks Python SDK `1.2.6` and keeps the Go
 package version aligned exactly:
 
 ```go
-fireworks.Version // "1.2.0-alpha.84"
+fireworks.Version // "1.2.6"
 ```
 
 Upstream references:
@@ -325,14 +325,14 @@ The Python SDK source snapshot is intentionally ignored by git. To regenerate
 types, provide a local copy of the official Python SDK source:
 
 ```sh
-FIREWORKS_PY_TYPES_ROOT=/path/to/python-sdk-1.2.0-alpha.84/src/fireworks/types \
+FIREWORKS_PY_TYPES_ROOT=/path/to/python-sdk-1.2.6/src/fireworks/types \
   go generate ./types
 ```
 
 The default generator path is:
 
 ```text
-docs/fireworks-py/python-sdk-1.2.0-alpha.84/src/fireworks/types
+docs/fireworks-py/python-sdk-1.2.6/src/fireworks/types
 ```
 
 ## Development
@@ -360,8 +360,8 @@ Releases are created from git tags by
 Use Go module semver tags:
 
 ```sh
-git tag v1.2.0-alpha.84
-git push origin v1.2.0-alpha.84
+git tag v1.2.6
+git push origin v1.2.6
 ```
 
 The workflow checks that `version.go` matches the tag, runs `go test ./...`,
@@ -370,7 +370,7 @@ compare changelog link between the previous release and the new tag.
 
 Tag push defaults:
 
-- tags with a prerelease suffix, such as `v1.2.0-alpha.84`, create a
+- tags with a prerelease suffix, such as `v1.3.0-alpha.1`, create a
   prerelease and do not become Latest
 - stable tags, such as `v1.2.0`, create a normal release and become Latest
 
