@@ -289,10 +289,7 @@ func ProvisionManagedHandle(ctx context.Context, opts ManagedProvisionOptions) (
 		requiresInitialSync = attached.ResetSnapshotChain
 		deploymentCreated = attached.Created
 		if opts.DeploymentManager != nil {
-			cmekResource := ""
-			if opts.UserMetadata != nil {
-				cmekResource = opts.UserMetadata["fireworks_cmek_resource"]
-			}
+			cmekResource := PolicyOutputCMEKResource(config.ExtraArgs)
 			samplerBackend = &TinkerSamplerBackend{
 				DeployMgr:         opts.DeploymentManager,
 				DeploymentID:      attached.Info.DeploymentID,
@@ -324,7 +321,7 @@ func ProvisionManagedHandle(ctx context.Context, opts ManagedProvisionOptions) (
 	if referenceConfig != nil {
 		referenceOpts := opts
 		referenceOpts.Config = *referenceConfig
-		referenceOpts.UserMetadata = ReferenceUserMetadata(opts.UserMetadata)
+		referenceOpts.UserMetadata = cloneStringMap(opts.UserMetadata)
 		referenceHandle, err = ProvisionManagedHandle(ctx, referenceOpts)
 		if err != nil {
 			return nil, err
@@ -405,6 +402,7 @@ func BuildManagedTrainerJobConfig(config FiretitanProvisioningConfig, maxContext
 		SkipValidations:           config.SkipValidations,
 		Purpose:                   config.Purpose,
 		Preemptible:               config.Preemptible,
+		UseReservation:            cloneBoolPointer(config.UseReservation),
 		ManagedBy:                 config.ManagedBy,
 		InactivityTimeout:         config.InactivityTimeout,
 		DisableInactivityCleanup:  config.DisableInactivityCleanup,

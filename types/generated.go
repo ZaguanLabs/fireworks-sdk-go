@@ -1120,33 +1120,37 @@ type DPOJobAzureBlobStorageConfig struct {
 
 // DPOJobDpoJob mirrors fireworks.types.dpo_job.DpoJob.
 type DPOJobDpoJob struct {
-	Dataset                string                                 `json:"dataset"`
-	AwsS3Config            *DPOJobAwsS3Config                     `json:"awsS3Config,omitempty"`
-	AzureBlobStorageConfig *DPOJobAzureBlobStorageConfig          `json:"azureBlobStorageConfig,omitempty"`
-	CompletedTime          *time.Time                             `json:"completedTime,omitempty"`
-	CreatedBy              *string                                `json:"createdBy,omitempty"`
-	CreateTime             *time.Time                             `json:"createTime,omitempty"`
-	DisplayName            *string                                `json:"displayName,omitempty"`
-	LossConfig             *SharedReinforcementLearningLossConfig `json:"lossConfig,omitempty"`
-	Name                   *string                                `json:"name,omitempty"`
-	State                  *string                                `json:"state,omitempty"`
-	Status                 *SharedStatus                          `json:"status,omitempty"`
-	TrainerLogsSignedURL   *string                                `json:"trainerLogsSignedUrl,omitempty"`
-	TrainingConfig         *SharedTrainingConfig                  `json:"trainingConfig,omitempty"`
-	WandbConfig            *SharedWandbConfig                     `json:"wandbConfig,omitempty"`
+	Dataset                   string                                 `json:"dataset"`
+	AwsS3Config               *DPOJobAwsS3Config                     `json:"awsS3Config,omitempty"`
+	AzureBlobStorageConfig    *DPOJobAzureBlobStorageConfig          `json:"azureBlobStorageConfig,omitempty"`
+	CompletedTime             *time.Time                             `json:"completedTime,omitempty"`
+	CreatedBy                 *string                                `json:"createdBy,omitempty"`
+	CreateTime                *time.Time                             `json:"createTime,omitempty"`
+	DisplayName               *string                                `json:"displayName,omitempty"`
+	LossConfig                *SharedReinforcementLearningLossConfig `json:"lossConfig,omitempty"`
+	RendererHuggingFaceRepoID *string                                `json:"rendererHuggingFaceRepoId,omitempty"`
+	Name                      *string                                `json:"name,omitempty"`
+	State                     *string                                `json:"state,omitempty"`
+	Status                    *SharedStatus                          `json:"status,omitempty"`
+	TrainerLogsSignedURL      *string                                `json:"trainerLogsSignedUrl,omitempty"`
+	TrainingConfig            *SharedTrainingConfig                  `json:"trainingConfig,omitempty"`
+	UseReservation            *bool                                  `json:"useReservation,omitempty"`
+	WandbConfig               *SharedWandbConfig                     `json:"wandbConfig,omitempty"`
 }
 
 // DPOJobCreateParamsDpoJobCreateParams mirrors fireworks.types.dpo_job_create_params.DpoJobCreateParams.
 type DPOJobCreateParamsDpoJobCreateParams struct {
-	AccountID              string                                      `json:"account_id,omitempty"`
-	Dataset                string                                      `json:"dataset"`
-	DPOJobID               string                                      `json:"dpoJobId,omitempty"`
-	AwsS3Config            DPOJobCreateParamsAwsS3Config               `json:"awsS3Config,omitempty"`
-	AzureBlobStorageConfig DPOJobCreateParamsAzureBlobStorageConfig    `json:"azureBlobStorageConfig,omitempty"`
-	DisplayName            string                                      `json:"displayName,omitempty"`
-	LossConfig             SharedParamsReinforcementLearningLossConfig `json:"lossConfig,omitempty"`
-	TrainingConfig         SharedParamsTrainingConfig                  `json:"trainingConfig,omitempty"`
-	WandbConfig            SharedParamsWandbConfig                     `json:"wandbConfig,omitempty"`
+	AccountID                 string                                      `json:"account_id,omitempty"`
+	Dataset                   string                                      `json:"dataset"`
+	DPOJobID                  string                                      `json:"dpoJobId,omitempty"`
+	AwsS3Config               DPOJobCreateParamsAwsS3Config               `json:"awsS3Config,omitempty"`
+	AzureBlobStorageConfig    DPOJobCreateParamsAzureBlobStorageConfig    `json:"azureBlobStorageConfig,omitempty"`
+	DisplayName               string                                      `json:"displayName,omitempty"`
+	LossConfig                SharedParamsReinforcementLearningLossConfig `json:"lossConfig,omitempty"`
+	RendererHuggingFaceRepoID string                                      `json:"rendererHuggingFaceRepoId,omitempty"`
+	TrainingConfig            SharedParamsTrainingConfig                  `json:"trainingConfig,omitempty"`
+	UseReservation            any                                         `json:"useReservation,omitempty"`
+	WandbConfig               SharedParamsWandbConfig                     `json:"wandbConfig,omitempty"`
 }
 
 // DPOJobCreateParamsAwsS3Config mirrors fireworks.types.dpo_job_create_params.AwsS3Config.
@@ -2935,11 +2939,13 @@ type SupervisedFineTuningJob struct {
 	OptimizerWeightDecay      *float64                                       `json:"optimizerWeightDecay,omitempty"`
 	OutputModel               *string                                        `json:"outputModel,omitempty"`
 	Region                    *string                                        `json:"region,omitempty"`
+	RendererHuggingFaceRepoID *string                                        `json:"rendererHuggingFaceRepoId,omitempty"`
 	State                     *string                                        `json:"state,omitempty"`
 	Status                    *SharedStatus                                  `json:"status,omitempty"`
 	TrainerLogsSignedURL      *string                                        `json:"trainerLogsSignedUrl,omitempty"`
 	UpdateTime                *time.Time                                     `json:"updateTime,omitempty"`
 	UsePurpose                *string                                        `json:"usePurpose,omitempty"`
+	UseReservation            *bool                                          `json:"useReservation,omitempty"`
 	WandbConfig               *SharedWandbConfig                             `json:"wandbConfig,omitempty"`
 	WarmStartFrom             *string                                        `json:"warmStartFrom,omitempty"`
 }
@@ -2974,7 +2980,9 @@ type SupervisedFineTuningJobCreateParams struct {
 	OptimizerWeightDecay      any                                                       `json:"optimizerWeightDecay,omitempty"`
 	OutputModel               string                                                    `json:"outputModel,omitempty"`
 	Region                    string                                                    `json:"region,omitempty"`
+	RendererHuggingFaceRepoID string                                                    `json:"rendererHuggingFaceRepoId,omitempty"`
 	UsePurpose                string                                                    `json:"usePurpose,omitempty"`
+	UseReservation            any                                                       `json:"useReservation,omitempty"`
 	WandbConfig               SharedParamsWandbConfig                                   `json:"wandbConfig,omitempty"`
 	WarmStartFrom             string                                                    `json:"warmStartFrom,omitempty"`
 }

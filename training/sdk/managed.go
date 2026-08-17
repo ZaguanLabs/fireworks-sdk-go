@@ -91,6 +91,7 @@ type FiretitanProvisioningConfig struct {
 	SkipValidations            bool
 	DisableSpeculativeDecoding bool
 	HotLoadTransitionType      string
+	UseReservation             *bool
 }
 
 type ManagedDeploymentShapeResolver interface {
@@ -101,6 +102,9 @@ func (c FiretitanProvisioningConfig) Normalize() (FiretitanProvisioningConfig, e
 	out := c
 	if out.CreateDeployment == nil {
 		out.CreateDeployment = boolPointer(true)
+	}
+	if out.UseReservation == nil {
+		out.UseReservation = boolPointer(true)
 	}
 	out.DeploymentRegion = ""
 
@@ -244,12 +248,33 @@ func AllowedReferenceTrainerModes(loraRank int) map[string]bool {
 }
 
 func ReferenceUserMetadata(metadata map[string]string) map[string]string {
-	out := cloneStringMap(metadata)
-	delete(out, "fireworks_cmek_resource")
-	if len(out) == 0 {
-		return nil
+	return cloneStringMap(metadata)
+}
+
+const cmekOutputModelResourceFlag = "--cmek-output-model-resource"
+
+// PolicyOutputCMEKResource recovers the policy output CMEK resource from
+// either "--cmek-output-model-resource value" or "--cmek-output-model-resource=value".
+func PolicyOutputCMEKResource(args []string) string {
+	takeNext := false
+	for _, arg := range args {
+		trimmed := strings.TrimSpace(arg)
+		if takeNext {
+			return trimmed
+		}
+		if !strings.HasPrefix(trimmed, cmekOutputModelResourceFlag) {
+			continue
+		}
+		remainder := strings.TrimPrefix(trimmed, cmekOutputModelResourceFlag)
+		if remainder == "" {
+			takeNext = true
+			continue
+		}
+		if remainder[0] == '=' || remainder[0] == ' ' {
+			return strings.TrimSpace(remainder[1:])
+		}
 	}
-	return out
+	return ""
 }
 
 func ReferenceExtraArgs(args []string) []string {

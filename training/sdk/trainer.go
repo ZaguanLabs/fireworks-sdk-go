@@ -81,6 +81,7 @@ type TrainerJobConfig struct {
 	SkipValidations           bool
 	Purpose                   string
 	Preemptible               bool
+	UseReservation            *bool
 	ManagedBy                 string
 	RequestedJobID            string
 }
@@ -738,6 +739,10 @@ func BuildTrainerCreatePayload(config TrainerJobConfig) map[string]any {
 		"keepAlive":      false,
 		"dataset":        "",
 		"trainingConfig": trainingConfig,
+		"useReservation": true,
+	}
+	if config.UseReservation != nil {
+		payload["useReservation"] = *config.UseReservation
 	}
 	if config.TrainerReplicaCount != nil {
 		payload["trainerReplicaCount"] = *config.TrainerReplicaCount

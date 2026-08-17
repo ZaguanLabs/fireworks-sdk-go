@@ -94,6 +94,26 @@ func TestPageInfoHelpers(t *testing.T) {
 }
 
 func TestGeneratedJSONAliases(t *testing.T) {
+	for _, typ := range []reflect.Type{
+		reflect.TypeOf(DPOJobDpoJob{}),
+		reflect.TypeOf(DPOJobCreateParamsDpoJobCreateParams{}),
+		reflect.TypeOf(SupervisedFineTuningJob{}),
+		reflect.TypeOf(SupervisedFineTuningJobCreateParams{}),
+	} {
+		for fieldName, wantTag := range map[string]string{
+			"RendererHuggingFaceRepoID": "rendererHuggingFaceRepoId,omitempty",
+			"UseReservation":            "useReservation,omitempty",
+		} {
+			field, ok := typ.FieldByName(fieldName)
+			if !ok {
+				t.Fatalf("%s.%s missing", typ.Name(), fieldName)
+			}
+			if got := field.Tag.Get("json"); got != wantTag {
+				t.Fatalf("%s.%s json tag = %q, want %q", typ.Name(), fieldName, got, wantTag)
+			}
+		}
+	}
+
 	modelField, ok := reflect.TypeOf(Model{}).FieldByName("ContextLength")
 	if !ok {
 		t.Fatal("Model.ContextLength missing")
