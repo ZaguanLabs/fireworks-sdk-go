@@ -83,6 +83,23 @@ func TestResolveNextCheckpointTypeExplicitMergedBaseOverrideWins(t *testing.T) {
 	}
 }
 
+func TestResolveExportPrecision(t *testing.T) {
+	got, err := ResolveExportPrecision(SamplerCheckpointTypeMergedBase, "")
+	if err != nil || got != ExportPrecisionSource {
+		t.Fatalf("default merged-base precision = %q, %v", got, err)
+	}
+	got, err = ResolveExportPrecision(SamplerCheckpointTypeMergedBase, "FP8_BLOCK128")
+	if err != nil || got != ExportPrecisionFP8Block128 {
+		t.Fatalf("explicit merged-base precision = %q, %v", got, err)
+	}
+	if _, err := ResolveExportPrecision(SamplerCheckpointTypeBase, "bf16"); err == nil {
+		t.Fatal("expected base checkpoint to reject export_precision")
+	}
+	if _, err := NormalizeExportPrecision("fp16"); err == nil {
+		t.Fatal("expected unknown export precision to fail")
+	}
+}
+
 func TestBuildIncrementalMetadataFullParamDeltaPinsPrevious(t *testing.T) {
 	got := BuildIncrementalMetadata(0, "delta", "snap-1", DefaultDeltaCompression)
 	if got == nil {

@@ -12,8 +12,9 @@ type SaveSamplerResult struct {
 }
 
 type SaveWeightsForSamplerOptions struct {
-	CheckpointType string
-	TTL            time.Duration
+	CheckpointType  string
+	TTL             time.Duration
+	ExportPrecision string
 }
 
 type SamplerWeightSaver interface {
@@ -238,6 +239,11 @@ func (s *WeightSyncer) SaveOnlyExt(ctx context.Context, name string, opts SaveWe
 		return SaveSamplerResult{}, err
 	}
 	opts.CheckpointType = string(ckptType)
+	exportPrecision, err := ResolveExportPrecision(ckptType, opts.ExportPrecision)
+	if err != nil {
+		return SaveSamplerResult{}, err
+	}
+	opts.ExportPrecision = string(exportPrecision)
 	start := s.now()()
 	saveResult, err := s.PolicyClient.SaveWeightsForSamplerExt(ctx, name, opts)
 	s.LastTiming["save_time_s"] = s.now()().Sub(start)

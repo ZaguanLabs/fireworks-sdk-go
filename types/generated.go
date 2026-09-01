@@ -1134,6 +1134,7 @@ type DPOJobDpoJob struct {
 	Status                    *SharedStatus                          `json:"status,omitempty"`
 	TrainerLogsSignedURL      *string                                `json:"trainerLogsSignedUrl,omitempty"`
 	TrainingConfig            *SharedTrainingConfig                  `json:"trainingConfig,omitempty"`
+	ReservationTarget         *string                                `json:"reservationTarget,omitempty"`
 	UseReservation            *bool                                  `json:"useReservation,omitempty"`
 	WandbConfig               *SharedWandbConfig                     `json:"wandbConfig,omitempty"`
 }
@@ -1149,6 +1150,7 @@ type DPOJobCreateParamsDpoJobCreateParams struct {
 	LossConfig                SharedParamsReinforcementLearningLossConfig `json:"lossConfig,omitempty"`
 	RendererHuggingFaceRepoID string                                      `json:"rendererHuggingFaceRepoId,omitempty"`
 	TrainingConfig            SharedParamsTrainingConfig                  `json:"trainingConfig,omitempty"`
+	ReservationTarget         string                                      `json:"reservationTarget,omitempty"`
 	UseReservation            any                                         `json:"useReservation,omitempty"`
 	WandbConfig               SharedParamsWandbConfig                     `json:"wandbConfig,omitempty"`
 }
@@ -2132,6 +2134,7 @@ type ReinforcementFineTuningJob struct {
 	McpServer                *string                                           `json:"mcpServer,omitempty"`
 	Name                     *string                                           `json:"name,omitempty"`
 	NodeCount                *int                                              `json:"nodeCount,omitempty"`
+	ReservationTarget        *string                                           `json:"reservationTarget,omitempty"`
 	OutputMetrics            *string                                           `json:"outputMetrics,omitempty"`
 	OutputStats              *string                                           `json:"outputStats,omitempty"`
 	State                    *string                                           `json:"state,omitempty"`
@@ -2166,6 +2169,7 @@ type ReinforcementFineTuningJobCreateParams struct {
 	MaxInferenceReplicaCount     any                                                          `json:"maxInferenceReplicaCount,omitempty"`
 	McpServer                    string                                                       `json:"mcpServer,omitempty"`
 	NodeCount                    any                                                          `json:"nodeCount,omitempty"`
+	ReservationTarget            string                                                       `json:"reservationTarget,omitempty"`
 	TrainingConfig               SharedParamsTrainingConfig                                   `json:"trainingConfig,omitempty"`
 	WandbConfig                  SharedParamsWandbConfig                                      `json:"wandbConfig,omitempty"`
 }
@@ -2945,6 +2949,7 @@ type SupervisedFineTuningJob struct {
 	TrainerLogsSignedURL      *string                                        `json:"trainerLogsSignedUrl,omitempty"`
 	UpdateTime                *time.Time                                     `json:"updateTime,omitempty"`
 	UsePurpose                *string                                        `json:"usePurpose,omitempty"`
+	ReservationTarget         *string                                        `json:"reservationTarget,omitempty"`
 	UseReservation            *bool                                          `json:"useReservation,omitempty"`
 	WandbConfig               *SharedWandbConfig                             `json:"wandbConfig,omitempty"`
 	WarmStartFrom             *string                                        `json:"warmStartFrom,omitempty"`
@@ -2982,6 +2987,7 @@ type SupervisedFineTuningJobCreateParams struct {
 	Region                    string                                                    `json:"region,omitempty"`
 	RendererHuggingFaceRepoID string                                                    `json:"rendererHuggingFaceRepoId,omitempty"`
 	UsePurpose                string                                                    `json:"usePurpose,omitempty"`
+	ReservationTarget         string                                                    `json:"reservationTarget,omitempty"`
 	UseReservation            any                                                       `json:"useReservation,omitempty"`
 	WandbConfig               SharedParamsWandbConfig                                   `json:"wandbConfig,omitempty"`
 	WarmStartFrom             string                                                    `json:"warmStartFrom,omitempty"`

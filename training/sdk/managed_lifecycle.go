@@ -403,6 +403,7 @@ func BuildManagedTrainerJobConfig(config FiretitanProvisioningConfig, maxContext
 		Purpose:                   config.Purpose,
 		Preemptible:               config.Preemptible,
 		UseReservation:            cloneBoolPointer(config.UseReservation),
+		ReservationTarget:         config.ReservationTarget,
 		ManagedBy:                 config.ManagedBy,
 		InactivityTimeout:         config.InactivityTimeout,
 		DisableInactivityCleanup:  config.DisableInactivityCleanup,

@@ -45,10 +45,106 @@ var safeErrorInfoMetadataKeys = map[string]bool{
 }
 
 type TrainingAPIError struct {
-	Message    string
-	StatusCode int
-	Reason     string
-	Metadata   map[string]string
+	Message         string
+	StatusCode      int
+	Reason          string
+	Metadata        map[string]string
+	LifecycleStatus *LifecycleStatus
+}
+
+// LifecycleStatus preserves a validated, canonical Lifecycle gRPC status.
+// Its full Status value is retained without treating untrusted fields as
+// managed-policy decisions.
+type LifecycleStatus struct {
+	Status map[string]any
+}
+
+func (s *LifecycleStatus) GRPCCode() int { code, _ := numberAsInt(s.Status["code"]); return code }
+func (s *LifecycleStatus) PublicMessage() string {
+	value, _ := s.Status["message"].(string)
+	return value
+}
+func (s *LifecycleStatus) Reason() string {
+	detail := trustedLifecycleErrorInfo(s.Status)
+	if detail == nil {
+		return ""
+	}
+	value, _ := detail["reason"].(string)
+	return value
+}
+func (s *LifecycleStatus) Domain() string {
+	detail := trustedLifecycleErrorInfo(s.Status)
+	if detail == nil {
+		return ""
+	}
+	value, _ := detail["domain"].(string)
+	return value
+}
+func (s *LifecycleStatus) Source() string {
+	detail := trustedLifecycleErrorInfo(s.Status)
+	if detail == nil {
+		return ""
+	}
+	metadata, _ := detail["metadata"].(map[string]any)
+	value, _ := metadata["source"].(string)
+	return value
+}
+func (s *LifecycleStatus) Metadata() map[string]any {
+	detail := trustedLifecycleErrorInfo(s.Status)
+	if detail == nil {
+		return map[string]any{}
+	}
+	metadata, _ := detail["metadata"].(map[string]any)
+	result := map[string]any{}
+	for key, value := range metadata {
+		if key != "version" && key != "source" {
+			result[key] = value
+		}
+	}
+	return result
+}
+
+type TinkerSourceError struct {
+	Source     string
+	Error      string
+	Category   string
+	ErrorClass string
+	Malformed  bool
+}
+type ServerlessGatewaySourceError struct {
+	Source    string
+	Code      string
+	Type      string
+	Malformed bool
+}
+
+func NewTinkerSourceError(errorValue, category, errorClass any) *TinkerSourceError {
+	errorText, errorBad := boundedSourceErrorField(errorValue)
+	categoryText, categoryBad := boundedSourceErrorField(category)
+	classText, classBad := boundedSourceErrorField(errorClass)
+	malformed := errorBad || categoryBad || classBad
+	if !malformed && errorText == "" && categoryText == "" && classText == "" {
+		return nil
+	}
+	return &TinkerSourceError{Source: "tinker", Error: errorText, Category: categoryText, ErrorClass: classText, Malformed: malformed}
+}
+
+func ParseServerlessGatewaySourceError(value any) *ServerlessGatewaySourceError {
+	payload, ok := value.(map[string]any)
+	if !ok {
+		return nil
+	}
+	envelope, ok := payload["error"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	code, codeBad := boundedSourceErrorField(envelope["code"])
+	kind, kindBad := boundedSourceErrorField(envelope["type"])
+	malformed := codeBad || kindBad
+	if code == "" && kind == "" && !malformed {
+		return nil
+	}
+	return &ServerlessGatewaySourceError{Source: "serverless_gateway", Code: code, Type: kind, Malformed: malformed}
 }
 
 func (e *TrainingAPIError) Error() string { return e.Message }
@@ -61,15 +157,103 @@ func ParseTrainingAPIError(resp *http.Response, contextLabel string) *TrainingAP
 	resp.Body = io.NopCloser(bytes.NewReader(body))
 	message := ParseAPIErrorBody(body)
 	reason, metadata := parseTrainingErrorInfo(body)
+	lifecycleStatus := parseLifecycleStatus(body)
 	if contextLabel != "" {
 		message = fmt.Sprintf("%s (HTTP %d): %s", contextLabel, resp.StatusCode, message)
 	}
 	return &TrainingAPIError{
-		Message:    message,
-		StatusCode: resp.StatusCode,
-		Reason:     reason,
-		Metadata:   metadata,
+		Message:         message,
+		StatusCode:      resp.StatusCode,
+		Reason:          reason,
+		Metadata:        metadata,
+		LifecycleStatus: lifecycleStatus,
 	}
+}
+
+func parseLifecycleStatus(body []byte) *LifecycleStatus {
+	var payload map[string]any
+	if json.Unmarshal(body, &payload) != nil {
+		return nil
+	}
+	status := payload
+	if nested, ok := payload["error"].(map[string]any); ok {
+		status = nested
+	}
+	code, ok := numberAsInt(status["code"])
+	if !ok || code < 0 || code > 16 {
+		return nil
+	}
+	if _, ok := status["message"].(string); !ok {
+		return nil
+	}
+	encoded, err := json.Marshal(status)
+	if err != nil {
+		return nil
+	}
+	var copied map[string]any
+	if json.Unmarshal(encoded, &copied) != nil {
+		return nil
+	}
+	return &LifecycleStatus{Status: copied}
+}
+
+func trustedLifecycleErrorInfo(status map[string]any) map[string]any {
+	details, ok := status["details"].([]any)
+	if !ok {
+		return nil
+	}
+	var trusted map[string]any
+	for _, item := range details {
+		detail, ok := item.(map[string]any)
+		if !ok || stringFromAny(detail["@type"]) != errorInfoType || stringFromAny(detail["domain"]) != "training.fireworks.ai" {
+			continue
+		}
+		reason, rok := detail["reason"].(string)
+		metadata, mok := detail["metadata"].(map[string]any)
+		if !rok || reason == "" || strings.TrimSpace(reason) != reason || !mok || stringFromAny(metadata["version"]) != "1" || (stringFromAny(metadata["source"]) != "lifecycle" && stringFromAny(metadata["source"]) != "managed") {
+			return nil
+		}
+		for key, value := range metadata {
+			if key == "" {
+				return nil
+			}
+			text, ok := value.(string)
+			if !ok || len([]byte(text)) > 128 {
+				return nil
+			}
+		}
+		if trusted != nil {
+			a, _ := json.Marshal(trusted)
+			b, _ := json.Marshal(detail)
+			if !bytes.Equal(a, b) {
+				return nil
+			}
+		}
+		trusted = detail
+	}
+	return trusted
+}
+
+func numberAsInt(value any) (int, bool) {
+	switch typed := value.(type) {
+	case int:
+		return typed, true
+	case float64:
+		converted := int(typed)
+		return converted, typed == float64(converted)
+	default:
+		return 0, false
+	}
+}
+func boundedSourceErrorField(value any) (string, bool) {
+	if value == nil {
+		return "", false
+	}
+	text, ok := value.(string)
+	if !ok || text == "" || len([]byte(text)) > 128 {
+		return "", true
+	}
+	return text, false
 }
 
 func parseTrainingErrorInfo(body []byte) (string, map[string]string) {

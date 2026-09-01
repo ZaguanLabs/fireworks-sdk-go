@@ -18,6 +18,27 @@ func TestTrainerReservationDefaultsToTrueAndCanOptOut(t *testing.T) {
 	}
 }
 
+func TestTrainerReservationTargetDisablesFallback(t *testing.T) {
+	payload := BuildTrainerCreatePayload(TrainerJobConfig{
+		BaseModel:         "accounts/a/models/m",
+		ReservationTarget: "accounts/a/reservations/training-primary",
+	})
+	if got := payload["reservationTarget"]; got != "accounts/a/reservations/training-primary" {
+		t.Fatalf("reservationTarget = %#v", got)
+	}
+	if got, ok := payload["useReservation"].(bool); !ok || got {
+		t.Fatalf("useReservation = %#v, want false with exact target", payload["useReservation"])
+	}
+
+	managed := BuildManagedTrainerJobConfig(FiretitanProvisioningConfig{
+		BaseModel:         "accounts/a/models/m",
+		ReservationTarget: "accounts/a/reservationGroups/primary",
+	}, nil, nil)
+	if managed.ReservationTarget != "accounts/a/reservationGroups/primary" {
+		t.Fatalf("managed reservation target = %q", managed.ReservationTarget)
+	}
+}
+
 func TestManagedReservationAndCMEKParity(t *testing.T) {
 	normalized, err := (FiretitanProvisioningConfig{}).Normalize()
 	if err != nil {

@@ -272,6 +272,26 @@ func TestWeightSyncerSaveOnlyThenHotloadUsesSnapshotIdentity(t *testing.T) {
 	}
 }
 
+func TestWeightSyncerMergedBaseDefaultsSourcePrecision(t *testing.T) {
+	saver := &fakeSamplerSaver{results: []SaveSamplerResult{{Path: "merged", SnapshotName: "merged"}}}
+	syncer := NewWeightSyncer(WeightSyncerConfig{PolicyClient: saver, LoraRank: 8})
+	_, err := syncer.SaveOnlyExt(context.Background(), "merged", SaveWeightsForSamplerOptions{
+		CheckpointType: "merged_base",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := saver.calls[0].ExportPrecision; got != "source" {
+		t.Fatalf("export precision = %q, want source", got)
+	}
+	if _, err := syncer.SaveOnlyExt(context.Background(), "bad", SaveWeightsForSamplerOptions{
+		CheckpointType:  "base",
+		ExportPrecision: "bf16",
+	}); err == nil {
+		t.Fatal("expected non-merged checkpoint precision to fail")
+	}
+}
+
 func TestWeightSyncerSaveOnlyExtPreservesOptions(t *testing.T) {
 	saver := &fakeSamplerSaver{
 		results: []SaveSamplerResult{{SnapshotName: "snap-1"}},

@@ -254,3 +254,33 @@ func TestRequestWithRetriesConnectionErrorExhausts(t *testing.T) {
 func noSleepRetryOptions() RequestRetryOptions {
 	return RequestRetryOptions{Sleep: func(time.Duration) {}}
 }
+
+func TestParseTrainingAPIErrorPreservesLifecycleStatus(t *testing.T) {
+	body := `{"error":{"code":9,"message":"reservation unavailable","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"RESERVATION_UNAVAILABLE","domain":"training.fireworks.ai","metadata":{"version":"1","source":"lifecycle","reservation":"r-1"}}]}}`
+	resp := &http.Response{StatusCode: http.StatusConflict, Body: io.NopCloser(strings.NewReader(body))}
+	err := ParseTrainingAPIError(resp, "create failed")
+	if err.LifecycleStatus == nil {
+		t.Fatal("lifecycle status was not preserved")
+	}
+	if err.LifecycleStatus.GRPCCode() != 9 || err.LifecycleStatus.Reason() != "RESERVATION_UNAVAILABLE" || err.LifecycleStatus.Source() != "lifecycle" {
+		t.Fatalf("status = %#v", err.LifecycleStatus)
+	}
+	if err.LifecycleStatus.Metadata()["reservation"] != "r-1" {
+		t.Fatalf("metadata = %#v", err.LifecycleStatus.Metadata())
+	}
+}
+
+func TestSourceErrorValidation(t *testing.T) {
+	tinker := NewTinkerSourceError("boom", "user", "ValueError")
+	if tinker == nil || tinker.Malformed || tinker.Source != "tinker" {
+		t.Fatalf("tinker = %#v", tinker)
+	}
+	gateway := ParseServerlessGatewaySourceError(map[string]any{"error": map[string]any{"code": "BAD_REQUEST", "type": "invalid_request_error"}})
+	if gateway == nil || gateway.Malformed || gateway.Code != "BAD_REQUEST" {
+		t.Fatalf("gateway = %#v", gateway)
+	}
+	invalid := strings.Repeat("x", 129)
+	if got := ParseServerlessGatewaySourceError(map[string]any{"error": map[string]any{"code": invalid}}); got == nil || !got.Malformed {
+		t.Fatalf("malformed gateway = %#v", got)
+	}
+}

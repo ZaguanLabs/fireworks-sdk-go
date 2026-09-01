@@ -92,6 +92,7 @@ type FiretitanProvisioningConfig struct {
 	DisableSpeculativeDecoding bool
 	HotLoadTransitionType      string
 	UseReservation             *bool
+	ReservationTarget          string
 }
 
 type ManagedDeploymentShapeResolver interface {

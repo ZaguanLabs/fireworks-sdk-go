@@ -13,6 +13,7 @@ import (
 	"math/rand"
 	"net"
 	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -21,14 +22,25 @@ import (
 )
 
 type ServerMetrics struct {
-	NumConcurrentRequests   *int
-	PrefillQueueDuration    *float64
-	GenerationQueueDuration *float64
-	ServerTTFT              *float64
-	CachedPromptTokens      *int
-	PromptTokens            *int
-	ServerProcessingTime    *float64
-	ClientTTFT              *float64
+	NumConcurrentRequests   *int     `json:"num_concurrent_requests,omitempty"`
+	PrefillQueueDuration    *float64 `json:"prefill_queue_duration,omitempty"`
+	GenerationQueueDuration *float64 `json:"generation_queue_duration,omitempty"`
+	ServerTTFT              *float64 `json:"server_ttft,omitempty"`
+	CachedPromptTokens      *int     `json:"cached_prompt_tokens,omitempty"`
+	PromptTokens            *int     `json:"prompt_tokens,omitempty"`
+	ServerProcessingTime    *float64 `json:"server_processing_time,omitempty"`
+	TokenizerQueueDuration  *float64 `json:"tokenizer_queue_duration,omitempty"`
+	TokenizerDuration       *float64 `json:"tokenizer_duration,omitempty"`
+	PrefillDuration         *float64 `json:"prefill_duration,omitempty"`
+	GenerationDuration      *float64 `json:"generation_duration,omitempty"`
+	ClientTTFT              *float64 `json:"client_ttft,omitempty"`
+	HTTPStatusCode          *int     `json:"http_status_code,omitempty"`
+	TransportError          bool     `json:"transport_error"`
+	RetryAttempt            *int     `json:"retry_attempt,omitempty"`
+	ResponseRequestID       string   `json:"response_request_id,omitempty"`
+	BackendHost             string   `json:"backend_host,omitempty"`
+	Deployment              string   `json:"deployment,omitempty"`
+	PodTemplateHash         string   `json:"pod_template_hash,omitempty"`
 }
 
 type SampledCompletion struct {
@@ -43,6 +55,26 @@ type SampledCompletion struct {
 	RoutingMatrices   []string
 }
 
+type SampledServerAttempt struct {
+	Index              int            `json:"index"`
+	Outcome            string         `json:"outcome"`
+	StatusCode         *int           `json:"status_code,omitempty"`
+	ErrorKind          string         `json:"error_kind,omitempty"`
+	ResponseRequestID  string         `json:"response_request_id,omitempty"`
+	UpstreamResponseID string         `json:"upstream_response_id,omitempty"`
+	ServerMetrics      *ServerMetrics `json:"server_metrics,omitempty"`
+}
+
+type SampledRequestResult struct {
+	Completions        []SampledCompletion
+	ServerMetrics      *ServerMetrics
+	LogicalRequestID   string
+	Attempts           int
+	WallSeconds        float64
+	UpstreamResponseID string
+	ServerAttempts     []SampledServerAttempt
+}
+
 type SamplingRequestError struct {
 	Message          string
 	LogicalRequestID string
@@ -52,6 +84,8 @@ type SamplingRequestError struct {
 	FinalErrorKind   string
 	RequestID        string
 	Context          map[string]any
+	ServerAttempts   []SampledServerAttempt
+	SourceError      any
 	Err              error
 }
 
@@ -97,6 +131,12 @@ func (e *SamplingRequestError) AsErrorRecord() map[string]any {
 	}
 	if len(e.Context) > 0 {
 		record["context"] = cloneAnyMap(e.Context)
+	}
+	if len(e.ServerAttempts) > 0 {
+		record["server_attempts"] = append([]SampledServerAttempt(nil), e.ServerAttempts...)
+	}
+	if e.SourceError != nil {
+		record["source_error"] = e.SourceError
 	}
 	return record
 }
@@ -162,6 +202,8 @@ type CompletionRequestOptions struct {
 	Stop                 []string
 	Extra                map[string]any
 	LogicalRequestID     string
+	PromptCacheKey       string
+	AdditionalHeaders    map[string]string
 }
 
 type CompletionRequester func(context.Context, []int, CompletionRequestOptions) (map[string]any, ServerMetrics, error)
@@ -290,6 +332,9 @@ type SampleOptions struct {
 	Extra                    map[string]any
 	TimeoutDiagnosticContext any
 	SamplingContext          map[string]any
+	PromptCacheKey           string
+	AdditionalHeaders        map[string]string
+	LogicalRequestID         string
 }
 
 const (
@@ -377,6 +422,21 @@ func (s *DeploymentSampler) SampleWithPromptTokens(ctx context.Context, promptTo
 		out = append(out, batch...)
 	}
 	return out, nil
+}
+
+// SampleWithPromptTokensResult samples one exact token prompt and returns
+// request-attributed serving facts in addition to the completions.
+func (s *DeploymentSampler) SampleWithPromptTokensResult(ctx context.Context, promptTokenIDs []int, opts ...SampleOptions) (SampledRequestResult, error) {
+	opt := sampleOptions(opts...)
+	if opt.MaxSeqLen > 0 && len(promptTokenIDs) >= opt.MaxSeqLen {
+		return SampledRequestResult{}, fmt.Errorf("prompt_token_ids already exhaust max_seq_len")
+	}
+	stop, err := s.resolveStop(opt.Stop)
+	if err != nil {
+		return SampledRequestResult{}, err
+	}
+	opt.N = 1
+	return s.doOneCompletionResult(ctx, promptTokenIDs, opt, stop)
 }
 
 func (s *DeploymentSampler) DrainMetrics() []ServerMetrics {
@@ -637,8 +697,21 @@ func (s *DeploymentSampler) Close() {
 }
 
 func (s *DeploymentSampler) doOneCompletion(ctx context.Context, promptIDs []int, opt SampleOptions, stop []string) ([]SampledCompletion, error) {
+	result, err := s.doOneCompletionResult(ctx, promptIDs, opt, stop)
+	if err != nil {
+		return nil, err
+	}
+	return result.Completions, nil
+}
+
+func (s *DeploymentSampler) doOneCompletionResult(ctx context.Context, promptIDs []int, opt SampleOptions, stop []string) (SampledRequestResult, error) {
 	backoff := SamplerRetryBaseBackoff
-	logicalRequestID := newSamplingRequestID()
+	logicalRequestID := opt.LogicalRequestID
+	if logicalRequestID == "" {
+		logicalRequestID = newSamplingRequestID()
+	}
+	requestStarted := s.Now()
+	serverAttempts := make([]SampledServerAttempt, 0, SamplerRetryMaxAttempts)
 	requestContext := cleanSamplingContext(s.RequestContext)
 	for key, value := range cleanSamplingContext(opt.SamplingContext) {
 		requestContext[key] = value
@@ -646,7 +719,12 @@ func (s *DeploymentSampler) doOneCompletion(ctx context.Context, promptIDs []int
 	for attempt := 1; attempt <= SamplerRetryMaxAttempts; attempt++ {
 		if s.ConcurrencyController != nil {
 			if err := s.ConcurrencyController.Acquire(ctx); err != nil {
-				return nil, err
+				outcome := "failed"
+				if errors.Is(err, context.Canceled) {
+					outcome = "cancelled"
+				}
+				serverAttempts = append(serverAttempts, SampledServerAttempt{Index: attempt, Outcome: outcome, ErrorKind: classifySamplerError(err)})
+				return SampledRequestResult{}, err
 			}
 		}
 		var metrics *ServerMetrics
@@ -660,9 +738,31 @@ func (s *DeploymentSampler) doOneCompletion(ctx context.Context, promptIDs []int
 			Stop:                 stop,
 			Extra:                cloneAnyMap(opt.Extra),
 			LogicalRequestID:     logicalRequestID,
+			PromptCacheKey:       opt.PromptCacheKey,
+			AdditionalHeaders:    cloneStringMap(opt.AdditionalHeaders),
 		})
 		if err == nil {
+			status := http.StatusOK
+			serverMetrics.HTTPStatusCode = &status
+			retryAttempt := attempt
+			serverMetrics.RetryAttempt = &retryAttempt
 			metrics = &serverMetrics
+		} else {
+			var statusErr *CompletionHTTPStatusError
+			if errors.As(err, &statusErr) {
+				observed := ServerMetricsFromHTTPHeaders(statusErr.Headers)
+				status := statusErr.StatusCode
+				observed.HTTPStatusCode = &status
+				retryAttempt := attempt
+				observed.RetryAttempt = &retryAttempt
+				metrics = &observed
+			} else {
+				var netErr net.Error
+				if errors.As(err, &netErr) {
+					retryAttempt := attempt
+					metrics = &ServerMetrics{TransportError: true, RetryAttempt: &retryAttempt}
+				}
+			}
 		}
 		if s.ConcurrencyController != nil {
 			s.ConcurrencyController.Release(metrics)
@@ -673,18 +773,44 @@ func (s *DeploymentSampler) doOneCompletion(ctx context.Context, promptIDs []int
 			s.mu.Unlock()
 		}
 		if err == nil {
-			return s.ParseCompletionsResult(result, promptIDs, opt.MaxSeqLen, opt.Logprobs, opt.IncludeRoutingMatrix, opt.Echo)
+			completions, parseErr := s.ParseCompletionsResult(result, promptIDs, opt.MaxSeqLen, opt.Logprobs, opt.IncludeRoutingMatrix, opt.Echo)
+			upstreamResponseID := stringFromAny(result["id"])
+			if parseErr != nil {
+				serverAttempts = append(serverAttempts, sampledServerAttempt(attempt, "failed", parseErr, metrics, upstreamResponseID))
+				return SampledRequestResult{}, parseErr
+			}
+			serverAttempts = append(serverAttempts, sampledServerAttempt(attempt, "succeeded", nil, metrics, upstreamResponseID))
+			return SampledRequestResult{
+				Completions:        completions,
+				ServerMetrics:      cloneServerMetrics(metrics),
+				LogicalRequestID:   logicalRequestID,
+				Attempts:           attempt,
+				WallSeconds:        s.Now().Sub(requestStarted).Seconds(),
+				UpstreamResponseID: upstreamResponseID,
+				ServerAttempts:     append([]SampledServerAttempt(nil), serverAttempts...),
+			}, nil
 		}
-		if !samplerRetryableCompletionError(err) {
-			return nil, err
+		outcome := "retryable_error"
+		if errors.Is(err, context.Canceled) {
+			outcome = "cancelled"
+		} else if !samplerRetryableCompletionError(err) {
+			outcome = "failed"
+		}
+		serverAttempts = append(serverAttempts, sampledServerAttempt(attempt, outcome, err, metrics, ""))
+		if outcome != "retryable_error" {
+			return SampledRequestResult{}, err
 		}
 		if attempt == SamplerRetryMaxAttempts {
-			if samplerTimeoutLikeError(err) {
-				base := s.samplingRequestError(err, logicalRequestID, attempt, requestContext, promptIDs, opt)
-				base.Message = s.timeoutDiagnostic(err.Error(), promptIDs, opt, true)
-				return nil, &DeploymentSamplerTimeoutError{SamplingRequestError: *base}
+			if observer, ok := s.ConcurrencyController.(interface{ NoteRetryExhausted(*ServerMetrics) }); ok {
+				observer.NoteRetryExhausted(metrics)
 			}
-			return nil, s.samplingRequestError(err, logicalRequestID, attempt, requestContext, promptIDs, opt)
+			base := s.samplingRequestError(err, logicalRequestID, attempt, requestContext, promptIDs, opt)
+			base.ServerAttempts = append([]SampledServerAttempt(nil), serverAttempts...)
+			if samplerTimeoutLikeError(err) {
+				base.Message = s.timeoutDiagnostic(err.Error(), promptIDs, opt, true)
+				return SampledRequestResult{}, &DeploymentSamplerTimeoutError{SamplingRequestError: *base}
+			}
+			return SampledRequestResult{}, base
 		}
 		delay := s.retryBackoffDelay(backoff)
 		var statusErr *CompletionHTTPStatusError
@@ -702,7 +828,88 @@ func (s *DeploymentSampler) doOneCompletion(ctx context.Context, promptIDs []int
 			backoff = SamplerRetryMaxBackoff
 		}
 	}
-	return nil, fmt.Errorf("unreachable: sampler retry loop exited")
+	return SampledRequestResult{}, fmt.Errorf("unreachable: sampler retry loop exited")
+}
+
+func sampledServerAttempt(index int, outcome string, err error, metrics *ServerMetrics, upstreamResponseID string) SampledServerAttempt {
+	attempt := SampledServerAttempt{
+		Index:              index,
+		Outcome:            outcome,
+		UpstreamResponseID: upstreamResponseID,
+		ServerMetrics:      cloneServerMetrics(metrics),
+	}
+	if metrics != nil {
+		attempt.StatusCode = cloneIntPointer(metrics.HTTPStatusCode)
+		attempt.ResponseRequestID = metrics.ResponseRequestID
+	}
+	if err != nil {
+		attempt.ErrorKind = classifySamplerError(err)
+		var statusErr *CompletionHTTPStatusError
+		if errors.As(err, &statusErr) {
+			status := statusErr.StatusCode
+			attempt.StatusCode = &status
+			attempt.ResponseRequestID = statusErr.RequestID()
+		}
+	}
+	return attempt
+}
+
+func cloneServerMetrics(metrics *ServerMetrics) *ServerMetrics {
+	if metrics == nil {
+		return nil
+	}
+	out := *metrics
+	out.NumConcurrentRequests = cloneIntPointer(metrics.NumConcurrentRequests)
+	out.CachedPromptTokens = cloneIntPointer(metrics.CachedPromptTokens)
+	out.PromptTokens = cloneIntPointer(metrics.PromptTokens)
+	out.HTTPStatusCode = cloneIntPointer(metrics.HTTPStatusCode)
+	out.RetryAttempt = cloneIntPointer(metrics.RetryAttempt)
+	out.PrefillQueueDuration = cloneFloatPointer(metrics.PrefillQueueDuration)
+	out.GenerationQueueDuration = cloneFloatPointer(metrics.GenerationQueueDuration)
+	out.ServerTTFT = cloneFloatPointer(metrics.ServerTTFT)
+	out.ServerProcessingTime = cloneFloatPointer(metrics.ServerProcessingTime)
+	out.TokenizerQueueDuration = cloneFloatPointer(metrics.TokenizerQueueDuration)
+	out.TokenizerDuration = cloneFloatPointer(metrics.TokenizerDuration)
+	out.PrefillDuration = cloneFloatPointer(metrics.PrefillDuration)
+	out.GenerationDuration = cloneFloatPointer(metrics.GenerationDuration)
+	out.ClientTTFT = cloneFloatPointer(metrics.ClientTTFT)
+	return &out
+}
+
+func cloneFloatPointer(value *float64) *float64 {
+	if value == nil {
+		return nil
+	}
+	out := *value
+	return &out
+}
+
+func classifySamplerError(err error) string {
+	if err == nil {
+		return ""
+	}
+	var statusErr *CompletionHTTPStatusError
+	if errors.As(err, &statusErr) {
+		if statusErr.StatusCode == http.StatusRequestTimeout || statusErr.StatusCode == http.StatusGatewayTimeout {
+			return "timeout"
+		}
+		return "http_status"
+	}
+	if samplerTimeoutLikeError(err) {
+		return "timeout"
+	}
+	var truncation *SSETruncationError
+	if errors.As(err, &truncation) {
+		return "sse_truncation"
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return "connection"
+	}
+	if errors.Is(err, context.Canceled) {
+		return "cancelled"
+	}
+	return fmt.Sprintf("%T", err)
 }
 
 var samplingContextKeys = []string{"session", "run", "checkpoint", "step", "group", "item"}
@@ -751,6 +958,12 @@ func (s *DeploymentSampler) samplingRequestError(err error, logicalRequestID str
 			result.FinalErrorKind = "http_status"
 		}
 		result.RequestID = statusErr.RequestID()
+		if isServerlessGatewayURL(s.InferenceURL) {
+			var body map[string]any
+			if json.Unmarshal(statusErr.Body, &body) == nil {
+				result.SourceError = ParseServerlessGatewaySourceError(body)
+			}
+		}
 	} else if samplerTimeoutLikeError(err) {
 		result.FinalErrorKind = "timeout"
 	} else {
@@ -762,6 +975,15 @@ func (s *DeploymentSampler) samplingRequestError(err error, logicalRequestID str
 		}
 	}
 	return result
+}
+
+func isServerlessGatewayURL(value string) bool {
+	parsed, err := url.Parse(value)
+	if err != nil {
+		return false
+	}
+	route := "/training/v1/serverless"
+	return parsed.Path == route || strings.HasPrefix(parsed.Path, route+"/")
 }
 
 func samplerTimeoutLikeError(err error) bool {
@@ -1113,6 +1335,9 @@ func (s *DeploymentSampler) StreamCompletions(ctx context.Context, prompt []int,
 	if len(opts.Stop) > 0 {
 		payload["stop"] = opts.Stop
 	}
+	if opts.PromptCacheKey != "" {
+		payload["prompt_cache_key"] = opts.PromptCacheKey
+	}
 	for key, value := range opts.Extra {
 		payload[key] = value
 	}
@@ -1140,7 +1365,11 @@ func (s *DeploymentSampler) StreamCompletions(ctx context.Context, prompt []int,
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("X-Api-Key", s.APIKey)
 		req.Header.Set("Authorization", "Bearer "+s.APIKey)
-		for key, value := range s.AdditionalHeaders {
+		additionalHeaders := s.AdditionalHeaders
+		if opts.AdditionalHeaders != nil {
+			additionalHeaders = opts.AdditionalHeaders
+		}
+		for key, value := range additionalHeaders {
 			req.Header.Set(key, value)
 		}
 		if opts.LogicalRequestID != "" {
@@ -1176,6 +1405,7 @@ func (s *DeploymentSampler) assembleStreamResponse(body []byte, headers http.Hea
 	var usageInfo any
 	var rawOutput map[string]any
 	var perfMetrics map[string]string
+	upstreamResponseID := ""
 	hasSeenDone := false
 	hasSeenFinishReason := false
 
@@ -1187,6 +1417,9 @@ func (s *DeploymentSampler) assembleStreamResponse(body []byte, headers http.Hea
 		var chunk map[string]any
 		if err := json.Unmarshal([]byte(event.Data), &chunk); err != nil {
 			continue
+		}
+		if upstreamResponseID == "" {
+			upstreamResponseID = stringFromAny(chunk["id"])
 		}
 		choices, _ := chunk["choices"].([]any)
 		for _, item := range choices {
@@ -1234,24 +1467,52 @@ func (s *DeploymentSampler) assembleStreamResponse(body []byte, headers http.Hea
 		choice["raw_output"] = rawOutput
 	}
 	result := map[string]any{"choices": []any{choice}}
+	if upstreamResponseID != "" {
+		result["id"] = upstreamResponseID
+	}
 	if usageInfo != nil {
 		result["usage"] = usageInfo
 	}
-	if perfMetrics != nil {
-		return result, ServerMetricsFromHeaders(perfMetrics), nil
+	metricValues := make(map[string]string, len(headers)+len(perfMetrics))
+	for key, value := range HTTPHeaderStringMap(headers) {
+		metricValues[strings.ToLower(key)] = value
 	}
-	return result, ServerMetricsFromHTTPHeaders(headers), nil
+	for key, value := range perfMetrics {
+		metricValues[strings.ToLower(key)] = value
+	}
+	metrics := ServerMetricsFromHeaders(metricValues)
+	status := http.StatusOK
+	metrics.HTTPStatusCode = &status
+	return result, metrics, nil
 }
 
 func ServerMetricsFromHeaders(headers map[string]string, clientTTFT ...float64) ServerMetrics {
+	normalized := make(map[string]string, len(headers))
+	for key, value := range headers {
+		normalized[strings.ToLower(key)] = value
+	}
+	value := func(key string) string {
+		if got := normalized[key]; got != "" {
+			return got
+		}
+		return normalized["fireworks-"+key]
+	}
 	metrics := ServerMetrics{
-		NumConcurrentRequests:   parseOptionalInt(headers["num-concurrent-requests"]),
-		PrefillQueueDuration:    parseOptionalFloat(headers["prefill-queue-duration"]),
-		GenerationQueueDuration: parseOptionalFloat(headers["generation-queue-duration"]),
-		ServerTTFT:              parseOptionalFloat(headers["server-time-to-first-token"]),
-		CachedPromptTokens:      parseOptionalInt(headers["cached-prompt-tokens"]),
-		PromptTokens:            parseOptionalInt(headers["prompt-tokens"]),
-		ServerProcessingTime:    parseOptionalFloat(headers["server-processing-time"]),
+		NumConcurrentRequests:   parseOptionalInt(value("num-concurrent-requests")),
+		PrefillQueueDuration:    parseOptionalFloat(value("prefill-queue-duration")),
+		GenerationQueueDuration: parseOptionalFloat(value("generation-queue-duration")),
+		ServerTTFT:              parseOptionalFloat(value("server-time-to-first-token")),
+		CachedPromptTokens:      parseOptionalInt(value("cached-prompt-tokens")),
+		PromptTokens:            parseOptionalInt(value("prompt-tokens")),
+		ServerProcessingTime:    parseOptionalFloat(value("server-processing-time")),
+		TokenizerQueueDuration:  parseOptionalFloat(value("tokenizer-queue-duration")),
+		TokenizerDuration:       parseOptionalFloat(value("tokenizer-duration")),
+		PrefillDuration:         parseOptionalFloat(value("prefill-duration")),
+		GenerationDuration:      parseOptionalFloat(value("generation-duration")),
+		ResponseRequestID:       value("x-request-id"),
+		BackendHost:             value("backend-host"),
+		Deployment:              value("deployment"),
+		PodTemplateHash:         value("pod-template-hash"),
 	}
 	if len(clientTTFT) > 0 {
 		metrics.ClientTTFT = &clientTTFT[0]
@@ -1260,16 +1521,15 @@ func ServerMetricsFromHeaders(headers map[string]string, clientTTFT ...float64) 
 }
 
 func ServerMetricsFromHTTPHeaders(headers http.Header, clientTTFT ...float64) ServerMetrics {
-	values := map[string]string{
-		"num-concurrent-requests":    headers.Get("num-concurrent-requests"),
-		"prefill-queue-duration":     headers.Get("prefill-queue-duration"),
-		"generation-queue-duration":  headers.Get("generation-queue-duration"),
-		"server-time-to-first-token": headers.Get("server-time-to-first-token"),
-		"cached-prompt-tokens":       headers.Get("cached-prompt-tokens"),
-		"prompt-tokens":              headers.Get("prompt-tokens"),
-		"server-processing-time":     headers.Get("server-processing-time"),
+	return ServerMetricsFromHeaders(HTTPHeaderStringMap(headers), clientTTFT...)
+}
+
+func HTTPHeaderStringMap(headers http.Header) map[string]string {
+	values := make(map[string]string, len(headers))
+	for key := range headers {
+		values[key] = headers.Get(key)
 	}
-	return ServerMetricsFromHeaders(values, clientTTFT...)
+	return values
 }
 
 func sampleOptions(opts ...SampleOptions) SampleOptions {
@@ -1296,6 +1556,10 @@ func sampleOptions(opts ...SampleOptions) SampleOptions {
 		opt.Stop = provided.Stop
 		opt.Extra = cloneAnyMap(provided.Extra)
 		opt.TimeoutDiagnosticContext = provided.TimeoutDiagnosticContext
+		opt.SamplingContext = cloneAnyMap(provided.SamplingContext)
+		opt.PromptCacheKey = provided.PromptCacheKey
+		opt.AdditionalHeaders = cloneStringMap(provided.AdditionalHeaders)
+		opt.LogicalRequestID = provided.LogicalRequestID
 	}
 	return opt
 }
@@ -1537,6 +1801,7 @@ type AdaptiveConcurrencyOptions struct {
 	MultiplicativeDecrease float64
 	EMAAlpha               float64
 	AdjustmentInterval     *int
+	ShrinkCooldown         *time.Duration
 }
 
 type AdaptiveConcurrencyController struct {
@@ -1552,17 +1817,30 @@ type AdaptiveConcurrencyController struct {
 	intervalRequests       int
 	emaPrefillQueue        *float64
 	sem                    chan struct{}
+	shrinkCooldown         time.Duration
+	lastShrinkAt           time.Time
+	pendingDecrease        int
+	inFlight               int
 
-	completedRequests int
-	stepPrefillQueues []float64
-	stepMetricsCount  int
-	stepCacheHits     int
-	stepCacheTotal    int
+	completedRequests       int
+	stepPrefillQueues       []float64
+	stepMetricsCount        int
+	stepCacheHits           int
+	stepCacheTotal          int
+	intervalStatusResponses int
+	intervalCongested       int
+	stepStatusResponses     int
+	stepCongested           int
+	stepCongestionEvents    int
+	stepRetryExhaustions    int
+	stepWindowSum           float64
+	stepWindowSamples       int
+	stepMaxInFlight         int
 }
 
 func NewAdaptiveConcurrencyController(opts ...AdaptiveConcurrencyOptions) *AdaptiveConcurrencyController {
 	opt := AdaptiveConcurrencyOptions{
-		InitialWindow:          16,
+		InitialWindow:          8,
 		MinWindow:              1,
 		MaxWindow:              256,
 		PrefillQueueTarget:     0.5,
@@ -1571,7 +1849,9 @@ func NewAdaptiveConcurrencyController(opts ...AdaptiveConcurrencyOptions) *Adapt
 		EMAAlpha:               0.3,
 	}
 	defaultAdjustmentInterval := 32
+	defaultShrinkCooldown := time.Second
 	opt.AdjustmentInterval = &defaultAdjustmentInterval
+	opt.ShrinkCooldown = &defaultShrinkCooldown
 	if len(opts) > 0 {
 		provided := opts[0]
 		if provided.InitialWindow != 0 {
@@ -1598,6 +1878,9 @@ func NewAdaptiveConcurrencyController(opts ...AdaptiveConcurrencyOptions) *Adapt
 		if provided.AdjustmentInterval != nil {
 			opt.AdjustmentInterval = provided.AdjustmentInterval
 		}
+		if provided.ShrinkCooldown != nil {
+			opt.ShrinkCooldown = provided.ShrinkCooldown
+		}
 	}
 	if *opt.AdjustmentInterval < 0 {
 		zero := 0
@@ -1623,6 +1906,7 @@ func NewAdaptiveConcurrencyController(opts ...AdaptiveConcurrencyOptions) *Adapt
 		emaAlpha:               opt.EMAAlpha,
 		adjustmentInterval:     *opt.AdjustmentInterval,
 		sem:                    sem,
+		shrinkCooldown:         *opt.ShrinkCooldown,
 	}
 }
 
@@ -1648,6 +1932,12 @@ func (c *AdaptiveConcurrencyController) Acquire(ctx context.Context) error {
 	}
 	select {
 	case <-c.sem:
+		c.mu.Lock()
+		c.inFlight++
+		if c.inFlight > c.stepMaxInFlight {
+			c.stepMaxInFlight = c.inFlight
+		}
+		c.mu.Unlock()
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
@@ -1655,17 +1945,41 @@ func (c *AdaptiveConcurrencyController) Acquire(ctx context.Context) error {
 }
 
 func (c *AdaptiveConcurrencyController) Release(metrics *ServerMetrics) {
-	select {
-	case c.sem <- struct{}{}:
-	default:
-	}
-
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.inFlight > 0 {
+		c.inFlight--
+	}
 	c.completedRequests++
+	c.stepWindowSum += float64(c.windowSizeLocked())
+	c.stepWindowSamples++
 	if metrics != nil {
 		if metrics.PrefillQueueDuration != nil {
 			c.stepPrefillQueues = append(c.stepPrefillQueues, *metrics.PrefillQueueDuration)
+		} else if metrics.HTTPStatusCode != nil || metrics.TransportError {
+			status := 0
+			if metrics.HTTPStatusCode != nil {
+				status = *metrics.HTTPStatusCode
+			}
+			congested := metrics.TransportError || status == http.StatusTooManyRequests || status == http.StatusServiceUnavailable
+			if congested || (status >= 200 && status < 300) {
+				c.intervalStatusResponses++
+				c.stepStatusResponses++
+			}
+			if congested {
+				c.intervalCongested++
+				c.stepCongested++
+				now := time.Now()
+				if c.lastShrinkAt.IsZero() || now.Sub(c.lastShrinkAt) >= c.shrinkCooldown {
+					factor := c.multiplicativeDecrease
+					if metrics.RetryAttempt != nil && *metrics.RetryAttempt >= 3 {
+						factor *= c.multiplicativeDecrease
+					}
+					c.resizeWindowLocked(c.window * factor)
+					c.lastShrinkAt = now
+					c.stepCongestionEvents++
+				}
+			}
 		}
 		c.stepMetricsCount++
 		if metrics.CachedPromptTokens != nil {
@@ -1680,10 +1994,37 @@ func (c *AdaptiveConcurrencyController) Release(metrics *ServerMetrics) {
 		if c.intervalRequests >= c.adjustmentInterval {
 			if len(c.stepPrefillQueues) > 0 {
 				c.updateWindowLocked(averageFloat64(c.stepPrefillQueues))
+			} else if c.intervalStatusResponses > 0 && c.intervalCongested == 0 {
+				c.resizeWindowLocked(c.window + c.additiveIncrease)
 			}
 			c.stepPrefillQueues = nil
+			c.intervalStatusResponses = 0
+			c.intervalCongested = 0
 			c.intervalRequests = 0
 		}
+	}
+	if c.pendingDecrease > 0 {
+		c.pendingDecrease--
+	} else {
+		select {
+		case c.sem <- struct{}{}:
+		default:
+		}
+	}
+}
+
+func (c *AdaptiveConcurrencyController) NoteRetryExhausted(metrics *ServerMetrics) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if metrics == nil || metrics.PrefillQueueDuration != nil {
+		return
+	}
+	status := 0
+	if metrics.HTTPStatusCode != nil {
+		status = *metrics.HTTPStatusCode
+	}
+	if metrics.TransportError || status == http.StatusTooManyRequests || status == http.StatusServiceUnavailable {
+		c.stepRetryExhaustions++
 	}
 }
 
@@ -1700,7 +2041,28 @@ func (c *AdaptiveConcurrencyController) StepCompleted() map[string]float64 {
 		summary["avg_pq"] = avgPQ
 		c.updateWindowLocked(avgPQ)
 		summary["window_after"] = float64(c.windowSizeLocked())
+	} else if c.intervalStatusResponses > 0 && c.intervalCongested == 0 {
+		c.resizeWindowLocked(c.window + c.additiveIncrease)
+		summary["window_after"] = float64(c.windowSizeLocked())
 	}
+	if c.stepStatusResponses > 0 {
+		summary["status_responses"] = float64(c.stepStatusResponses)
+		summary["congestion_responses"] = float64(c.stepCongested)
+		summary["congestion_rate"] = float64(c.stepCongested) / float64(c.stepStatusResponses)
+	}
+	if c.stepCongestionEvents > 0 {
+		summary["congestion_events"] = float64(c.stepCongestionEvents)
+	}
+	if c.stepRetryExhaustions > 0 {
+		summary["retry_exhaustions"] = float64(c.stepRetryExhaustions)
+	}
+	if c.pendingDecrease > 0 {
+		summary["pending_decrease"] = float64(c.pendingDecrease)
+	}
+	if c.stepWindowSamples > 0 {
+		summary["avg_window"] = c.stepWindowSum / float64(c.stepWindowSamples)
+	}
+	summary["max_in_flight"] = float64(c.stepMaxInFlight)
 	if c.stepCacheTotal > 0 {
 		summary["cache_hit_rate"] = float64(c.stepCacheHits) / float64(c.stepCacheTotal)
 	}
@@ -1713,11 +2075,19 @@ func (c *AdaptiveConcurrencyController) StepCompleted() map[string]float64 {
 	c.stepMetricsCount = 0
 	c.stepCacheHits = 0
 	c.stepCacheTotal = 0
+	c.intervalStatusResponses = 0
+	c.intervalCongested = 0
+	c.stepStatusResponses = 0
+	c.stepCongested = 0
+	c.stepCongestionEvents = 0
+	c.stepRetryExhaustions = 0
+	c.stepWindowSum = 0
+	c.stepWindowSamples = 0
+	c.stepMaxInFlight = 0
 	return summary
 }
 
 func (c *AdaptiveConcurrencyController) updateWindowLocked(avgPrefillQueue float64) {
-	oldWindow := c.windowSizeLocked()
 	if c.emaPrefillQueue == nil {
 		value := avgPrefillQueue
 		c.emaPrefillQueue = &value
@@ -1726,45 +2096,51 @@ func (c *AdaptiveConcurrencyController) updateWindowLocked(avgPrefillQueue float
 		c.emaPrefillQueue = &value
 	}
 
+	proposed := c.window
 	if *c.emaPrefillQueue > c.prefillQueueTarget {
-		c.window *= c.multiplicativeDecrease
+		proposed *= c.multiplicativeDecrease
 	} else {
 		headroom := c.prefillQueueTarget / maxFloat64(*c.emaPrefillQueue, 0.001)
 		increase := c.additiveIncrease * minFloat64(headroom, 4.0)
-		c.window += increase
+		proposed += increase
 	}
-	c.window = maxFloat64(float64(c.minWindow), minFloat64(float64(c.maxWindow), c.window))
+	c.resizeWindowLocked(proposed)
+}
+
+func (c *AdaptiveConcurrencyController) resizeWindowLocked(proposed float64) {
+	oldWindow := c.windowSizeLocked()
+	c.window = maxFloat64(float64(c.minWindow), minFloat64(float64(c.maxWindow), proposed))
 	newWindow := c.windowSizeLocked()
-	if actual := c.resizeSemaphoreLocked(oldWindow, newWindow); actual != newWindow {
-		c.window = float64(actual)
-	}
+	c.resizeSemaphoreLocked(oldWindow, newWindow)
 }
 
 func (c *AdaptiveConcurrencyController) windowSizeLocked() int {
 	return maxInt(c.minWindow, minInt(c.maxWindow, int(c.window)))
 }
 
-func (c *AdaptiveConcurrencyController) resizeSemaphoreLocked(oldSize, newSize int) int {
+func (c *AdaptiveConcurrencyController) resizeSemaphoreLocked(oldSize, newSize int) {
 	delta := newSize - oldSize
 	if delta > 0 {
+		if c.pendingDecrease > 0 {
+			paid := minInt(delta, c.pendingDecrease)
+			c.pendingDecrease -= paid
+			delta -= paid
+		}
 		for i := 0; i < delta; i++ {
 			select {
 			case c.sem <- struct{}{}:
 			default:
 			}
 		}
-		return newSize
+		return
 	}
-	actual := oldSize
 	for i := 0; i < -delta; i++ {
 		select {
 		case <-c.sem:
-			actual--
 		default:
-			return actual
+			c.pendingDecrease++
 		}
 	}
-	return actual
 }
 
 func parseOptionalInt(raw string) *int {

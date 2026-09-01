@@ -26,10 +26,19 @@ const GradientAccumulationStepsOneWarning = "TrainerJobConfig.gradient_accumulat
 const displayNameLengthLimit = 64
 const autoTrainerJobIDPrefix = "training-api-service"
 const maxInactivityTimeout = 3 * time.Hour
+const trainerStoppedSettle = 30 * time.Second
 
 var trainerTombstoneStates = map[string]bool{
 	"JOB_STATE_DELETED":  true,
 	"JOB_STATE_ARCHIVED": true,
+}
+
+var trainerStoppedStates = map[string]bool{
+	"JOB_STATE_CANCELLING":    true,
+	"JOB_STATE_CANCELLED":     true,
+	"JOB_STATE_COMPLETED":     true,
+	"JOB_STATE_EARLY_STOPPED": true,
+	"JOB_STATE_DELETING":      true,
 }
 
 type TrainerServiceEndpoint struct {
@@ -82,6 +91,7 @@ type TrainerJobConfig struct {
 	Purpose                   string
 	Preemptible               bool
 	UseReservation            *bool
+	ReservationTarget         string
 	ManagedBy                 string
 	RequestedJobID            string
 }
@@ -456,6 +466,17 @@ func (m *TrainerJobManager) PollUntilReady(ctx context.Context, jobID, jobName s
 		if trainerTombstoneStates[state] {
 			return TrainerServiceEndpoint{}, TrainerTombstoneError(jobID, job)
 		}
+		if trainerStoppedStates[state] && now.Sub(start) >= trainerStoppedSettle {
+			if statusMessage == "" {
+				statusMessage = "The control plane reported no status detail for the stopped job."
+			}
+			return TrainerServiceEndpoint{}, fmt.Errorf("%s", FormatSDKError(
+				"Trainer job "+jobID+" stopped in "+state+" before it became ready",
+				statusMessage,
+				"The job was cancelled, completed, or deleted while the SDK waited for readiness—usually an explicit cancel/delete, parent workflow cleanup, or inactivity auto-stop. Check the job status and audit history, then resume it or create a new trainer job.\n  Console: "+ConsoleURL,
+				SDKErrorFormatOptions{DocsURL: DocsSDK},
+			))
+		}
 		if state == "JOB_STATE_FAILED" {
 			if statusMessage == "" {
 				statusMessage = "unknown"
@@ -470,12 +491,6 @@ func (m *TrainerJobManager) PollUntilReady(ctx context.Context, jobID, jobName s
 		if state == "JOB_STATE_RUNNING" {
 			readyURL := baseURL
 			ready := opt.HealthCheck(ctx, readyURL)
-			if !ready {
-				if directURL := ExtractDirectRouteHandle(job); directURL != "" && opt.HealthCheck(ctx, directURL) {
-					readyURL = directURL
-					ready = true
-				}
-			}
 			if ready {
 				m.BootTime = now.Sub(start)
 				return TrainerServiceEndpoint{JobName: jobName, JobID: jobID, BaseURL: readyURL, MaxContextLength: ExtractJobMaxContextLength(job)}, nil
@@ -743,6 +758,10 @@ func BuildTrainerCreatePayload(config TrainerJobConfig) map[string]any {
 	}
 	if config.UseReservation != nil {
 		payload["useReservation"] = *config.UseReservation
+	}
+	if config.ReservationTarget != "" {
+		payload["useReservation"] = false
+		payload["reservationTarget"] = config.ReservationTarget
 	}
 	if config.TrainerReplicaCount != nil {
 		payload["trainerReplicaCount"] = *config.TrainerReplicaCount
