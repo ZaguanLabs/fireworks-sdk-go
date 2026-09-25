@@ -36,8 +36,8 @@ func TestVersionMatchesPythonSDK(t *testing.T) {
 	if Title != "fireworks" {
 		t.Fatalf("Title = %q, want %q", Title, "fireworks")
 	}
-	if Version != "1.2.11" {
-		t.Fatalf("Version = %q, want %q", Version, "1.2.11")
+	if Version != "1.2.15" {
+		t.Fatalf("Version = %q, want %q", Version, "1.2.15")
 	}
 }
 
@@ -7090,7 +7090,7 @@ func TestDatasetsTypedAllParamsUsePythonAliases(t *testing.T) {
 			if _, ok := body["account_id"]; ok {
 				t.Errorf("create body should not contain account_id: %#v", body)
 			}
-			if body["datasetId"] != "dataset-1" || body["filter"] != "format=CHAT" || body["sourceDatasetId"] != "source-dataset-1" {
+			if body["datasetId"] != "dataset-1" || body["filter"] != nil || body["sourceDatasetId"] != "source-dataset-1" {
 				t.Errorf("create body aliases = %#v", body)
 			}
 			for _, key := range []string{"dataset_id", "source_dataset_id"} {
@@ -7230,7 +7230,6 @@ func TestDatasetsTypedAllParamsUsePythonAliases(t *testing.T) {
 	created, err := client.Datasets.CreateTyped(context.Background(), fwtypes.DatasetCreateParams{
 		AccountID:       "acct",
 		DatasetID:       "dataset-1",
-		Filter:          "format=CHAT",
 		SourceDatasetID: "source-dataset-1",
 		Dataset: fwtypes.DatasetParam{
 			DisplayName:      "Dataset One",
@@ -7243,7 +7242,6 @@ func TestDatasetsTypedAllParamsUsePythonAliases(t *testing.T) {
 			Splitted:         fwtypes.SplittedParam{SourceDatasetID: "source-dataset-1"},
 			Transformed: fwtypes.TransformedParam{
 				SourceDatasetID: "source-dataset-1",
-				Filter:          "format=CHAT",
 				OriginalFormat:  "COMPLETION",
 			},
 			UserUploaded: JSON{},
@@ -7268,7 +7266,6 @@ func TestDatasetsTypedAllParamsUsePythonAliases(t *testing.T) {
 		Splitted:         fwtypes.SplittedParam{SourceDatasetID: "source-dataset-1"},
 		Transformed: fwtypes.TransformedParam{
 			SourceDatasetID: "source-dataset-1",
-			Filter:          "format=CHAT",
 			OriginalFormat:  "COMPLETION",
 		},
 		UserUploaded: JSON{},
@@ -7467,7 +7464,7 @@ func assertDatasetPayloadUsesAliases(t *testing.T, payload map[string]any) {
 	if !ok {
 		t.Fatalf("transformed = %#v", payload["transformed"])
 	}
-	if transformed["sourceDatasetId"] != "source-dataset-1" || transformed["filter"] != "format=CHAT" || transformed["originalFormat"] != "COMPLETION" {
+	if transformed["sourceDatasetId"] != "source-dataset-1" || transformed["filter"] != nil || transformed["originalFormat"] != "COMPLETION" {
 		t.Errorf("transformed = %#v", transformed)
 	}
 	for _, key := range []string{"source_dataset_id", "original_format"} {

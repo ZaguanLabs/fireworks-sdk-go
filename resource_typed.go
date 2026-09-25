@@ -246,6 +246,7 @@ func (r *DeploymentsResource) CreateTyped(ctx context.Context, body any, opts ..
 		"disable_speculative_decoding",
 		"skip_image_tag_validation",
 		"skip_shape_validation",
+		"accept_shapeless_risk",
 		"validate_only",
 	}, opts...)
 }
@@ -714,4 +715,15 @@ func managementBodyAlias(key string) string {
 		parts[i] = strings.ToUpper(parts[i][:1]) + parts[i][1:]
 	}
 	return strings.Join(parts, "")
+}
+
+func (r *DeploymentShapeVersionsResource) MatchTyped(ctx context.Context, body any, opts ...RequestOption) (*fwtypes.DeploymentShapeVersionMatchResponse, error) {
+	return typedPostInAccount[fwtypes.DeploymentShapeVersionMatchResponse](ctx, r.client, "/deploymentShapeVersions:match", body, opts...)
+}
+func (r *DeploymentShapeVersionsResource) MatchForModelTyped(ctx context.Context, model string, enableAddons bool, opts ...RequestOption) (*fwtypes.DeploymentShapeVersionMatchResponse, error) {
+	account, err := r.client.resolveAccountID(applyRequestOptions(opts))
+	if err != nil {
+		return nil, err
+	}
+	return r.MatchTyped(ctx, map[string]any{"create_deployment_request": map[string]any{"parent": "accounts/" + account, "deployment": map[string]any{"base_model": model, "enable_addons": enableAddons}}}, opts...)
 }

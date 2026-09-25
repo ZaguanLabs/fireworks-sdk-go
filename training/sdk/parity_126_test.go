@@ -63,7 +63,7 @@ func TestFireworksClientModelIsMoE(t *testing.T) {
 func TestReattachTrainerTransitionOnlyPatch(t *testing.T) {
 	mgr := NewDeploymentManager("key", "https://api.example.com")
 	now := time.Unix(0, 0)
-	identities := []string{"old", "new"}
+	reads := 0
 	var body map[string]any
 	var mask any
 	_, err := mgr.ReattachTrainer(context.Background(), DeploymentInfo{
@@ -76,10 +76,13 @@ func TestReattachTrainerTransitionOnlyPatch(t *testing.T) {
 		PollInterval:          time.Millisecond,
 		Now:                   func() time.Time { return now },
 		Sleep:                 func(d time.Duration) { now = now.Add(d) },
-		ReadReplicaIdentity: func(context.Context, string, string) (string, error) {
-			value := identities[0]
-			identities = identities[1:]
-			return value, nil
+		GetInfo: func(context.Context, string) (DeploymentInfo, bool, error) {
+			reads++
+			transition := HotLoadTransitionTypeAsync
+			if reads > 1 {
+				transition = HotLoadTransitionTypeSync
+			}
+			return DeploymentInfo{DeploymentID: "dep", State: "READY", HotLoadTrainerJob: "job", HotLoadTransitionType: transition}, true, nil
 		},
 		Update: func(_ context.Context, _ string, gotBody map[string]any, gotMask any) (DeploymentInfo, error) {
 			body, mask = gotBody, gotMask

@@ -767,7 +767,6 @@ type DatasetCreateParams struct {
 	AccountID       string       `json:"account_id,omitempty"`
 	Dataset         DatasetParam `json:"dataset"`
 	DatasetID       string       `json:"datasetId"`
-	Filter          string       `json:"filter,omitempty"`
 	SourceDatasetID string       `json:"sourceDatasetId,omitempty"`
 }
 
@@ -929,6 +928,7 @@ type DeploymentCreateParams struct {
 	DisableSpeculativeDecoding      any                    `json:"disableSpeculativeDecoding,omitempty"`
 	SkipImageTagValidation          any                    `json:"skipImageTagValidation,omitempty"`
 	SkipShapeValidation             any                    `json:"skipShapeValidation,omitempty"`
+	AcceptShapelessRisk             any                    `json:"acceptShapelessRisk,omitempty"`
 	ValidateOnly                    any                    `json:"validateOnly,omitempty"`
 	AcceleratorCount                any                    `json:"acceleratorCount,omitempty"`
 	AcceleratorType                 string                 `json:"acceleratorType,omitempty"`
@@ -1061,6 +1061,31 @@ type DeploymentShapeVersionListParams struct {
 	ReadMask  string `json:"readMask,omitempty"`
 }
 
+// DeploymentShapeVersionMatchParamsDeployment mirrors fireworks.types.deployment_shape_version_match_params.Deployment.
+type DeploymentShapeVersionMatchParamsDeployment struct {
+	BaseModel    string `json:"baseModel"`
+	EnableAddons any    `json:"enableAddons,omitempty"`
+}
+
+// DeploymentShapeVersionMatchParamsCreateDeploymentRequest mirrors fireworks.types.deployment_shape_version_match_params.CreateDeploymentRequest.
+type DeploymentShapeVersionMatchParamsCreateDeploymentRequest struct {
+	Parent     string                                      `json:"parent"`
+	Deployment DeploymentShapeVersionMatchParamsDeployment `json:"deployment"`
+}
+
+// DeploymentShapeVersionMatchParams mirrors fireworks.types.deployment_shape_version_match_params.DeploymentShapeVersionMatchParams.
+type DeploymentShapeVersionMatchParams struct {
+	AccountID               string                                                   `json:"account_id,omitempty"`
+	CreateDeploymentRequest DeploymentShapeVersionMatchParamsCreateDeploymentRequest `json:"createDeploymentRequest"`
+}
+
+// DeploymentShapeVersionMatchResponse mirrors fireworks.types.deployment_shape_version_match_response.DeploymentShapeVersionMatchResponse.
+type DeploymentShapeVersionMatchResponse struct {
+	DeploymentShapeVersions []DeploymentShapeVersion `json:"deploymentShapeVersions,omitempty"`
+	NextPageToken           *string                  `json:"nextPageToken,omitempty"`
+	TotalSize               *int                     `json:"totalSize,omitempty"`
+}
+
 // DeploymentUndeleteParams mirrors fireworks.types.deployment_undelete_params.DeploymentUndeleteParams.
 type DeploymentUndeleteParams struct {
 	AccountID string `json:"account_id,omitempty"`
@@ -1149,8 +1174,8 @@ type DPOJobCreateParamsDpoJobCreateParams struct {
 	DisplayName               string                                      `json:"displayName,omitempty"`
 	LossConfig                SharedParamsReinforcementLearningLossConfig `json:"lossConfig,omitempty"`
 	RendererHuggingFaceRepoID string                                      `json:"rendererHuggingFaceRepoId,omitempty"`
-	TrainingConfig            SharedParamsTrainingConfig                  `json:"trainingConfig,omitempty"`
 	ReservationTarget         string                                      `json:"reservationTarget,omitempty"`
+	TrainingConfig            SharedParamsTrainingConfig                  `json:"trainingConfig,omitempty"`
 	UseReservation            any                                         `json:"useReservation,omitempty"`
 	WandbConfig               SharedParamsWandbConfig                     `json:"wandbConfig,omitempty"`
 }
@@ -2722,20 +2747,21 @@ type SharedStatus struct {
 
 // SharedTrainingConfig mirrors fireworks.types.shared.training_config.TrainingConfig.
 type SharedTrainingConfig struct {
-	BaseModel                 *string  `json:"baseModel,omitempty"`
-	BatchSize                 *int     `json:"batchSize,omitempty"`
-	BatchSizeSamples          *int     `json:"batchSizeSamples,omitempty"`
-	Epochs                    *int     `json:"epochs,omitempty"`
-	GradientAccumulationSteps *int     `json:"gradientAccumulationSteps,omitempty"`
-	JinjaTemplate             *string  `json:"jinjaTemplate,omitempty"`
-	LearningRate              *float64 `json:"learningRate,omitempty"`
-	LearningRateWarmupSteps   *int     `json:"learningRateWarmupSteps,omitempty"`
-	LoraRank                  *int     `json:"loraRank,omitempty"`
-	MaxContextLength          *int     `json:"maxContextLength,omitempty"`
-	OptimizerWeightDecay      *float64 `json:"optimizerWeightDecay,omitempty"`
-	OutputModel               *string  `json:"outputModel,omitempty"`
-	Region                    *string  `json:"region,omitempty"`
-	WarmStartFrom             *string  `json:"warmStartFrom,omitempty"`
+	BaseModel                          *string  `json:"baseModel,omitempty"`
+	BatchSize                          *int     `json:"batchSize,omitempty"`
+	BatchSizeSamples                   *int     `json:"batchSizeSamples,omitempty"`
+	SamplerCheckpointSaveIntervalSteps *int     `json:"samplerCheckpointSaveIntervalSteps,omitempty"`
+	Epochs                             *int     `json:"epochs,omitempty"`
+	GradientAccumulationSteps          *int     `json:"gradientAccumulationSteps,omitempty"`
+	JinjaTemplate                      *string  `json:"jinjaTemplate,omitempty"`
+	LearningRate                       *float64 `json:"learningRate,omitempty"`
+	LearningRateWarmupSteps            *int     `json:"learningRateWarmupSteps,omitempty"`
+	LoraRank                           *int     `json:"loraRank,omitempty"`
+	MaxContextLength                   *int     `json:"maxContextLength,omitempty"`
+	OptimizerWeightDecay               *float64 `json:"optimizerWeightDecay,omitempty"`
+	OutputModel                        *string  `json:"outputModel,omitempty"`
+	Region                             *string  `json:"region,omitempty"`
+	WarmStartFrom                      *string  `json:"warmStartFrom,omitempty"`
 }
 
 // SharedUsageInfo mirrors fireworks.types.shared.usage_info.UsageInfo.
@@ -2840,20 +2866,21 @@ type SharedParamsStatus struct {
 
 // SharedParamsTrainingConfig mirrors fireworks.types.shared_params.training_config.TrainingConfig.
 type SharedParamsTrainingConfig struct {
-	BaseModel                 string `json:"baseModel,omitempty"`
-	BatchSize                 any    `json:"batchSize,omitempty"`
-	BatchSizeSamples          any    `json:"batchSizeSamples,omitempty"`
-	Epochs                    any    `json:"epochs,omitempty"`
-	GradientAccumulationSteps any    `json:"gradientAccumulationSteps,omitempty"`
-	JinjaTemplate             string `json:"jinjaTemplate,omitempty"`
-	LearningRate              any    `json:"learningRate,omitempty"`
-	LearningRateWarmupSteps   any    `json:"learningRateWarmupSteps,omitempty"`
-	LoraRank                  any    `json:"loraRank,omitempty"`
-	MaxContextLength          any    `json:"maxContextLength,omitempty"`
-	OptimizerWeightDecay      any    `json:"optimizerWeightDecay,omitempty"`
-	OutputModel               string `json:"outputModel,omitempty"`
-	Region                    string `json:"region,omitempty"`
-	WarmStartFrom             string `json:"warmStartFrom,omitempty"`
+	BaseModel                          string `json:"baseModel,omitempty"`
+	BatchSize                          any    `json:"batchSize,omitempty"`
+	BatchSizeSamples                   any    `json:"batchSizeSamples,omitempty"`
+	SamplerCheckpointSaveIntervalSteps any    `json:"samplerCheckpointSaveIntervalSteps,omitempty"`
+	Epochs                             any    `json:"epochs,omitempty"`
+	GradientAccumulationSteps          any    `json:"gradientAccumulationSteps,omitempty"`
+	JinjaTemplate                      string `json:"jinjaTemplate,omitempty"`
+	LearningRate                       any    `json:"learningRate,omitempty"`
+	LearningRateWarmupSteps            any    `json:"learningRateWarmupSteps,omitempty"`
+	LoraRank                           any    `json:"loraRank,omitempty"`
+	MaxContextLength                   any    `json:"maxContextLength,omitempty"`
+	OptimizerWeightDecay               any    `json:"optimizerWeightDecay,omitempty"`
+	OutputModel                        string `json:"outputModel,omitempty"`
+	Region                             string `json:"region,omitempty"`
+	WarmStartFrom                      string `json:"warmStartFrom,omitempty"`
 }
 
 // SharedParamsWandbConfig mirrors fireworks.types.shared_params.wandb_config.WandbConfig.
@@ -2911,86 +2938,88 @@ type SupervisedFineTuningJobJobProgress struct {
 
 // SupervisedFineTuningJob mirrors fireworks.types.supervised_fine_tuning_job.SupervisedFineTuningJob.
 type SupervisedFineTuningJob struct {
-	Dataset                   string                                         `json:"dataset"`
-	AwsS3Config               *SupervisedFineTuningJobAwsS3Config            `json:"awsS3Config,omitempty"`
-	AzureBlobStorageConfig    *SupervisedFineTuningJobAzureBlobStorageConfig `json:"azureBlobStorageConfig,omitempty"`
-	BaseModel                 *string                                        `json:"baseModel,omitempty"`
-	BatchSize                 *int                                           `json:"batchSize,omitempty"`
-	BatchSizeSamples          *int                                           `json:"batchSizeSamples,omitempty"`
-	CompletedTime             *time.Time                                     `json:"completedTime,omitempty"`
-	CreatedBy                 *string                                        `json:"createdBy,omitempty"`
-	CreateTime                *time.Time                                     `json:"createTime,omitempty"`
-	DisplayName               *string                                        `json:"displayName,omitempty"`
-	EarlyStop                 *bool                                          `json:"earlyStop,omitempty"`
-	Epochs                    *int                                           `json:"epochs,omitempty"`
-	EstimatedCost             *SupervisedFineTuningJobEstimatedCost          `json:"estimatedCost,omitempty"`
-	EvalAutoCarveout          *bool                                          `json:"evalAutoCarveout,omitempty"`
-	EvaluationDataset         *string                                        `json:"evaluationDataset,omitempty"`
-	GradientAccumulationSteps *int                                           `json:"gradientAccumulationSteps,omitempty"`
-	IsTurbo                   *bool                                          `json:"isTurbo,omitempty"`
-	JinjaTemplate             *string                                        `json:"jinjaTemplate,omitempty"`
-	JobProgress               *SupervisedFineTuningJobJobProgress            `json:"jobProgress,omitempty"`
-	LearningRate              *float64                                       `json:"learningRate,omitempty"`
-	LearningRateWarmupSteps   *int                                           `json:"learningRateWarmupSteps,omitempty"`
-	LoraRank                  *int                                           `json:"loraRank,omitempty"`
-	MaxContextLength          *int                                           `json:"maxContextLength,omitempty"`
-	MetricsFileSignedURL      *string                                        `json:"metricsFileSignedUrl,omitempty"`
-	MtpEnabled                *bool                                          `json:"mtpEnabled,omitempty"`
-	MtpFreezeBaseModel        *bool                                          `json:"mtpFreezeBaseModel,omitempty"`
-	MtpNumDraftTokens         *int                                           `json:"mtpNumDraftTokens,omitempty"`
-	Name                      *string                                        `json:"name,omitempty"`
-	Nodes                     *int                                           `json:"nodes,omitempty"`
-	OptimizerWeightDecay      *float64                                       `json:"optimizerWeightDecay,omitempty"`
-	OutputModel               *string                                        `json:"outputModel,omitempty"`
-	Region                    *string                                        `json:"region,omitempty"`
-	RendererHuggingFaceRepoID *string                                        `json:"rendererHuggingFaceRepoId,omitempty"`
-	State                     *string                                        `json:"state,omitempty"`
-	Status                    *SharedStatus                                  `json:"status,omitempty"`
-	TrainerLogsSignedURL      *string                                        `json:"trainerLogsSignedUrl,omitempty"`
-	UpdateTime                *time.Time                                     `json:"updateTime,omitempty"`
-	UsePurpose                *string                                        `json:"usePurpose,omitempty"`
-	ReservationTarget         *string                                        `json:"reservationTarget,omitempty"`
-	UseReservation            *bool                                          `json:"useReservation,omitempty"`
-	WandbConfig               *SharedWandbConfig                             `json:"wandbConfig,omitempty"`
-	WarmStartFrom             *string                                        `json:"warmStartFrom,omitempty"`
+	Dataset                            string                                         `json:"dataset"`
+	AwsS3Config                        *SupervisedFineTuningJobAwsS3Config            `json:"awsS3Config,omitempty"`
+	AzureBlobStorageConfig             *SupervisedFineTuningJobAzureBlobStorageConfig `json:"azureBlobStorageConfig,omitempty"`
+	BaseModel                          *string                                        `json:"baseModel,omitempty"`
+	BatchSize                          *int                                           `json:"batchSize,omitempty"`
+	BatchSizeSamples                   *int                                           `json:"batchSizeSamples,omitempty"`
+	SamplerCheckpointSaveIntervalSteps *int                                           `json:"samplerCheckpointSaveIntervalSteps,omitempty"`
+	CompletedTime                      *time.Time                                     `json:"completedTime,omitempty"`
+	CreatedBy                          *string                                        `json:"createdBy,omitempty"`
+	CreateTime                         *time.Time                                     `json:"createTime,omitempty"`
+	DisplayName                        *string                                        `json:"displayName,omitempty"`
+	EarlyStop                          *bool                                          `json:"earlyStop,omitempty"`
+	Epochs                             *int                                           `json:"epochs,omitempty"`
+	EstimatedCost                      *SupervisedFineTuningJobEstimatedCost          `json:"estimatedCost,omitempty"`
+	EvalAutoCarveout                   *bool                                          `json:"evalAutoCarveout,omitempty"`
+	EvaluationDataset                  *string                                        `json:"evaluationDataset,omitempty"`
+	GradientAccumulationSteps          *int                                           `json:"gradientAccumulationSteps,omitempty"`
+	IsTurbo                            *bool                                          `json:"isTurbo,omitempty"`
+	JinjaTemplate                      *string                                        `json:"jinjaTemplate,omitempty"`
+	JobProgress                        *SupervisedFineTuningJobJobProgress            `json:"jobProgress,omitempty"`
+	LearningRate                       *float64                                       `json:"learningRate,omitempty"`
+	LearningRateWarmupSteps            *int                                           `json:"learningRateWarmupSteps,omitempty"`
+	LoraRank                           *int                                           `json:"loraRank,omitempty"`
+	MaxContextLength                   *int                                           `json:"maxContextLength,omitempty"`
+	MetricsFileSignedURL               *string                                        `json:"metricsFileSignedUrl,omitempty"`
+	MtpEnabled                         *bool                                          `json:"mtpEnabled,omitempty"`
+	MtpFreezeBaseModel                 *bool                                          `json:"mtpFreezeBaseModel,omitempty"`
+	MtpNumDraftTokens                  *int                                           `json:"mtpNumDraftTokens,omitempty"`
+	Name                               *string                                        `json:"name,omitempty"`
+	Nodes                              *int                                           `json:"nodes,omitempty"`
+	OptimizerWeightDecay               *float64                                       `json:"optimizerWeightDecay,omitempty"`
+	OutputModel                        *string                                        `json:"outputModel,omitempty"`
+	Region                             *string                                        `json:"region,omitempty"`
+	RendererHuggingFaceRepoID          *string                                        `json:"rendererHuggingFaceRepoId,omitempty"`
+	State                              *string                                        `json:"state,omitempty"`
+	Status                             *SharedStatus                                  `json:"status,omitempty"`
+	TrainerLogsSignedURL               *string                                        `json:"trainerLogsSignedUrl,omitempty"`
+	UpdateTime                         *time.Time                                     `json:"updateTime,omitempty"`
+	UsePurpose                         *string                                        `json:"usePurpose,omitempty"`
+	ReservationTarget                  *string                                        `json:"reservationTarget,omitempty"`
+	UseReservation                     *bool                                          `json:"useReservation,omitempty"`
+	WandbConfig                        *SharedWandbConfig                             `json:"wandbConfig,omitempty"`
+	WarmStartFrom                      *string                                        `json:"warmStartFrom,omitempty"`
 }
 
 // SupervisedFineTuningJobCreateParams mirrors fireworks.types.supervised_fine_tuning_job_create_params.SupervisedFineTuningJobCreateParams.
 type SupervisedFineTuningJobCreateParams struct {
-	AccountID                 string                                                    `json:"account_id,omitempty"`
-	Dataset                   string                                                    `json:"dataset"`
-	SupervisedFineTuningJobID string                                                    `json:"supervisedFineTuningJobId,omitempty"`
-	AwsS3Config               SupervisedFineTuningJobCreateParamsAwsS3Config            `json:"awsS3Config,omitempty"`
-	AzureBlobStorageConfig    SupervisedFineTuningJobCreateParamsAzureBlobStorageConfig `json:"azureBlobStorageConfig,omitempty"`
-	BaseModel                 string                                                    `json:"baseModel,omitempty"`
-	BatchSize                 any                                                       `json:"batchSize,omitempty"`
-	BatchSizeSamples          any                                                       `json:"batchSizeSamples,omitempty"`
-	DisplayName               string                                                    `json:"displayName,omitempty"`
-	EarlyStop                 any                                                       `json:"earlyStop,omitempty"`
-	Epochs                    any                                                       `json:"epochs,omitempty"`
-	EvalAutoCarveout          any                                                       `json:"evalAutoCarveout,omitempty"`
-	EvaluationDataset         string                                                    `json:"evaluationDataset,omitempty"`
-	GradientAccumulationSteps any                                                       `json:"gradientAccumulationSteps,omitempty"`
-	IsTurbo                   any                                                       `json:"isTurbo,omitempty"`
-	JinjaTemplate             string                                                    `json:"jinjaTemplate,omitempty"`
-	LearningRate              any                                                       `json:"learningRate,omitempty"`
-	LearningRateWarmupSteps   any                                                       `json:"learningRateWarmupSteps,omitempty"`
-	LoraRank                  any                                                       `json:"loraRank,omitempty"`
-	MaxContextLength          any                                                       `json:"maxContextLength,omitempty"`
-	MetricsFileSignedURL      string                                                    `json:"metricsFileSignedUrl,omitempty"`
-	MtpEnabled                any                                                       `json:"mtpEnabled,omitempty"`
-	MtpFreezeBaseModel        any                                                       `json:"mtpFreezeBaseModel,omitempty"`
-	MtpNumDraftTokens         any                                                       `json:"mtpNumDraftTokens,omitempty"`
-	Nodes                     any                                                       `json:"nodes,omitempty"`
-	OptimizerWeightDecay      any                                                       `json:"optimizerWeightDecay,omitempty"`
-	OutputModel               string                                                    `json:"outputModel,omitempty"`
-	Region                    string                                                    `json:"region,omitempty"`
-	RendererHuggingFaceRepoID string                                                    `json:"rendererHuggingFaceRepoId,omitempty"`
-	UsePurpose                string                                                    `json:"usePurpose,omitempty"`
-	ReservationTarget         string                                                    `json:"reservationTarget,omitempty"`
-	UseReservation            any                                                       `json:"useReservation,omitempty"`
-	WandbConfig               SharedParamsWandbConfig                                   `json:"wandbConfig,omitempty"`
-	WarmStartFrom             string                                                    `json:"warmStartFrom,omitempty"`
+	AccountID                          string                                                    `json:"account_id,omitempty"`
+	Dataset                            string                                                    `json:"dataset"`
+	SupervisedFineTuningJobID          string                                                    `json:"supervisedFineTuningJobId,omitempty"`
+	AwsS3Config                        SupervisedFineTuningJobCreateParamsAwsS3Config            `json:"awsS3Config,omitempty"`
+	AzureBlobStorageConfig             SupervisedFineTuningJobCreateParamsAzureBlobStorageConfig `json:"azureBlobStorageConfig,omitempty"`
+	BaseModel                          string                                                    `json:"baseModel,omitempty"`
+	BatchSize                          any                                                       `json:"batchSize,omitempty"`
+	BatchSizeSamples                   any                                                       `json:"batchSizeSamples,omitempty"`
+	SamplerCheckpointSaveIntervalSteps any                                                       `json:"samplerCheckpointSaveIntervalSteps,omitempty"`
+	DisplayName                        string                                                    `json:"displayName,omitempty"`
+	EarlyStop                          any                                                       `json:"earlyStop,omitempty"`
+	Epochs                             any                                                       `json:"epochs,omitempty"`
+	EvalAutoCarveout                   any                                                       `json:"evalAutoCarveout,omitempty"`
+	EvaluationDataset                  string                                                    `json:"evaluationDataset,omitempty"`
+	GradientAccumulationSteps          any                                                       `json:"gradientAccumulationSteps,omitempty"`
+	IsTurbo                            any                                                       `json:"isTurbo,omitempty"`
+	JinjaTemplate                      string                                                    `json:"jinjaTemplate,omitempty"`
+	LearningRate                       any                                                       `json:"learningRate,omitempty"`
+	LearningRateWarmupSteps            any                                                       `json:"learningRateWarmupSteps,omitempty"`
+	LoraRank                           any                                                       `json:"loraRank,omitempty"`
+	MaxContextLength                   any                                                       `json:"maxContextLength,omitempty"`
+	MetricsFileSignedURL               string                                                    `json:"metricsFileSignedUrl,omitempty"`
+	MtpEnabled                         any                                                       `json:"mtpEnabled,omitempty"`
+	MtpFreezeBaseModel                 any                                                       `json:"mtpFreezeBaseModel,omitempty"`
+	MtpNumDraftTokens                  any                                                       `json:"mtpNumDraftTokens,omitempty"`
+	Nodes                              any                                                       `json:"nodes,omitempty"`
+	OptimizerWeightDecay               any                                                       `json:"optimizerWeightDecay,omitempty"`
+	OutputModel                        string                                                    `json:"outputModel,omitempty"`
+	Region                             string                                                    `json:"region,omitempty"`
+	RendererHuggingFaceRepoID          string                                                    `json:"rendererHuggingFaceRepoId,omitempty"`
+	UsePurpose                         string                                                    `json:"usePurpose,omitempty"`
+	ReservationTarget                  string                                                    `json:"reservationTarget,omitempty"`
+	UseReservation                     any                                                       `json:"useReservation,omitempty"`
+	WandbConfig                        SharedParamsWandbConfig                                   `json:"wandbConfig,omitempty"`
+	WarmStartFrom                      string                                                    `json:"warmStartFrom,omitempty"`
 }
 
 // SupervisedFineTuningJobCreateParamsAwsS3Config mirrors fireworks.types.supervised_fine_tuning_job_create_params.AwsS3Config.
@@ -3031,14 +3060,12 @@ type SupervisedFineTuningJobResumeParams struct {
 // Transformed mirrors fireworks.types.transformed.Transformed.
 type Transformed struct {
 	SourceDatasetID string  `json:"sourceDatasetId,omitempty"`
-	Filter          *string `json:"filter,omitempty"`
 	OriginalFormat  *string `json:"originalFormat,omitempty"`
 }
 
 // TransformedParam mirrors fireworks.types.transformed_param.TransformedParam.
 type TransformedParam struct {
 	SourceDatasetID string `json:"sourceDatasetId"`
-	Filter          string `json:"filter,omitempty"`
 	OriginalFormat  string `json:"originalFormat,omitempty"`
 }
 

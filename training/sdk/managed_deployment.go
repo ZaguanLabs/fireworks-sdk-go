@@ -103,7 +103,6 @@ func ManagedDeploymentCreateConfig(config FiretitanProvisioningConfig, trainerJo
 		DisableSpeculativeDecoding: config.DisableSpeculativeDecoding,
 		ExtraArgs:                  append([]string(nil), config.DeploymentExtraArgs...),
 		ExtraValues:                cloneStringMap(config.DeploymentExtraValues),
-		Annotations:                map[string]string{SDKManagedRolloutDeploymentAnnotation: "true"},
 		Preemptible:                config.Preemptible,
 	}, nil
 }

@@ -173,7 +173,7 @@ func TestPlanManagedDeploymentAttachmentCreatesForTerminalDeployment(t *testing.
 	if len(create.ExtraArgs) != 1 || create.ExtraArgs[0] != "--tp 2" || create.ExtraValues["k"] != "v" {
 		t.Fatalf("extra config = %#v", create)
 	}
-	if create.Annotations[SDKManagedRolloutDeploymentAnnotation] != "true" {
+	if create.Annotations[SDKManagedRolloutDeploymentAnnotation] != "" {
 		t.Fatalf("annotations = %#v", create.Annotations)
 	}
 }

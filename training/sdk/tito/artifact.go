@@ -1,6 +1,7 @@
 package tito
 
 import (
+	"bufio"
 	"bytes"
 	"compress/zlib"
 	"encoding/json"
@@ -17,17 +18,21 @@ func (a TrajectoryArtifact) Pack() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	encoded, err := canonicalJSON(plain)
-	if err != nil {
-		return nil, err
-	}
 	var result bytes.Buffer
 	result.Write(artifactMagic)
 	writer, err := zlib.NewWriterLevel(&result, 6)
 	if err != nil {
 		return nil, err
 	}
-	if _, err := writer.Write(encoded); err != nil {
+	// Feed the canonical JSON to compression incrementally to avoid a second
+	// full uncompressed artifact allocation. bufio retains any write error.
+	stream := bufio.NewWriter(writer)
+	if err := writeCanonicalJSON(stream, plain); err != nil {
+		_ = writer.Close()
+		return nil, err
+	}
+	if err := stream.Flush(); err != nil {
+		_ = writer.Close()
 		return nil, err
 	}
 	if err := writer.Close(); err != nil {

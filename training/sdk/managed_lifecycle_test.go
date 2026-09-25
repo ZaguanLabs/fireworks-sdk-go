@@ -166,7 +166,7 @@ func TestProvisionManagedHandleCreatesTrainerAndDeployment(t *testing.T) {
 	if len(trainer.created) != 1 {
 		t.Fatalf("created trainers = %#v", trainer.created)
 	}
-	if trainer.created[0].TrainingShapeRef != profile.TrainingShapeVersion {
+	if trainer.created[0].TrainingShapeRef != profile.TrainingShape() {
 		t.Fatalf("trainer config = %#v", trainer.created[0])
 	}
 	if !strings.HasPrefix(trainer.created[0].RequestedJobID, autoTrainerJobIDPrefix+"-") {
@@ -391,7 +391,7 @@ func TestProvisionManagedHandleProvisionsSeparateReference(t *testing.T) {
 		t.Fatalf("created trainers = %#v", trainer.created)
 	}
 	referenceConfig := trainer.created[1]
-	if !referenceConfig.ForwardOnly || referenceConfig.TrainingShapeRef != referenceProfile.TrainingShapeVersion {
+	if !referenceConfig.ForwardOnly || referenceConfig.TrainingShapeRef != referenceProfile.TrainingShape() {
 		t.Fatalf("reference config = %#v", referenceConfig)
 	}
 	if len(handle.ReferenceHandle.CleanupPlan) != 1 || handle.ReferenceHandle.CleanupPlan[0].Operation != ManagedCleanupDeleteTrainer {

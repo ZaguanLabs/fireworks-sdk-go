@@ -44,6 +44,7 @@ func DeploymentHotLoadTrainerJob(deployment DeploymentInfo) string {
 }
 
 type DeploymentConfig struct {
+	AcceptShapelessRisk        bool
 	DeploymentID               string
 	BaseModel                  string
 	Description                string
@@ -116,6 +117,9 @@ func DeploymentConfigFromTrainingProfile(deploymentID, baseModel string, profile
 }
 
 func (c DeploymentConfig) Validate() error {
+	if c.AcceptShapelessRisk && strings.TrimSpace(c.DeploymentShape) != "" {
+		return fmt.Errorf("accept_shapeless_risk cannot be combined with deployment_shape")
+	}
 	if _, err := NormalizeHotLoadTransitionType(c.HotLoadTransitionType); err != nil {
 		return err
 	}
@@ -358,6 +362,9 @@ func (m *DeploymentManager) CreateDeployment(ctx context.Context, config Deploym
 	}
 	query := url.Values{}
 	query.Set("deploymentId", config.DeploymentID)
+	if config.AcceptShapelessRisk {
+		query.Set("acceptShapelessRisk", "true")
+	}
 	if config.SkipShapeValidation {
 		query.Set("skipShapeValidation", "true")
 	}
@@ -874,6 +881,7 @@ type HotloadAndWaitOptions struct {
 }
 
 type ReattachTrainerOptions struct {
+	GetInfo               func(context.Context, string) (DeploymentInfo, bool, error)
 	Timeout               time.Duration
 	PollInterval          time.Duration
 	Now                   func() time.Time
@@ -887,79 +895,84 @@ type ReattachTrainerOptions struct {
 }
 
 func (m *DeploymentManager) ReattachTrainer(ctx context.Context, deployment DeploymentInfo, baseModel, trainerJobName string, opts ...ReattachTrainerOptions) (DeploymentInfo, error) {
-	opt := reattachTrainerOptions(opts...)
-	transitionType, err := NormalizeHotLoadTransitionType(opt.HotLoadTransitionType)
-	if err != nil {
-		return DeploymentInfo{}, err
-	}
-	if DeploymentHotLoadTrainerJob(deployment) == trainerJobName && (transitionType == "" || EffectiveHotLoadTransitionType(deployment.HotLoadTransitionType) == transitionType) {
-		return deployment, nil
-	}
-	opt.HotLoadTransitionType = transitionType
-	opt.updateTrainer = DeploymentHotLoadTrainerJob(deployment) != trainerJobName
-	opt.updateTransition = transitionType != "" && EffectiveHotLoadTransitionType(deployment.HotLoadTransitionType) != transitionType
-	opt.reconcileExplicit = true
-	return m.reattachTrainer(ctx, deployment.DeploymentID, baseModel, trainerJobName, opt)
+	return m.reattachTrainer(ctx, deployment.DeploymentID, baseModel, trainerJobName, opts...)
 }
-
 func (m *DeploymentManager) ReattachTrainerByID(ctx context.Context, deploymentID, baseModel, trainerJobName string, opts ...ReattachTrainerOptions) (DeploymentInfo, error) {
-	deployment, ok, err := m.GetInfo(ctx, deploymentID)
-	if err != nil {
-		return DeploymentInfo{}, err
-	}
-	if !ok {
-		return DeploymentInfo{}, fmt.Errorf("deployment %q does not exist", deploymentID)
-	}
-	return m.ReattachTrainer(ctx, deployment, baseModel, trainerJobName, opts...)
+	return m.reattachTrainer(ctx, deploymentID, baseModel, trainerJobName, opts...)
 }
-
 func (m *DeploymentManager) reattachTrainer(ctx context.Context, deploymentID, baseModel, trainerJobName string, opts ...ReattachTrainerOptions) (DeploymentInfo, error) {
 	opt := reattachTrainerOptions(opts...)
-	if opt.ReadReplicaIdentity == nil {
-		opt.ReadReplicaIdentity = m.ReadReplicaIdentity
+	get := opt.GetInfo
+	if get == nil {
+		get = m.GetInfo
 	}
-	if opt.Update == nil {
-		opt.Update = m.Update
+	update := opt.Update
+	if update == nil {
+		update = m.Update
 	}
-	prevIdentity, _ := opt.ReadReplicaIdentity(ctx, deploymentID, baseModel)
-	body := map[string]any{}
-	mask := []string{}
-	updateTrainer := opt.updateTrainer
-	updateTransition := opt.updateTransition
-	if !opt.reconcileExplicit {
-		updateTrainer = true
-		updateTransition = opt.HotLoadTransitionType != ""
-	}
-	if updateTrainer {
-		body["hotLoadTrainerJob"] = trainerJobName
-		mask = append(mask, "hot_load_trainer_job")
-	}
-	if updateTransition {
-		body["hotLoadTransitionType"] = opt.HotLoadTransitionType
-		mask = append(mask, "hot_load_transition_type")
-	}
-	updated, err := opt.Update(ctx, deploymentID, body, mask)
+	transition, err := NormalizeHotLoadTransitionType(opt.HotLoadTransitionType)
 	if err != nil {
 		return DeploymentInfo{}, err
 	}
+	read := func() (DeploymentInfo, error) {
+		if err := ctx.Err(); err != nil {
+			return DeploymentInfo{}, err
+		}
+		info, exists, err := get(ctx, deploymentID)
+		if err != nil {
+			return info, err
+		}
+		if !exists {
+			return info, fmt.Errorf("deployment %q no longer exists", deploymentID)
+		}
+		if DeploymentTerminalStates[info.State] {
+			return info, fmt.Errorf("deployment %q entered bad state %q during trainer re-attach", deploymentID, info.State)
+		}
+		return info, nil
+	}
 	deadline := opt.Now().Add(maxDuration(opt.Timeout, time.Second))
-	sawPodGone := prevIdentity == ""
-	for opt.Now().Before(deadline) {
-		current, _ := opt.ReadReplicaIdentity(ctx, deploymentID, baseModel)
-		if prevIdentity == "" {
-			if current != "" {
-				return updated, nil
-			}
-		} else if current == "" {
-			sawPodGone = true
-		} else if sawPodGone && current != prevIdentity {
-			return updated, nil
-		} else if current != prevIdentity {
-			return updated, nil
+	var current DeploymentInfo
+	for {
+		current, err = read()
+		if err != nil {
+			return DeploymentInfo{}, err
+		}
+		if current.State == DeploymentStateReady {
+			break
+		}
+		if !opt.Now().Before(deadline) {
+			return DeploymentInfo{}, fmt.Errorf("deployment %q did not reach READY before trainer re-attach", deploymentID)
 		}
 		opt.Sleep(opt.PollInterval)
 	}
-	return DeploymentInfo{}, fmt.Errorf("re-attach for deployment %q did not produce a fresh pod within %.0fs (prev_identity=%q)", deploymentID, opt.Timeout.Seconds(), prevIdentity)
+	body := map[string]any{}
+	mask := []string{}
+	if DeploymentHotLoadTrainerJob(current) != trainerJobName {
+		body["hotLoadTrainerJob"] = trainerJobName
+		mask = append(mask, "hot_load_trainer_job")
+	}
+	if transition != "" && EffectiveHotLoadTransitionType(current.HotLoadTransitionType) != transition {
+		body["hotLoadTransitionType"] = transition
+		mask = append(mask, "hot_load_transition_type")
+	}
+	if len(mask) == 0 {
+		return current, nil
+	}
+	if _, err = update(ctx, deploymentID, body, mask); err != nil {
+		return DeploymentInfo{}, err
+	}
+	deadline = opt.Now().Add(maxDuration(opt.Timeout, time.Second))
+	for opt.Now().Before(deadline) {
+		current, err = read()
+		if err != nil {
+			return DeploymentInfo{}, err
+		}
+		if current.State == DeploymentStateReady && DeploymentHotLoadTrainerJob(current) == trainerJobName && (transition == "" || EffectiveHotLoadTransitionType(current.HotLoadTransitionType) == transition) {
+			return current, nil
+		}
+		opt.Sleep(opt.PollInterval)
+	}
+	return DeploymentInfo{}, fmt.Errorf("trainer re-attach for deployment %q did not settle in READY", deploymentID)
 }
 
 func (m *DeploymentManager) ReadReplicaIdentity(ctx context.Context, deploymentID, baseModel string) (string, error) {
@@ -1234,6 +1247,7 @@ func reattachTrainerOptions(opts ...ReattachTrainerOptions) ReattachTrainerOptio
 	}
 	if len(opts) > 0 {
 		provided := opts[0]
+		opt.GetInfo = provided.GetInfo
 		if provided.Timeout != 0 {
 			opt.Timeout = provided.Timeout
 		}

@@ -884,6 +884,7 @@ func TestReattachTrainerAlreadyAttachedReturnsExisting(t *testing.T) {
 		HotLoadTrainerJob: "accounts/test-acct/rlorTrainerJobs/job-1",
 	}
 	result, err := mgr.ReattachTrainer(context.Background(), existing, "accounts/test-acct/models/base", "accounts/test-acct/rlorTrainerJobs/job-1", ReattachTrainerOptions{
+		GetInfo: func(context.Context, string) (DeploymentInfo, bool, error) { return existing, true, nil },
 		ReadReplicaIdentity: func(context.Context, string, string) (string, error) {
 			t.Fatal("should not read replica identity")
 			return "", nil
@@ -901,9 +902,9 @@ func TestReattachTrainerAlreadyAttachedReturnsExisting(t *testing.T) {
 	}
 }
 
-func TestReattachTrainerPatchesAndWaitsForNewReplica(t *testing.T) {
+func TestReattachTrainerPatchesAndWaitsForControlPlaneReady(t *testing.T) {
 	now := time.Unix(0, 0)
-	identities := []string{"old-pod", "", "new-pod"}
+	reads := 0
 	var updateBody map[string]any
 	mgr := NewDeploymentManager("test-key", "https://api.example.com")
 	existing := DeploymentInfo{
@@ -923,13 +924,17 @@ func TestReattachTrainerPatchesAndWaitsForNewReplica(t *testing.T) {
 		PollInterval: time.Millisecond,
 		Now:          func() time.Time { return now },
 		Sleep:        func(d time.Duration) { now = now.Add(d) },
-		ReadReplicaIdentity: func(context.Context, string, string) (string, error) {
-			if len(identities) == 0 {
-				return "new-pod", nil
+		GetInfo: func(context.Context, string) (DeploymentInfo, bool, error) {
+			reads++
+			if reads == 1 {
+				return existing, true, nil
 			}
-			got := identities[0]
-			identities = identities[1:]
-			return got, nil
+			if reads == 2 {
+				info := updated
+				info.State = "UPDATING"
+				return info, true, nil
+			}
+			return updated, true, nil
 		},
 		Update: func(_ context.Context, deploymentID string, body map[string]any, updateMask any) (DeploymentInfo, error) {
 			if deploymentID != "dep-1" || !reflect.DeepEqual(updateMask, []string{"hot_load_trainer_job"}) {

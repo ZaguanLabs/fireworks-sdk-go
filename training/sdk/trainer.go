@@ -478,15 +478,7 @@ func (m *TrainerJobManager) PollUntilReady(ctx context.Context, jobID, jobName s
 			))
 		}
 		if state == "JOB_STATE_FAILED" {
-			if statusMessage == "" {
-				statusMessage = "unknown"
-			}
-			return TrainerServiceEndpoint{}, fmt.Errorf("%s", FormatSDKError(
-				"Trainer job "+jobID+" failed",
-				statusMessage,
-				"The trainer status detail above is from the control plane. Check trainer logs and events in the Fireworks console before retrying.\n  Console: "+ConsoleURL,
-				SDKErrorFormatOptions{DocsURL: DocsSDK, ShowSupport: true},
-			))
+			return TrainerServiceEndpoint{}, ChildJobFailedError(jobID, job)
 		}
 		if state == "JOB_STATE_RUNNING" {
 			readyURL := baseURL

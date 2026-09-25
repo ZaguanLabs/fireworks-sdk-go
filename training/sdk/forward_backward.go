@@ -46,9 +46,11 @@ func IsFireworksBuiltinLossFn(lossFn string) bool {
 }
 
 type TensorData struct {
-	Data  any    `json:"data"`
-	DType string `json:"dtype,omitempty"`
-	Shape []int  `json:"shape,omitempty"`
+	SparseCrowIndices []int  `json:"sparse_crow_indices,omitempty"`
+	SparseColIndices  []int  `json:"sparse_col_indices,omitempty"`
+	Data              any    `json:"data"`
+	DType             string `json:"dtype,omitempty"`
+	Shape             []int  `json:"shape,omitempty"`
 }
 
 type TrainingDatum struct {
@@ -142,7 +144,7 @@ func R3RequestIssues(data []TrainingDatum) []string {
 	var issues []string
 	for datumIndex, datum := range data {
 		matrices := RoutingMatricesFromModelInput(datum.ModelInput)
-		if _, present := datum.ModelInput["routing_matrices"]; !present {
+		if value, present := datum.ModelInput["routing_matrices"]; !present || value == nil {
 			continue
 		}
 		positionCount, ok := modelInputPositionCount(datum.ModelInput)
@@ -194,6 +196,13 @@ func modelInputPositionCount(modelInput map[string]any) (int, bool) {
 }
 
 func RoutingMatricesWireBytes(modelInput map[string]any) int {
+	if refs := modelInput["routing_references"]; refs != nil {
+		data, err := json.Marshal(map[string]any{"routing_matrix_format": "parquet_v1", "routing_references": refs})
+		if err == nil {
+			return len(data)
+		}
+		return 0
+	}
 	matrices, present := modelInput["routing_matrices"]
 	if !present || matrices == nil {
 		return 0

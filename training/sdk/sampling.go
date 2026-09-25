@@ -44,15 +44,19 @@ type ServerMetrics struct {
 }
 
 type SampledCompletion struct {
-	Text              string
-	FullTokens        []int
-	PromptLen         int
-	FinishReason      string
-	CompletionLen     int
-	InferenceLogprobs []float64
-	SamplingLogprobs  []*float64
-	LogprobsEchoed    bool
-	RoutingMatrices   []string
+	RoutingReferences        *RoutingReferences
+	EchoedPromptLogprobCount int
+	InferenceTopKTokenIDs    [][]int
+	InferenceTopKLogprobs    [][]float64
+	Text                     string
+	FullTokens               []int
+	PromptLen                int
+	FinishReason             string
+	CompletionLen            int
+	InferenceLogprobs        []float64
+	SamplingLogprobs         []*float64
+	LogprobsEchoed           bool
+	RoutingMatrices          []string
 }
 
 type SampledServerAttempt struct {
@@ -154,10 +158,11 @@ func (e *DeploymentSamplerTimeoutError) As(target any) bool {
 }
 
 type FiretitanSampledSequence struct {
-	StopReason      string    `json:"stop_reason"`
-	Tokens          []int     `json:"_tokens_list"`
-	Logprobs        []float64 `json:"_logprobs_list"`
-	RoutingMatrices []string  `json:"routing_matrices,omitempty"`
+	RoutingReferences *RoutingReferences `json:"-"`
+	StopReason        string             `json:"stop_reason"`
+	Tokens            []int              `json:"_tokens_list"`
+	Logprobs          []float64          `json:"_logprobs_list"`
+	RoutingMatrices   []string           `json:"routing_matrices,omitempty"`
 }
 
 type FiretitanSampleResponse struct {
@@ -166,6 +171,7 @@ type FiretitanSampleResponse struct {
 }
 
 type FiretitanSamplingParams struct {
+	R3TTLSeconds         *int
 	MaxTokens            *int
 	Stop                 any
 	Temperature          *float64
@@ -193,6 +199,7 @@ type SamplingConcurrencyController interface {
 }
 
 type CompletionRequestOptions struct {
+	R3TTLSeconds         *int
 	MaxTokens            int
 	Temperature          float64
 	RawOutput            bool
@@ -209,10 +216,16 @@ type CompletionRequestOptions struct {
 type CompletionRequester func(context.Context, []int, CompletionRequestOptions) (map[string]any, ServerMetrics, error)
 
 type DeploymentSampler struct {
-	InferenceURL string
-	Model        string
-	APIKey       string
-	Tokenizer    DeploymentTokenizer
+	r3Mu                sync.Mutex
+	routingMatrixFormat RoutingMatrixFormat
+	r3StoreID           string
+	r3Negotiated        bool
+	r3Probe             *routingProbe
+	r3BindingRequired   bool
+	InferenceURL        string
+	Model               string
+	APIKey              string
+	Tokenizer           DeploymentTokenizer
 
 	ConcurrencyController SamplingConcurrencyController
 	CompletionRequester   CompletionRequester
@@ -321,6 +334,7 @@ func NewDeploymentSampler(inferenceURL, model, apiKey string, opts ...Deployment
 }
 
 type SampleOptions struct {
+	R3TTLSeconds             *int
 	N                        int
 	MaxTokens                int
 	Temperature              float64
@@ -506,6 +520,7 @@ func (c *FiretitanSamplingClient) Sample(ctx context.Context, prompt []int, numS
 		Logprobs:             true,
 		Echo:                 opt.IncludePromptLogprobs,
 		IncludeRoutingMatrix: params.IncludeRoutingMatrix,
+		R3TTLSeconds:         params.R3TTLSeconds,
 		Extra:                extra,
 	})
 	if err != nil {
@@ -549,11 +564,24 @@ func (c *FiretitanSamplingClient) Sample(ctx context.Context, prompt []int, numS
 		if routingMatrices != nil && len(routingMatrices) != len(completionTokens) {
 			return FiretitanSampleResponse{}, fmt.Errorf("deployment response routing matrices are not aligned with completion tokens (%d != %d)", len(routingMatrices), len(completionTokens))
 		}
+
+		refs := completion.RoutingReferences
+		if refs != nil {
+			var err error
+			refs, err = refs.Slice(completion.EchoedPromptLogprobCount, refs.Length)
+			if err != nil {
+				return FiretitanSampleResponse{}, err
+			}
+			if refs.Length != len(completionTokens) {
+				return FiretitanSampleResponse{}, fmt.Errorf("routing references do not align with completion tokens")
+			}
+		}
 		response.Sequences = append(response.Sequences, FiretitanSampledSequence{
-			StopReason:      firetitanStopReason(completion.FinishReason),
-			Tokens:          completionTokens,
-			Logprobs:        completionLogprobs,
-			RoutingMatrices: routingMatrices,
+			RoutingReferences: refs,
+			StopReason:        firetitanStopReason(completion.FinishReason),
+			Tokens:            completionTokens,
+			Logprobs:          completionLogprobs,
+			RoutingMatrices:   routingMatrices,
 		})
 	}
 	if !opt.IncludePromptLogprobs {
@@ -735,6 +763,7 @@ func (s *DeploymentSampler) doOneCompletionResult(ctx context.Context, promptIDs
 			Logprobs:             opt.Logprobs,
 			Echo:                 opt.Echo,
 			IncludeRoutingMatrix: opt.IncludeRoutingMatrix,
+			R3TTLSeconds:         opt.R3TTLSeconds,
 			Stop:                 stop,
 			Extra:                cloneAnyMap(opt.Extra),
 			LogicalRequestID:     logicalRequestID,
@@ -773,7 +802,15 @@ func (s *DeploymentSampler) doOneCompletionResult(ctx context.Context, promptIDs
 			s.mu.Unlock()
 		}
 		if err == nil {
-			completions, parseErr := s.ParseCompletionsResult(result, promptIDs, opt.MaxSeqLen, opt.Logprobs, opt.IncludeRoutingMatrix, opt.Echo)
+			var echoLast *int
+			if value, ok := opt.Extra["echo_last"]; ok {
+				n, valid := intFromStrictAny(value)
+				if !valid || n < 0 {
+					return SampledRequestResult{}, fmt.Errorf("echo_last must be a nonnegative integer")
+				}
+				echoLast = &n
+			}
+			completions, parseErr := s.ParseCompletionsResultWithEchoLast(result, promptIDs, opt.MaxSeqLen, opt.Logprobs, opt.IncludeRoutingMatrix, opt.Echo, echoLast)
 			upstreamResponseID := stringFromAny(result["id"])
 			if parseErr != nil {
 				serverAttempts = append(serverAttempts, sampledServerAttempt(attempt, "failed", parseErr, metrics, upstreamResponseID))
@@ -1153,6 +1190,13 @@ func (s *DeploymentSampler) retryBackoffDelay(backoff time.Duration) time.Durati
 }
 
 func (s *DeploymentSampler) ParseCompletionsResult(result map[string]any, promptIDs []int, maxSeqLen int, userRequestedLogprobs, routingRequested, echoMode bool) ([]SampledCompletion, error) {
+	return s.ParseCompletionsResultWithEchoLast(result, promptIDs, maxSeqLen, userRequestedLogprobs, routingRequested, echoMode, nil)
+}
+func (s *DeploymentSampler) ParseCompletionsResultWithEchoLast(result map[string]any, promptIDs []int, maxSeqLen int, userRequestedLogprobs, routingRequested, echoMode bool, echoLast *int) ([]SampledCompletion, error) {
+	if echoLast != nil && *echoLast < 0 {
+		return nil, fmt.Errorf("echo_last must be nonnegative")
+	}
+
 	choices, _ := result["choices"].([]any)
 	completions := make([]SampledCompletion, 0, len(choices))
 	for _, item := range choices {
@@ -1182,6 +1226,34 @@ func (s *DeploymentSampler) ParseCompletionsResult(result map[string]any, prompt
 			tokenLogprobs, _ = ExtractLogprobs(choice)
 			samplingLogprobs, _ = ExtractSamplingLogprobs(choice)
 		}
+
+		var topIDs [][]int
+		var topLP [][]float64
+		if userRequestedLogprobs {
+			topIDs, topLP = ExtractTopLogprobs(choice)
+		}
+		var refs *RoutingReferences
+		if routingRequested {
+			format := stringOrDefault(choice["routing_matrix_format"], "base64_inline")
+			if format == "parquet_v1" {
+				_, store, _ := s.routingBinding()
+				if store == "" || choice["r3_store_id"] != store {
+					return nil, fmt.Errorf("Parquet R3 requires a compatible trainer storage binding")
+				}
+				var err error
+				refs, err = ParseRoutingReferences(choice["routing_references"])
+				if err != nil {
+					return nil, err
+				}
+				for _, file := range refs.Files {
+					if file["store_id"] != store {
+						return nil, fmt.Errorf("R3 reference belongs to a different storage domain")
+					}
+				}
+			} else if format != "base64_inline" || choice["routing_references"] != nil {
+				return nil, fmt.Errorf("unsupported R3 format")
+			}
+		}
 		var routingMatrices []string
 		if routingRequested {
 			routingMatrices, _ = ExtractRoutingMatrices(choice)
@@ -1195,30 +1267,50 @@ func (s *DeploymentSampler) ParseCompletionsResult(result map[string]any, prompt
 		}
 
 		logprobsEchoed := false
+		echoedCount := 0
+		echoCount := 0
 		if echoMode {
-			if len(completionIDs) < len(promptForFull) || !intSlicePrefixEqual(completionIDs, promptForFull) {
-				return nil, fmt.Errorf("%s", FormatSDKError(
-					"Echo response format mismatch",
-					"echo=True was requested but completion_token_ids do not include the prompt prefix.",
-					"The sampler uses echo=True to align prompt and completion token logprobs. Use a deployment path whose raw_output token IDs include the prompt prefix when echo is enabled.",
-					SDKErrorFormatOptions{DocsURL: DocsSDK, ShowSupport: true},
-				))
+			echoCount = len(promptForFull)
+		}
+		if echoLast != nil {
+			echoCount = minInt(*echoLast, len(promptForFull))
+		}
+		if echoCount > 0 {
+			if !intSlicePrefixEqual(completionIDs, promptForFull[len(promptForFull)-echoCount:]) {
+				return nil, fmt.Errorf("Echo response format mismatch: echoed suffix differs from prompt token IDs")
 			}
-			completionIDs = append([]int(nil), completionIDs[len(promptForFull):]...)
-			if tokenLogprobs != nil {
-				if len(tokenLogprobs) > 0 {
-					tokenLogprobs = append([]float64(nil), tokenLogprobs[1:]...)
+			expected := len(completionIDs)
+			for _, n := range []int{optionalLength(tokenLogprobs), optionalLength(samplingLogprobs), optionalLength(routingMatrices), optionalLength(topIDs), optionalLength(topLP)} {
+				if n >= 0 && n != expected {
+					return nil, fmt.Errorf("Echo response arrays do not align with returned token IDs")
 				}
 			}
-			if samplingLogprobs != nil && len(samplingLogprobs) > 0 {
-				samplingLogprobs = append([]*float64(nil), samplingLogprobs[1:]...)
+			if refs != nil && refs.Length != expected {
+				return nil, fmt.Errorf("Echo routing references do not align with returned token IDs")
+			}
+			drop := 0
+			if echoCount == len(promptForFull) {
+				drop = 1
+			}
+			completionIDs = completionIDs[echoCount:]
+			echoedCount = echoCount - drop
+			logprobsEchoed = true
+			if tokenLogprobs != nil {
+				tokenLogprobs = tokenLogprobs[drop:]
+			}
+			if samplingLogprobs != nil {
+				samplingLogprobs = samplingLogprobs[drop:]
 			}
 			if routingMatrices != nil {
-				if len(routingMatrices) > 0 {
-					routingMatrices = append([]string(nil), routingMatrices[1:]...)
-				}
+				routingMatrices = routingMatrices[drop:]
 			}
-			logprobsEchoed = tokenLogprobs != nil || samplingLogprobs != nil || routingMatrices != nil
+			if topIDs != nil {
+				topIDs = topIDs[drop:]
+				topLP = topLP[drop:]
+			}
+			if refs != nil {
+				refs, _ = refs.Slice(drop, refs.Length)
+			}
 		}
 
 		fullTokens := append(append([]int(nil), promptForFull...), completionIDs...)
@@ -1226,15 +1318,19 @@ func (s *DeploymentSampler) ParseCompletionsResult(result map[string]any, prompt
 			continue
 		}
 		completions = append(completions, SampledCompletion{
-			Text:              text,
-			FullTokens:        fullTokens,
-			PromptLen:         len(promptForFull),
-			FinishReason:      finishReason,
-			CompletionLen:     len(completionIDs),
-			InferenceLogprobs: tokenLogprobs,
-			SamplingLogprobs:  samplingLogprobs,
-			LogprobsEchoed:    logprobsEchoed,
-			RoutingMatrices:   routingMatrices,
+			Text:                     text,
+			FullTokens:               fullTokens,
+			PromptLen:                len(promptForFull),
+			FinishReason:             finishReason,
+			CompletionLen:            len(completionIDs),
+			InferenceLogprobs:        tokenLogprobs,
+			SamplingLogprobs:         samplingLogprobs,
+			LogprobsEchoed:           logprobsEchoed,
+			RoutingMatrices:          routingMatrices,
+			RoutingReferences:        refs,
+			EchoedPromptLogprobCount: echoedCount,
+			InferenceTopKTokenIDs:    topIDs,
+			InferenceTopKLogprobs:    topLP,
 		})
 	}
 	return completions, nil
@@ -1352,6 +1448,10 @@ func (s *DeploymentSampler) StreamCompletions(ctx context.Context, prompt []int,
 			payload["return_token_ids"] = true
 		}
 	}
+	headers, err := s.routingRequest(ctx, payload, opts)
+	if err != nil {
+		return nil, ServerMetrics{}, err
+	}
 	data, err := json.Marshal(payload)
 	if err != nil {
 		return nil, ServerMetrics{}, err
@@ -1362,25 +1462,28 @@ func (s *DeploymentSampler) StreamCompletions(ctx context.Context, prompt []int,
 		if err != nil {
 			return nil, ServerMetrics{}, err
 		}
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("X-Api-Key", s.APIKey)
-		req.Header.Set("Authorization", "Bearer "+s.APIKey)
-		additionalHeaders := s.AdditionalHeaders
-		if opts.AdditionalHeaders != nil {
-			additionalHeaders = opts.AdditionalHeaders
-		}
-		for key, value := range additionalHeaders {
-			req.Header.Set(key, value)
-		}
-		if opts.LogicalRequestID != "" {
-			req.Header.Set("X-Request-Id", opts.LogicalRequestID)
-		}
+		req.Header = headers.Clone()
 		resp, err := s.HTTPClient.Do(req)
 		if err != nil {
 			return nil, ServerMetrics{}, err
 		}
 		body, _ := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
+		if payload["routing_matrix_format"] == "parquet_v1" && unsupportedRoutingFormat(resp.StatusCode, body) {
+			s.r3Mu.Lock()
+			s.routingMatrixFormat = RoutingBase64Inline
+			s.r3Mu.Unlock()
+			delete(payload, "routing_matrix_format")
+			payload["include_routing_matrix"] = true
+			headers.Del(R3StoreHeader)
+			headers.Del(R3TTLHeader)
+			data, err = json.Marshal(payload)
+			if err != nil {
+				return nil, ServerMetrics{}, err
+			}
+			hotloadAttempt--
+			continue
+		}
 		lastStatus = resp.StatusCode
 		if (resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusTooEarly) && hotloadAttempt < SamplerHotloadMaxRetries {
 			s.Sleep(SamplerHotloadRetryInterval)
@@ -1403,6 +1506,7 @@ func (s *DeploymentSampler) assembleStreamResponse(body []byte, headers http.Hea
 	var accumulatedLogprobs []any
 	finishReason := ""
 	var usageInfo any
+	routingMetadata := map[string]any{}
 	var rawOutput map[string]any
 	var perfMetrics map[string]string
 	upstreamResponseID := ""
@@ -1426,6 +1530,11 @@ func (s *DeploymentSampler) assembleStreamResponse(body []byte, headers http.Hea
 			choice, _ := item.(map[string]any)
 			if choice == nil {
 				continue
+			}
+			for _, key := range []string{"routing_matrix_format", "r3_store_id", "routing_references"} {
+				if value, ok := choice[key]; ok {
+					routingMetadata[key] = value
+				}
 			}
 			if textDelta := stringFromAny(choice["text"]); textDelta != "" {
 				accumulatedText += textDelta
@@ -1459,6 +1568,9 @@ func (s *DeploymentSampler) assembleStreamResponse(body []byte, headers http.Hea
 	choice := map[string]any{
 		"text":          accumulatedText,
 		"finish_reason": finishReason,
+	}
+	for key, value := range routingMetadata {
+		choice[key] = value
 	}
 	if len(accumulatedLogprobs) > 0 {
 		choice["logprobs"] = map[string]any{"content": accumulatedLogprobs}
@@ -1553,6 +1665,7 @@ func sampleOptions(opts ...SampleOptions) SampleOptions {
 		opt.Logprobs = provided.Logprobs
 		opt.Echo = provided.Echo
 		opt.IncludeRoutingMatrix = provided.IncludeRoutingMatrix
+		opt.R3TTLSeconds = provided.R3TTLSeconds
 		opt.Stop = provided.Stop
 		opt.Extra = cloneAnyMap(provided.Extra)
 		opt.TimeoutDiagnosticContext = provided.TimeoutDiagnosticContext
@@ -1654,6 +1767,9 @@ func intFromStrictAny(value any) (int, bool) {
 	case int64:
 		return int(v), true
 	case float64:
+		if math.IsNaN(v) || math.IsInf(v, 0) || v != math.Trunc(v) || v >= float64(int(^uint(0)>>1)) || v < float64(-int(^uint(0)>>1)-1) {
+			return 0, false
+		}
 		return int(v), true
 	case json.Number:
 		i, err := v.Int64()
@@ -1661,7 +1777,10 @@ func intFromStrictAny(value any) (int, bool) {
 			return int(i), true
 		}
 		f, err := strconv.ParseFloat(string(v), 64)
-		return int(f), err == nil
+		if err != nil {
+			return 0, false
+		}
+		return intFromStrictAny(f)
 	default:
 		return 0, false
 	}
@@ -2199,4 +2318,74 @@ func maxFloat64(a, b float64) float64 {
 		return a
 	}
 	return b
+}
+
+func optionalLength[T any](values []T) int {
+	if values == nil {
+		return -1
+	}
+	return len(values)
+}
+func ExtractTopLogprobs(choice map[string]any) ([][]int, [][]float64) {
+	lp, _ := choice["logprobs"].(map[string]any)
+	content, _ := lp["content"].([]any)
+	if len(content) == 0 {
+		return nil, nil
+	}
+	ids := make([][]int, 0, len(content))
+	values := make([][]float64, 0, len(content))
+	for _, entry := range content {
+		token, _ := entry.(map[string]any)
+		candidates, _ := token["top_logprobs"].([]any)
+		if len(candidates) == 0 {
+			return nil, nil
+		}
+		var rowIDs []int
+		var rowValues []float64
+		for _, candidate := range candidates {
+			c, _ := candidate.(map[string]any)
+			id, ok := intFromStrictAny(c["token_id"])
+			if !ok || c["logprob"] == nil {
+				return nil, nil
+			}
+			switch c["logprob"].(type) {
+			case float64, float32, int, int64:
+			default:
+				return nil, nil
+			}
+			rowIDs = append(rowIDs, id)
+			rowValues = append(rowValues, floatFromAny(c["logprob"]))
+		}
+		ids = append(ids, rowIDs)
+		values = append(values, rowValues)
+	}
+	return ids, values
+}
+func (v FiretitanSampledSequence) MarshalJSON() ([]byte, error) {
+	type wire FiretitanSampledSequence
+	if v.RoutingReferences == nil {
+		return json.Marshal(wire(v))
+	}
+	return json.Marshal(struct {
+		wire
+		Routing any `json:"routing_matrices"`
+	}{wire(v), v.RoutingReferences})
+}
+
+func (v *FiretitanSampledSequence) UnmarshalJSON(data []byte) error {
+	type wire FiretitanSampledSequence
+	var decoded struct {
+		wire
+		Routing json.RawMessage `json:"routing_matrices"`
+	}
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	*v = FiretitanSampledSequence(decoded.wire)
+	inline, refs, err := RoutingFromWire(decoded.Routing)
+	if err != nil {
+		return err
+	}
+	v.RoutingMatrices, v.RoutingReferences = inline, refs
+	return nil
 }

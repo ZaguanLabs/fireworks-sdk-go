@@ -36,12 +36,14 @@ var DeploymentServingStates = map[string]bool{
 }
 
 type FiretitanProvisioningConfig struct {
-	BaseModel       string
-	TokenizerModel  string
-	LoraRank        int
-	LoraAlpha       *int
-	MaxLoraRank     *int
-	TrainingShapeID string
+	// WaitForTrainerBeforeDeployment disables overlapping trainer and deployment provisioning.
+	WaitForTrainerBeforeDeployment bool
+	BaseModel                      string
+	TokenizerModel                 string
+	LoraRank                       int
+	LoraAlpha                      *int
+	MaxLoraRank                    *int
+	TrainingShapeID                string
 
 	ReferenceTrainingShapeID       string
 	ReferenceTrainerJobID          string

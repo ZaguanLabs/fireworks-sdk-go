@@ -2,7 +2,9 @@ package sdk
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -49,6 +51,7 @@ type ManagedDeploymentCleanup interface {
 }
 
 type ManagedProvisionOptions struct {
+	onTrainerStarted     func(string)
 	Config               FiretitanProvisioningConfig
 	UserMetadata         map[string]string
 	ProfileResolver      ManagedTrainingProfileResolver
@@ -262,8 +265,38 @@ func ProvisionManagedHandle(ctx context.Context, opts ManagedProvisionOptions) (
 		}
 	}
 
+	createDeployment := config.CreateDeployment == nil || *config.CreateDeployment
+	ctx, cancelProvision := context.WithCancel(ctx)
+	defer cancelProvision()
+	type attachmentResult struct {
+		attachment managedDeploymentAttachment
+		err        error
+	}
+	var pendingAttachment chan attachmentResult
+	if createDeployment && !config.WaitForTrainerBeforeDeployment {
+		opts.onTrainerStarted = func(jobName string) {
+			if pendingAttachment != nil {
+				return
+			}
+			pendingAttachment = make(chan attachmentResult, 1)
+			go func() {
+				attachment, err := attachManagedDeployment(ctx, opts.Deployment, config, jobName, deploymentShape, now, explicitDeploymentID, opts)
+				pendingAttachment <- attachmentResult{attachment, err}
+				if err != nil {
+					cancelProvision()
+				}
+			}()
+		}
+	}
 	startedTrainer, err := provisionManagedTrainer(ctx, opts.Trainer, config, maxContextLength, profile, explicitTrainerJobID, opts)
 	if err != nil {
+		cancelProvision()
+		if pendingAttachment != nil {
+			result := <-pendingAttachment
+			if result.err != nil && errors.Is(err, context.Canceled) {
+				return nil, result.err
+			}
+		}
 		return nil, err
 	}
 	trainerEndpoint := startedTrainer.Endpoint
@@ -275,12 +308,15 @@ func ProvisionManagedHandle(ctx context.Context, opts ManagedProvisionOptions) (
 	var samplerBackend *TinkerSamplerBackend
 	requiresInitialSync := false
 	deploymentCreated := false
-	createDeployment := true
-	if config.CreateDeployment != nil {
-		createDeployment = *config.CreateDeployment
-	}
 	if createDeployment {
-		attached, err := attachManagedDeployment(ctx, opts.Deployment, config, trainerEndpoint.JobName, deploymentShape, now, explicitDeploymentID, opts)
+		var attached managedDeploymentAttachment
+		var err error
+		if pendingAttachment != nil {
+			result := <-pendingAttachment
+			attached, err = result.attachment, result.err
+		} else {
+			attached, err = attachManagedDeployment(ctx, opts.Deployment, config, trainerEndpoint.JobName, deploymentShape, now, explicitDeploymentID, opts)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -320,6 +356,7 @@ func ProvisionManagedHandle(ctx context.Context, opts ManagedProvisionOptions) (
 	var referenceHandle *ManagedProvisionedHandle
 	if referenceConfig != nil {
 		referenceOpts := opts
+		referenceOpts.onTrainerStarted = nil
 		referenceOpts.Config = *referenceConfig
 		referenceOpts.UserMetadata = cloneStringMap(opts.UserMetadata)
 		referenceHandle, err = ProvisionManagedHandle(ctx, referenceOpts)
@@ -371,7 +408,7 @@ func ProvisionManagedHandle(ctx context.Context, opts ManagedProvisionOptions) (
 func BuildManagedTrainerJobConfig(config FiretitanProvisioningConfig, maxContextLength *int, profile *TrainingShapeProfile) TrainerJobConfig {
 	trainingShapeRef := ""
 	if profile != nil {
-		trainingShapeRef = profile.TrainingShapeVersion
+		trainingShapeRef = TrainerCreateShapeRef(config.TrainingShapeID, profile)
 	}
 	autoSelectTrainingShape := trainingShapeRef == "" && !usesManualTrainingInfra(config)
 	nodeCount := cloneIntPointer(config.NodeCount)
@@ -428,6 +465,13 @@ func provisionManagedTrainer(ctx context.Context, trainer ManagedTrainerControll
 	opts.ReconnectOptions.PollOptions = managedTrainerPollOptions(config, opts.ReconnectOptions.PollOptions)
 	if explicitTrainerJobID {
 		if opts.ReconnectExistingJob {
+			accountID, err := trainer.AccountID(ctx)
+			if err != nil {
+				return startedManagedTrainer{}, err
+			}
+			if opts.onTrainerStarted != nil {
+				opts.onTrainerStarted("accounts/" + accountID + "/rlorTrainerJobs/" + config.TrainerJobID)
+			}
 			endpoint, err := trainer.ReconnectAndWait(ctx, config.TrainerJobID, opts.ReconnectOptions)
 			return startedManagedTrainer{Endpoint: endpoint, Created: false}, err
 		}
@@ -451,11 +495,17 @@ func provisionManagedTrainer(ctx context.Context, trainer ManagedTrainerControll
 				return startedManagedTrainer{Endpoint: endpoint, Created: true}, err
 			}
 			if resumableTrainerStates[stringFromAny(job["state"])] {
+				if opts.onTrainerStarted != nil {
+					opts.onTrainerStarted("accounts/" + accountID + "/rlorTrainerJobs/" + config.TrainerJobID)
+				}
 				endpoint, err := trainer.ReconnectAndWait(ctx, config.TrainerJobID, opts.ReconnectOptions)
 				return startedManagedTrainer{Endpoint: endpoint, Created: false}, err
 			}
 		}
 		jobName := "accounts/" + accountID + "/rlorTrainerJobs/" + config.TrainerJobID
+		if opts.onTrainerStarted != nil {
+			opts.onTrainerStarted(jobName)
+		}
 		endpoint, err := trainer.WaitForReady(ctx, config.TrainerJobID, jobName, opts.TrainerPollOptions)
 		return startedManagedTrainer{Endpoint: endpoint, Created: false}, err
 	}
@@ -506,6 +556,12 @@ func attachManagedDeployment(ctx context.Context, deployment ManagedDeploymentCo
 		if opts.ReattachOptions.HotLoadTransitionType == "" {
 			opts.ReattachOptions.HotLoadTransitionType = config.HotLoadTransitionType
 		}
+		if opts.ReattachOptions.Timeout == 0 {
+			opts.ReattachOptions.Timeout = config.ReattachSettleTimeout
+			if !DeploymentServingStates[existing.State] {
+				opts.ReattachOptions.Timeout = config.DeploymentTimeout
+			}
+		}
 		info, err = deployment.ReattachTrainer(ctx, *existing, config.BaseModel, trainerJobName, opts.ReattachOptions)
 	case ManagedDeploymentActionCreate:
 		info, err = deployment.CreateOrGet(ctx, *plan.CreateConfig, false)
@@ -539,6 +595,9 @@ var resumableTrainerStates = map[string]bool{
 }
 
 func waitForStartedTrainer(ctx context.Context, trainer ManagedTrainerController, created CreatedTrainerJob, config FiretitanProvisioningConfig, opts ManagedProvisionOptions) (TrainerServiceEndpoint, error) {
+	if opts.onTrainerStarted != nil {
+		opts.onTrainerStarted(created.JobName)
+	}
 	if tryGetter, ok := trainer.(ManagedTrainerTryGetter); ok {
 		job, found, err := tryGetter.TryGetJob(ctx, created.JobID)
 		if err != nil {
@@ -549,4 +608,20 @@ func waitForStartedTrainer(ctx context.Context, trainer ManagedTrainerController
 		}
 	}
 	return trainer.WaitForReady(ctx, created.JobID, created.JobName, opts.TrainerPollOptions)
+}
+
+// TrainerCreateShapeRef keeps explicit version pins; otherwise the control plane
+// resolves the latest validated version when launching the parent shape.
+func TrainerCreateShapeRef(requested string, profile *TrainingShapeProfile) string {
+	if parts := strings.Split(requested, "/versions/"); len(parts) == 2 && strings.TrimSpace(parts[1]) != "" && strings.TrimSpace(parts[1]) != "latest" {
+		return requested
+	}
+	if profile == nil {
+		return ""
+	}
+	ref := profile.TrainingShape()
+	if ref == "" {
+		ref = profile.TrainingShapeVersion
+	}
+	return strings.SplitN(ref, "/versions/", 2)[0]
 }

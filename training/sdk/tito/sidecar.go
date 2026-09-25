@@ -28,16 +28,17 @@ type ExactTokenSampler interface {
 type CallClassifier func(ChatRequest) (CallKind, string)
 
 type SidecarOptions struct {
-	MaxContextTokens   int
-	MaxOutputTokens    int
-	CallClassifier     CallClassifier
-	SamplingDefaults   map[string]any
-	BackendHeaders     map[string]string
-	Observer           EventObserver
-	DefaultDriftPolicy TrajectoryDriftPolicy
-	PromptMode         PromptMode
-	Keepalive          time.Duration
-	Model              string
+	IncrementalPromptRouting bool
+	MaxContextTokens         int
+	MaxOutputTokens          int
+	CallClassifier           CallClassifier
+	SamplingDefaults         map[string]any
+	BackendHeaders           map[string]string
+	Observer                 EventObserver
+	DefaultDriftPolicy       TrajectoryDriftPolicy
+	PromptMode               PromptMode
+	Keepalive                time.Duration
+	Model                    string
 }
 
 type Sidecar struct {
@@ -160,7 +161,8 @@ func (s *Sidecar) Start(port ...int) error {
 	s.listener = listener
 	s.baseURL = "http://" + listener.Addr().String()
 	s.server = &http.Server{Handler: s, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: s.options.Keepalive, MaxHeaderBytes: 1 << 20}
-	go func() { _ = s.server.Serve(listener) }()
+	server := s.server
+	go func() { _ = server.Serve(listener) }()
 	return nil
 }
 
@@ -221,16 +223,10 @@ func (s *Sidecar) FailTrajectory(id, reason string) (TrajectoryArtifact, error) 
 	return s.terminate(id, TrajectoryStatusFailed, reason)
 }
 
+// Deprecated: agent wall timing is carried by the trajectory summary; no metric is emitted.
 func (s *Sidecar) ObserveAgentWall(id string, seconds float64) error {
-	t, err := s.trajectoryFor(id)
-	if err != nil {
-		return err
-	}
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	d := t.metrics.Distributions["agent_wall_seconds"].Add(seconds)
-	t.metrics.Distributions["agent_wall_seconds"] = d
-	return nil
+	_, err := s.trajectoryFor(id)
+	return err
 }
 
 func (s *Sidecar) terminate(id string, status TrajectoryStatus, reason string) (TrajectoryArtifact, error) {
@@ -466,6 +462,19 @@ func (s *Sidecar) complete(ctx context.Context, t *trajectory, request ChatReque
 	for key, value := range request.SamplingFields {
 		extra[key] = value
 	}
+
+	incrementalRouting := s.options.IncrementalPromptRouting
+	if enabled, ok := extra["incremental_prompt_routing"].(bool); ok {
+		incrementalRouting = enabled
+	}
+	delete(extra, "incremental_prompt_routing")
+	if incrementalRouting {
+		retained := 0
+		for retained < len(t.checkpoint) && retained < len(prompt) && t.checkpoint[retained] == prompt[retained] {
+			retained++
+		}
+		extra["echo_last"] = len(prompt) - retained
+	}
 	delete(extra, "temperature")
 	stop := s.renderer.StopSequences(request)
 	result, sampleErr := s.sampler.SampleWithPromptTokensResult(ctx, prompt, sdk.SampleOptions{MaxTokens: effective, MaxSeqLen: s.options.MaxContextTokens, Temperature: request.Temperature, Logprobs: true, IncludeRoutingMatrix: true, Stop: stop, Extra: extra, PromptCacheKey: t.servingAffinityKey, AdditionalHeaders: cloneStringMap(s.options.BackendHeaders), SamplingContext: map[string]any{"trajectory_id": t.id, "call_id": callID}})
@@ -488,7 +497,66 @@ func (s *Sidecar) complete(ctx context.Context, t *trajectory, request ChatReque
 	if completion.PromptLen < 0 || completion.PromptLen > len(completion.FullTokens) {
 		return CallResult{}, &Error{Code: "tito_upstream_error", Status: 502, Message: "policy inference returned invalid token boundaries", ShouldRetry: true}
 	}
+
+	var promptRouting []string
+	var promptRefs *sdk.RoutingReferences
+	var promptRoutingStart *int
+	if incrementalRouting {
+		count := completion.EchoedPromptLogprobCount
+		expected := extra["echo_last"].(int)
+		if max := completion.PromptLen - 1; expected > max {
+			expected = max
+		}
+		if expected < 0 {
+			expected = 0
+		}
+		if count != expected {
+			return CallResult{}, &Error{Code: "tito_completion_alignment_error", Status: 502, Message: "incremental prompt routing length mismatch"}
+		}
+		start := completion.PromptLen - 1 - count
+		promptRoutingStart = &start
+		if completion.RoutingReferences != nil {
+			if completion.RoutingReferences.Length < count {
+				return CallResult{}, invalidRequest("short prompt routing references")
+			}
+			promptRefs, _ = completion.RoutingReferences.Slice(0, count)
+			completion.RoutingReferences, _ = completion.RoutingReferences.Slice(count, completion.RoutingReferences.Length)
+		} else {
+			if completion.RoutingMatrices == nil || len(completion.RoutingMatrices) < count {
+				return CallResult{}, &Error{Code: "tito_completion_alignment_error", Status: 502, Message: "missing prompt routing"}
+			}
+			promptRouting = append([]string{}, completion.RoutingMatrices[:count]...)
+			completion.RoutingMatrices = completion.RoutingMatrices[count:]
+		}
+		if completion.InferenceLogprobs != nil {
+			if len(completion.InferenceLogprobs) < count {
+				return CallResult{}, invalidRequest("short inference logprobs")
+			}
+			completion.InferenceLogprobs = completion.InferenceLogprobs[count:]
+		}
+		if completion.SamplingLogprobs != nil {
+			if len(completion.SamplingLogprobs) < count {
+				return CallResult{}, invalidRequest("short sampling logprobs")
+			}
+			completion.SamplingLogprobs = completion.SamplingLogprobs[count:]
+		}
+		if completion.InferenceTopKTokenIDs != nil {
+			if len(completion.InferenceTopKTokenIDs) < count {
+				return CallResult{}, invalidRequest("short top-k token IDs")
+			}
+			completion.InferenceTopKTokenIDs = completion.InferenceTopKTokenIDs[count:]
+		}
+		if completion.InferenceTopKLogprobs != nil {
+			if len(completion.InferenceTopKLogprobs) < count {
+				return CallResult{}, invalidRequest("short top-k logprobs")
+			}
+			completion.InferenceTopKLogprobs = completion.InferenceTopKLogprobs[count:]
+		}
+	}
 	completionIDs := append([]int(nil), completion.FullTokens[completion.PromptLen:]...)
+	if err := validateCompletionArrays(completion, len(completionIDs)); err != nil {
+		return CallResult{}, err
+	}
 	assistant, parseErr := s.renderer.ParseAssistant(request, completionIDs, completion.Text, completion.FinishReason)
 	parserFallback := false
 	if parseErr != nil {
@@ -511,7 +579,7 @@ func (s *Sidecar) complete(ctx context.Context, t *trajectory, request ChatReque
 	if responseID == "" {
 		responseID = "chatcmpl-tito-" + turnID
 	}
-	turn := Turn{TurnID: turnID, Request: request, Assistant: assistant, ExactPromptIDs: append([]int(nil), prompt...), ExactCompletionIDs: completionIDs, InferenceLogprobs: append([]float64(nil), completion.InferenceLogprobs...), SamplingLogprobs: append([]*float64(nil), completion.SamplingLogprobs...), RoutingMatrices: append([]string(nil), completion.RoutingMatrices...), ResponseID: responseID, FinishReason: completion.FinishReason, PromptDisposition: disposition, RealignedMaskedTokens: realigned, RequestedOutputTokens: requested, EffectiveOutputTokens: effective, ContextRemainingTokens: remaining, ServerMetrics: result.ServerMetrics, SamplerWallSeconds: result.WallSeconds, LogicalRequestID: result.LogicalRequestID, UpstreamResponseID: result.UpstreamResponseID, UpstreamAttempts: result.Attempts, PromptMode: promptMode, IncrementalFallbackReason: fallbackReason, ServerAttempts: result.ServerAttempts, ParserFallback: parserFallback}
+	turn := Turn{RoutingReferences: completion.RoutingReferences, PromptRoutingStart: promptRoutingStart, PromptRoutingMatrices: promptRouting, PromptRoutingReferences: promptRefs, InferenceTopKTokenIDs: cloneRows(completion.InferenceTopKTokenIDs), InferenceTopKLogprobs: cloneRows(completion.InferenceTopKLogprobs), TurnID: turnID, Request: request, Assistant: assistant, ExactPromptIDs: append([]int(nil), prompt...), ExactCompletionIDs: completionIDs, InferenceLogprobs: append([]float64(nil), completion.InferenceLogprobs...), SamplingLogprobs: append([]*float64(nil), completion.SamplingLogprobs...), RoutingMatrices: append([]string(nil), completion.RoutingMatrices...), ResponseID: responseID, FinishReason: completion.FinishReason, PromptDisposition: disposition, RealignedMaskedTokens: realigned, RequestedOutputTokens: requested, EffectiveOutputTokens: effective, ContextRemainingTokens: remaining, ServerMetrics: result.ServerMetrics, SamplerWallSeconds: result.WallSeconds, LogicalRequestID: result.LogicalRequestID, UpstreamResponseID: result.UpstreamResponseID, UpstreamAttempts: result.Attempts, PromptMode: promptMode, IncrementalFallbackReason: fallbackReason, ServerAttempts: result.ServerAttempts, ParserFallback: parserFallback}
 	if len(t.checkpoint) > 0 {
 		p := prefix
 		turn.PrefixMatchTokens = &p
@@ -729,4 +797,50 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(value)
+}
+
+func cloneRows[T any](rows [][]T) [][]T {
+	if rows == nil {
+		return nil
+	}
+	out := make([][]T, len(rows))
+	for i, row := range rows {
+		out[i] = append([]T{}, row...)
+	}
+	return out
+}
+func validateCompletionArrays(c sdk.SampledCompletion, n int) error {
+	fail := func() error {
+		return &Error{Code: "tito_completion_alignment_error", Status: 502, Message: "completion arrays do not align with output token IDs"}
+	}
+	if c.InferenceLogprobs != nil && len(c.InferenceLogprobs) != n {
+		return fail()
+	}
+	if c.SamplingLogprobs != nil && len(c.SamplingLogprobs) != n {
+		return fail()
+	}
+	if (c.InferenceTopKTokenIDs == nil) != (c.InferenceTopKLogprobs == nil) {
+		return fail()
+	}
+	if c.InferenceTopKTokenIDs != nil {
+		if len(c.InferenceTopKTokenIDs) != n || len(c.InferenceTopKLogprobs) != n {
+			return fail()
+		}
+		for i, row := range c.InferenceTopKTokenIDs {
+			if len(row) == 0 || len(row) != len(c.InferenceTopKLogprobs[i]) {
+				return fail()
+			}
+		}
+	}
+	if c.RoutingReferences != nil {
+		if err := c.RoutingReferences.Validate(); err != nil {
+			return fail()
+		}
+		if c.RoutingReferences.Length != n {
+			return fail()
+		}
+	} else if len(c.RoutingMatrices) != n {
+		return fail()
+	}
+	return nil
 }

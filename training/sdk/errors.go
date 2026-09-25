@@ -521,3 +521,35 @@ func compactJSONValue(value any) string {
 	}
 	return string(payload)
 }
+
+// ChildJobFailedError retains reviewed control-plane status on provisioning failures.
+func ChildJobFailedError(jobID string, job map[string]any) error {
+	message := ExtractJobStatusMessage(job)
+	if message == "" {
+		message = "unknown"
+	}
+	err := &TrainingAPIError{Message: FormatSDKError("Trainer job "+jobID+" failed", message, "Check trainer logs and events in the Fireworks console before retrying.", SDKErrorFormatOptions{DocsURL: DocsSDK, ShowSupport: true})}
+	status, ok := job["status"].(map[string]any)
+	if !ok {
+		return err
+	}
+	status = cloneAnyMap(status)
+	if name, ok := status["code"].(string); ok {
+		codes := map[string]int{"OK": 0, "CANCELLED": 1, "UNKNOWN": 2, "INVALID_ARGUMENT": 3, "DEADLINE_EXCEEDED": 4, "NOT_FOUND": 5, "ALREADY_EXISTS": 6, "PERMISSION_DENIED": 7, "RESOURCE_EXHAUSTED": 8, "FAILED_PRECONDITION": 9, "ABORTED": 10, "OUT_OF_RANGE": 11, "UNIMPLEMENTED": 12, "INTERNAL": 13, "UNAVAILABLE": 14, "DATA_LOSS": 15, "UNAUTHENTICATED": 16}
+		code, known := codes[strings.ToUpper(strings.TrimSpace(name))]
+		if !known {
+			return err
+		}
+		status["code"] = code
+	}
+	if text, ok := status["message"].(string); !ok || text == "" {
+		return err
+	}
+	if _, ok := status["details"].([]any); !ok {
+		status["details"] = []any{}
+	}
+	if data, e := json.Marshal(status); e == nil {
+		err.LifecycleStatus = parseLifecycleStatus(data)
+	}
+	return err
+}

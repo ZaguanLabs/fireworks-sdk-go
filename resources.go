@@ -779,3 +779,14 @@ func requirePathArgument(name, value string) error {
 	}
 	return nil
 }
+
+func (r *DeploymentShapeVersionsResource) Match(ctx context.Context, body any, opts ...RequestOption) (Response, error) {
+	return postInAccount(ctx, r.client, "/deploymentShapeVersions:match", body, opts...)
+}
+func (r *DeploymentShapeVersionsResource) MatchForModel(ctx context.Context, model string, enableAddons bool, opts ...RequestOption) (Response, error) {
+	account, err := r.client.resolveAccountID(applyRequestOptions(opts))
+	if err != nil {
+		return nil, err
+	}
+	return r.Match(ctx, map[string]any{"create_deployment_request": map[string]any{"parent": "accounts/" + account, "deployment": map[string]any{"base_model": model, "enable_addons": enableAddons}}}, opts...)
+}

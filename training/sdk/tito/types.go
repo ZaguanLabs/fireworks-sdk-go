@@ -123,7 +123,11 @@ func NewChatRequestFromOpenAI(payload map[string]any, wireBody ...string) (ChatR
 	if err != nil {
 		return ChatRequest{}, invalidRequest("request contains a non-JSON value: " + err.Error())
 	}
-	messages, err := mapSlice(payload["messages"])
+	canonical, err := cloneJSONMap(payload)
+	if err != nil {
+		return ChatRequest{}, invalidRequest(err.Error())
+	}
+	messages, err := mapSlice(canonical["messages"])
 	if err != nil || len(messages) == 0 {
 		return ChatRequest{}, invalidRequest("messages must not be empty")
 	}
@@ -135,6 +139,13 @@ func NewChatRequestFromOpenAI(payload map[string]any, wireBody ...string) (ChatR
 		}
 		if role != "assistant" {
 			continue
+		}
+
+		if provider, ok := messages[i]["provider_specific_fields"].(map[string]any); ok && len(provider) == 1 {
+			if value, present := provider["refusal"]; present && value == nil {
+				delete(messages[i], "provider_specific_fields")
+				steps = append(steps, fmt.Sprintf("messages[%d].provider_specific_fields:empty_refusal_removed", i))
+			}
 		}
 		calls, _ := mapSlice(messages[i]["tool_calls"])
 		if len(calls) == 0 {
@@ -347,6 +358,12 @@ type CallRecord struct {
 	ErrorCode            string                     `json:"error_code,omitempty"`
 }
 type Turn struct {
+	RoutingReferences               *sdk.RoutingReferences     `json:"-"`
+	PromptRoutingStart              *int                       `json:"prompt_routing_start,omitempty"`
+	PromptRoutingMatrices           []string                   `json:"prompt_routing_matrices,omitempty"`
+	PromptRoutingReferences         *sdk.RoutingReferences     `json:"-"`
+	InferenceTopKTokenIDs           [][]int                    `json:"inference_topk_token_ids,omitempty"`
+	InferenceTopKLogprobs           [][]float64                `json:"inference_topk_logprobs,omitempty"`
 	TurnID                          string                     `json:"turn_id"`
 	Request                         ChatRequest                `json:"request"`
 	Assistant                       ParsedAssistant            `json:"assistant"`
@@ -456,7 +473,12 @@ func canonicalJSON(value any) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func writeCanonicalJSON(buf *bytes.Buffer, value any) error {
+type canonicalWriter interface {
+	Write([]byte) (int, error)
+	WriteByte(byte) error
+}
+
+func writeCanonicalJSON(buf canonicalWriter, value any) error {
 	switch typed := value.(type) {
 	case map[string]any:
 		keys := make([]string, 0, len(typed))
@@ -558,4 +580,47 @@ func anyMapSlice(value []map[string]any) []any {
 		out[i] = value[i]
 	}
 	return out
+}
+
+func (v Turn) MarshalJSON() ([]byte, error) {
+	type wire Turn
+	var routes, prompt any
+	if v.RoutingReferences != nil {
+		routes = v.RoutingReferences
+	} else if v.RoutingMatrices != nil {
+		routes = v.RoutingMatrices
+	}
+	if v.PromptRoutingReferences != nil {
+		prompt = v.PromptRoutingReferences
+	} else if v.PromptRoutingMatrices != nil {
+		prompt = v.PromptRoutingMatrices
+	}
+	return json.Marshal(struct {
+		wire
+		Routing       any `json:"routing_matrices,omitempty"`
+		PromptRouting any `json:"prompt_routing_matrices,omitempty"`
+	}{wire(v), routes, prompt})
+}
+func (v *Turn) UnmarshalJSON(data []byte) error {
+	type wire Turn
+	var decoded struct {
+		wire
+		Routing       json.RawMessage `json:"routing_matrices"`
+		PromptRouting json.RawMessage `json:"prompt_routing_matrices"`
+	}
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	value := Turn(decoded.wire)
+	var err error
+	value.RoutingMatrices, value.RoutingReferences, err = sdk.RoutingFromWire(decoded.Routing)
+	if err != nil {
+		return err
+	}
+	value.PromptRoutingMatrices, value.PromptRoutingReferences, err = sdk.RoutingFromWire(decoded.PromptRouting)
+	if err != nil {
+		return err
+	}
+	*v = value
+	return nil
 }

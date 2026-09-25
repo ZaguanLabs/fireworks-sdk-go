@@ -22,6 +22,7 @@ type FiretitanServiceClientOptions struct {
 }
 
 type FiretitanServiceClient struct {
+	trainingClients           []*FiretitanTrainingClient
 	Config                    FiretitanProvisioningConfig
 	ServerlessSessionID       string
 	AccountIDCache            string
@@ -413,6 +414,44 @@ func (c *FiretitanServiceClient) HotloadSamplerSnapshot(ctx context.Context, mod
 }
 
 func (c *FiretitanServiceClient) CreateSamplingClient(ctx context.Context, modelPath string, tokenizer DeploymentTokenizer, controller SamplingConcurrencyController, deploymentSampler ...*DeploymentSampler) (*FiretitanSamplingClient, error) {
+	sampler, err := c.createSamplingClient(ctx, modelPath, tokenizer, controller, deploymentSampler...)
+	if err != nil {
+		return nil, err
+	}
+	c.lifecycleMu.Lock()
+	clients := append([]*FiretitanTrainingClient(nil), c.trainingClients...)
+	c.lifecycleMu.Unlock()
+	format := RoutingBase64Inline
+	store := ""
+	required := false
+	if len(clients) == 1 {
+		format = clients[0].RoutingMatrixFormat
+		store = clients[0].R3StoreID
+	} else {
+		for _, client := range clients {
+			if client.RoutingMatrixFormat == RoutingParquetV1 {
+				required = true
+			}
+		}
+	}
+	if format == RoutingParquetV1 || required {
+		sampler.DeploymentSampler = sampler.DeploymentSampler.CopyForR3Binding(format, store)
+		sampler.DeploymentSampler.r3BindingRequired = required
+	}
+	return sampler, nil
+}
+func (c *FiretitanServiceClient) CreateSamplingClientForTraining(ctx context.Context, modelPath string, tokenizer DeploymentTokenizer, controller SamplingConcurrencyController, training *FiretitanTrainingClient) (*FiretitanSamplingClient, error) {
+	if training == nil {
+		return nil, fmt.Errorf("training client is required")
+	}
+	sampler, err := c.createSamplingClient(ctx, modelPath, tokenizer, controller)
+	if err != nil {
+		return nil, err
+	}
+	sampler.DeploymentSampler = sampler.DeploymentSampler.CopyForR3Binding(training.RoutingMatrixFormat, training.R3StoreID)
+	return sampler, nil
+}
+func (c *FiretitanServiceClient) createSamplingClient(ctx context.Context, modelPath string, tokenizer DeploymentTokenizer, controller SamplingConcurrencyController, deploymentSampler ...*DeploymentSampler) (*FiretitanSamplingClient, error) {
 	if len(deploymentSampler) > 0 && deploymentSampler[0] != nil {
 		sampler := deploymentSampler[0]
 		if tokenizer != nil {
@@ -610,6 +649,7 @@ func (c *FiretitanServiceClient) CreateInferenceDeploymentSampler(ctx context.Co
 }
 
 type CreateFiretitanTrainingClientOptions struct {
+	ModelCreationResponse      *CreateModelResponse
 	ConfigOverride             *FiretitanProvisioningConfig
 	BaseModel                  string
 	LoraRank                   *int
@@ -657,6 +697,7 @@ type OptimStepOptions struct {
 }
 
 type ForwardBackwardOptions struct {
+	Comms        Comms
 	ModelID      string
 	SeqID        int
 	Data         []TrainingDatum
@@ -706,22 +747,25 @@ type CreateLoraTrainingClientOptions struct {
 }
 
 type FiretitanTrainingClient struct {
-	Service         *FiretitanServiceClient
-	Config          FiretitanProvisioningConfig
-	UserMetadata    map[string]string
-	Warnings        []string
-	HandleMetadata  ManagedHandleMetadata
-	SamplerBackend  *TinkerSamplerBackend
-	WeightSyncer    *WeightSyncer
-	StateBackend    TrainingStateBackend
-	AdapterLoader   TrainingAdapterLoader
-	ComputeBackend  TrainingComputeBackend
-	ModelID         string
-	RunName         string
-	TrainerBaseURL  string
-	RequestSeqID    int
-	SavedStateNames map[string]bool
-	SyncState       ManagedSamplerSyncState
+	Communication       Comms
+	RoutingMatrixFormat RoutingMatrixFormat
+	R3StoreID           string
+	Service             *FiretitanServiceClient
+	Config              FiretitanProvisioningConfig
+	UserMetadata        map[string]string
+	Warnings            []string
+	HandleMetadata      ManagedHandleMetadata
+	SamplerBackend      *TinkerSamplerBackend
+	WeightSyncer        *WeightSyncer
+	StateBackend        TrainingStateBackend
+	AdapterLoader       TrainingAdapterLoader
+	ComputeBackend      TrainingComputeBackend
+	ModelID             string
+	RunName             string
+	TrainerBaseURL      string
+	RequestSeqID        int
+	SavedStateNames     map[string]bool
+	SyncState           ManagedSamplerSyncState
 }
 
 func (c *FiretitanServiceClient) CreateTrainingClient(ctx context.Context, opts ...CreateFiretitanTrainingClientOptions) (*FiretitanTrainingClient, error) {
@@ -843,6 +887,22 @@ func (c *FiretitanServiceClient) CreateTrainingClient(ctx context.Context, opts 
 		SavedStateNames: map[string]bool{},
 		SyncState:       state,
 	}
+
+	if opt.ModelCreationResponse != nil {
+		client.ApplyModelCreationResponse(*opt.ModelCreationResponse)
+	} else if creator, ok := opt.ComputeBackend.(TrainingModelCreator); ok && client.ModelID == "" {
+		response, err := creator.CreateModel(ctx, config, client.UserMetadata)
+		if err != nil {
+			return nil, err
+		}
+		client.ApplyModelCreationResponse(response)
+	}
+	if opt.RunName == "" {
+		client.RunName = c.ServerlessRunName(ctx, client.ModelID)
+	}
+	c.lifecycleMu.Lock()
+	c.trainingClients = append(c.trainingClients, client)
+	c.lifecycleMu.Unlock()
 	if multiModel {
 		c.lifecycleMu.Lock()
 		if c.ProvisionedHandle != nil {
@@ -1151,8 +1211,12 @@ func (c *FiretitanTrainingClient) ForwardBackward(ctx context.Context, data []Tr
 	if err != nil {
 		return ForwardBackwardOutput{}, err
 	}
+	if err := c.ValidateRoutingData(data); err != nil {
+		return ForwardBackwardOutput{}, err
+	}
 	c.RequestSeqID++
 	output, err := c.ComputeBackend.ForwardBackward(ctx, ForwardBackwardOptions{
+		Comms:        c.Comms(),
 		ModelID:      c.ModelID,
 		SeqID:        c.RequestSeqID,
 		Data:         append([]TrainingDatum(nil), data...),
@@ -1405,7 +1469,12 @@ func (c *FiretitanTrainingClient) CreateSamplingClient(ctx context.Context, mode
 			return nil, err
 		}
 	}
-	return c.SamplerBackend.GetSamplingClient(ctx, tokenizer, controller)
+	sampler, err := c.SamplerBackend.GetSamplingClient(ctx, tokenizer, controller)
+	if err != nil {
+		return nil, err
+	}
+	sampler.DeploymentSampler = sampler.DeploymentSampler.CopyForR3Binding(c.RoutingMatrixFormat, c.R3StoreID)
+	return sampler, nil
 }
 
 func (c *FiretitanTrainingClient) GetTokenizerModel() (string, error) {

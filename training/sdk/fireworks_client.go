@@ -702,3 +702,98 @@ func cloneAnyMap(values map[string]any) map[string]any {
 	}
 	return out
 }
+
+var trainingJobParentRE = regexp.MustCompile(`^accounts/[^/]+/(?:supervisedFineTuningJobs|dpoJobs)/[^/]+$`)
+
+func (c *FireworksClient) ListTrainingJobCheckpoints(ctx context.Context, parent string, pageSize int) ([]map[string]any, error) {
+	if pageSize <= 0 {
+		pageSize = 200
+	}
+	if !trainingJobParentRE.MatchString(parent) {
+		return nil, fmt.Errorf("invalid training job parent %q", parent)
+	}
+	basePath := "/v1/" + parent + "/checkpoints"
+	var rows []map[string]any
+	pageToken := ""
+	for {
+		query := url.Values{}
+		query.Set("pageSize", fmt.Sprint(pageSize))
+		if pageToken != "" {
+			query.Set("pageToken", pageToken)
+		}
+		resp, err := c.Get(ctx, basePath+"?"+query.Encode(), nil)
+		if err != nil {
+			return nil, err
+		}
+		body, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return nil, listCheckpointsError(resp.StatusCode, body, parent)
+		}
+		var payload map[string]any
+		if len(body) > 0 {
+			if err := json.Unmarshal(body, &payload); err != nil {
+				return nil, err
+			}
+		}
+		for _, item := range checkpointPage(payload) {
+			if row, ok := item.(map[string]any); ok {
+				rows = append(rows, row)
+			}
+		}
+		pageToken = stringFromAny(payload["nextPageToken"])
+		if pageToken == "" {
+			pageToken = stringFromAny(payload["next_page_token"])
+		}
+		if pageToken == "" {
+			break
+		}
+	}
+	return rows, nil
+}
+
+func (c *FireworksClient) PromoteTrainingJobCheckpoint(ctx context.Context, name, outputModelID, baseModel string) (map[string]any, error) {
+	parts := strings.Split(name, "/checkpoints/")
+	if len(parts) != 2 || !trainingJobParentRE.MatchString(parts[0]) || parts[1] == "" || strings.Contains(parts[1], "/") {
+		return nil, fmt.Errorf("invalid training job checkpoint %q", name)
+	}
+	if baseModel == "" {
+		return nil, fmt.Errorf("base_model is required")
+	}
+	if problems := ValidateOutputModelID(outputModelID); len(problems) > 0 {
+		return nil, fmt.Errorf("%s", strings.Join(problems, "; "))
+	}
+	account := strings.Split(parts[0], "/")[1]
+	resp, err := c.Post(ctx, "/v1/"+name+":promote", map[string]any{"output_model": "accounts/" + account + "/models/" + outputModelID, "base_model": baseModel, "async_promotion": true}, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("checkpoint promotion HTTP %d: %s", resp.StatusCode, ParseAPIErrorBody(body))
+	}
+	var result map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+	if operation, ok := result["operation"].(map[string]any); ok && len(operation) > 0 {
+		operation, err = c.WaitForOperation(ctx, operation)
+		if err != nil {
+			return nil, err
+		}
+		model, _ := operation["response"].(map[string]any)
+		if model == nil {
+			model, _ = result["model"].(map[string]any)
+		}
+		if model == nil {
+			return nil, fmt.Errorf("promotion operation completed without a model response")
+		}
+		delete(model, "@type")
+		return model, nil
+	}
+	if model, ok := result["model"].(map[string]any); ok {
+		return model, nil
+	}
+	return result, nil
+}

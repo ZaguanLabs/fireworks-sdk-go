@@ -201,3 +201,6 @@ func nextPageInfo(nextPageToken *string) *PageInfo {
 	}
 	return &PageInfo{Params: map[string]any{"pageToken": *nextPageToken}}
 }
+
+type DeploymentShapeVersionMatchCreateDeploymentRequest = DeploymentShapeVersionMatchParamsCreateDeploymentRequest
+type DeploymentShapeVersionMatchDeployment = DeploymentShapeVersionMatchParamsDeployment
