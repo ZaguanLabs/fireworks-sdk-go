@@ -2,11 +2,11 @@
 
 Unofficial Go port of the official Fireworks AI Python SDK.
 
-This project targets Fireworks Python SDK `1.2.15` and keeps the Go
+This project targets Fireworks Python SDK `1.2.19` and keeps the Go
 package version aligned exactly:
 
 ```go
-fireworks.Version // "1.2.15"
+fireworks.Version // "1.2.19"
 ```
 
 Upstream references:
@@ -28,9 +28,9 @@ Current parity checks cover:
 - FireTitan training lifecycle helpers and opt-in live contract tests
 
 The latest local parity report is in
-[`docs/resource-type-parity-1.2.15.md`](docs/resource-type-parity-1.2.15.md).
+[`docs/resource-type-parity-1.2.19.md`](docs/resource-type-parity-1.2.19.md).
 The broader training parity matrix is in
-[`docs/parity-1.2.15.md`](docs/parity-1.2.15.md).
+[`docs/parity-1.2.19.md`](docs/parity-1.2.19.md).
 
 ## Install
 
@@ -325,14 +325,14 @@ The Python SDK source snapshot is intentionally ignored by git. To regenerate
 types, provide a local copy of the official Python SDK source:
 
 ```sh
-FIREWORKS_PY_TYPES_ROOT=/path/to/python-sdk-1.2.15/src/fireworks/types \
+FIREWORKS_PY_TYPES_ROOT=/path/to/python-sdk-1.2.19/src/fireworks/types \
   go generate ./types
 ```
 
 The default generator path is:
 
 ```text
-docs/fireworks-py/python-sdk-1.2.15/src/fireworks/types
+docs/fireworks-py/python-sdk-1.2.19/src/fireworks/types
 ```
 
 ## Development
@@ -360,8 +360,8 @@ Releases are created from git tags by
 Use Go module semver tags:
 
 ```sh
-git tag v1.2.15
-git push origin v1.2.15
+git tag v1.2.19
+git push origin v1.2.19
 ```
 
 The workflow checks that `version.go` matches the tag, runs `go test ./...`,

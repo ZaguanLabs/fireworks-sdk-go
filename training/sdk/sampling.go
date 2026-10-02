@@ -469,6 +469,9 @@ type FiretitanSamplingClient struct {
 	DeploymentSampler *DeploymentSampler
 	mu                sync.Mutex
 	closed            bool
+	pending           map[uint64]context.CancelFunc
+	nextRequest       uint64
+	drained           chan struct{}
 }
 
 func NewFiretitanSamplingClient(sampler *DeploymentSampler) *FiretitanSamplingClient {
@@ -483,9 +486,11 @@ func (c *FiretitanSamplingClient) Sample(ctx context.Context, prompt []int, numS
 	if c == nil || c.DeploymentSampler == nil {
 		return FiretitanSampleResponse{}, fmt.Errorf("FiretitanSamplingClient requires a DeploymentSampler")
 	}
-	if err := c.ensureOpen(); err != nil {
+	ctx, finish, err := c.beginRequest(ctx)
+	if err != nil {
 		return FiretitanSampleResponse{}, err
 	}
+	defer finish()
 	var opt FiretitanSampleOptions
 	if len(opts) > 0 {
 		opt = opts[0]
@@ -524,6 +529,9 @@ func (c *FiretitanSamplingClient) Sample(ctx context.Context, prompt []int, numS
 		Extra:                extra,
 	})
 	if err != nil {
+		if cause := context.Cause(ctx); cause != nil {
+			return FiretitanSampleResponse{}, cause
+		}
 		return FiretitanSampleResponse{}, err
 	}
 
@@ -691,26 +699,103 @@ func (c *FiretitanSamplingClient) GetTelemetry() any {
 	return nil
 }
 
-func (c *FiretitanSamplingClient) Close() {
+// SamplingClientClosedError means a closed sampler cancelled this request.
+// The caller may resubmit on a live sampler after the old call returns.
+type SamplingClientClosedError struct{}
+
+func (*SamplingClientClosedError) Error() string {
+	return "FiretitanSamplingClient is closed; resubmit on a live sampling client"
+}
+
+type SamplingCloseOptions struct {
+	Drain        bool
+	DrainTimeout time.Duration
+}
+
+// Close rejects new calls immediately. Drain optionally lets in-flight calls
+// finish in the background, with a one-hour default before cancellation.
+func (c *FiretitanSamplingClient) Close(options ...SamplingCloseOptions) {
 	if c == nil {
 		return
 	}
+	var opt SamplingCloseOptions
+	if len(options) > 0 {
+		opt = options[0]
+	}
 	c.mu.Lock()
-	alreadyClosed := c.closed
-	c.closed = true
-	sampler := c.DeploymentSampler
-	c.mu.Unlock()
-	if alreadyClosed || sampler == nil {
+	if c.closed {
+		c.mu.Unlock()
 		return
 	}
-	sampler.Close()
+	c.closed = true
+	if c.drained == nil {
+		c.drained = make(chan struct{})
+	}
+	if len(c.pending) == 0 {
+		close(c.drained)
+	}
+	drained := c.drained
+	c.mu.Unlock()
+	shutdown := func() {
+		c.mu.Lock()
+		for _, cancel := range c.pending {
+			cancel()
+		}
+		sampler := c.DeploymentSampler
+		c.mu.Unlock()
+		if sampler != nil {
+			sampler.Close()
+		}
+	}
+	if opt.Drain {
+		timeout := opt.DrainTimeout
+		if timeout == 0 {
+			timeout = time.Hour
+		}
+		go func() {
+			timer := time.NewTimer(timeout)
+			defer timer.Stop()
+			select {
+			case <-drained:
+			case <-timer.C:
+			}
+			shutdown()
+		}()
+		return
+	}
+	shutdown()
+}
+
+func (c *FiretitanSamplingClient) beginRequest(parent context.Context) (context.Context, func(), error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return nil, nil, &SamplingClientClosedError{}
+	}
+	ctx, cancel := context.WithCancelCause(parent)
+	if c.pending == nil {
+		c.pending = map[uint64]context.CancelFunc{}
+	}
+	c.nextRequest++
+	id := c.nextRequest
+	c.pending[id] = func() { cancel(&SamplingClientClosedError{}) }
+	finish := func() {
+		cancel(nil)
+		c.mu.Lock()
+		delete(c.pending, id)
+		if c.closed && len(c.pending) == 0 {
+			close(c.drained)
+		}
+		c.mu.Unlock()
+	}
+	return ctx, finish, nil
 }
 
 func (c *FiretitanSamplingClient) ensureOpen() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.closed {
-		return fmt.Errorf("FiretitanSamplingClient is closed")
+		return &SamplingClientClosedError{}
 	}
 	return nil
 }

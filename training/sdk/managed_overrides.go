@@ -32,7 +32,7 @@ func ManagedTrainingClientKey(config FiretitanProvisioningConfig) TrainingClient
 	if config.TrainUnembed != nil {
 		trainUnembed = *config.TrainUnembed
 	}
-	return NewTrainingClientKey(
+	key := NewTrainingClientKey(
 		config.BaseModel,
 		config.LoraRank,
 		config.Seed,
@@ -41,4 +41,11 @@ func ManagedTrainingClientKey(config FiretitanProvisioningConfig) TrainingClient
 		trainUnembed,
 		config.LoraAlpha,
 	)
+	if config.ProjectionHeadDim != nil {
+		key.ProjectionHeadDim = *config.ProjectionHeadDim
+	}
+	if config.LoraRank > 0 && config.LoraInitMethod != "" {
+		key.LoraInitMethod = config.LoraInitMethod
+	}
+	return key
 }

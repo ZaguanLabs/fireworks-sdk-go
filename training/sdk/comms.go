@@ -2,6 +2,7 @@ package sdk
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 )
 
@@ -14,10 +15,12 @@ const (
 
 // CreateModelResponse retains per-model optional trainer capabilities.
 type CreateModelResponse struct {
-	ModelID             string              `json:"model_id"`
-	Comms               Comms               `json:"comms,omitempty"`
-	RoutingMatrixFormat RoutingMatrixFormat `json:"routing_matrix_format,omitempty"`
-	R3StoreID           string              `json:"r3_store_id,omitempty"`
+	SupportsRouterReplay   *bool               `json:"supports_router_replay,omitempty"`
+	SupportsRDMAWeightSync bool                `json:"supports_rdma_weight_sync,omitempty"`
+	ModelID                string              `json:"model_id"`
+	Comms                  Comms               `json:"comms,omitempty"`
+	RoutingMatrixFormat    RoutingMatrixFormat `json:"routing_matrix_format,omitempty"`
+	R3StoreID              string              `json:"r3_store_id,omitempty"`
 }
 
 // TrainingModelCreator lets a transport return the complete model-creation result.
@@ -28,6 +31,8 @@ type TrainingModelCreator interface {
 
 func (c *FiretitanTrainingClient) ApplyModelCreationResponse(response CreateModelResponse) {
 	c.ModelID = response.ModelID
+	c.SupportsRouterReplay = cloneBoolPointer(response.SupportsRouterReplay)
+	c.trainerSupportsRDMA = response.SupportsRDMAWeightSync
 	c.Communication = CommsV1
 	if response.Comms == CommsV2 {
 		c.Communication = CommsV2
@@ -80,4 +85,66 @@ func LinearLossWeights(gradient []float32, shape []int) (TensorData, error) {
 		data[i] = -v
 	}
 	return TensorData{Data: data, DType: "float32", Shape: append([]int(nil), shape...)}, nil
+}
+
+// UnmarshalJSON treats malformed capability flags as unknown/unsupported,
+// matching trainers that predate these optional fields.
+func (r *CreateModelResponse) UnmarshalJSON(data []byte) error {
+	type plain CreateModelResponse
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	replay := raw["supports_router_replay"]
+	rdma := raw["supports_rdma_weight_sync"]
+	delete(raw, "supports_router_replay")
+	delete(raw, "supports_rdma_weight_sync")
+	rest, err := json.Marshal(raw)
+	if err != nil {
+		return err
+	}
+	var out plain
+	if err := json.Unmarshal(rest, &out); err != nil {
+		return err
+	}
+	var value bool
+	if string(replay) == "true" || string(replay) == "false" {
+		_ = json.Unmarshal(replay, &value)
+		out.SupportsRouterReplay = &value
+	}
+	out.SupportsRDMAWeightSync = string(rdma) == "true"
+	*r = CreateModelResponse(out)
+	return nil
+}
+
+// CreateModelRequestBody exposes the FireTitan create-model extensions for adapters.
+func (c FiretitanProvisioningConfig) CreateModelRequestBody(sessionID string, modelSeqID int, metadata map[string]string) map[string]any {
+	body := map[string]any{"session_id": sessionID, "model_seq_id": modelSeqID, "base_model": c.BaseModel, "user_metadata": metadata}
+	lora := map[string]any{"rank": c.LoraRank, "train_mlp": boolOrDefault(c.TrainMLP, true), "train_attn": boolOrDefault(c.TrainAttn, true), "train_unembed": boolOrDefault(c.TrainUnembed, true)}
+	if c.LoraRank > 0 {
+		if c.LoraAlpha != nil {
+			lora["alpha"] = *c.LoraAlpha
+		} else {
+			lora["alpha"] = DefaultLoraAlpha
+		}
+		if c.LoraInitMethod != "" {
+			lora["init_method"] = c.LoraInitMethod
+		}
+	}
+	body["lora_config"] = lora
+	if c.Seed != nil {
+		lora["seed"] = *c.Seed
+	}
+	if c.ProjectionHeadDim != nil && *c.ProjectionHeadDim > 0 {
+		body["projection_head_dim"] = *c.ProjectionHeadDim
+	}
+	return body
+}
+
+// ForwardRequestBody is the forward-only endpoint's wire envelope.
+func (o ForwardBackwardOptions) ForwardRequestBody() map[string]any {
+	body := o.RequestBody()
+	body["forward_input"] = body["forward_backward_input"]
+	delete(body, "forward_backward_input")
+	return body
 }

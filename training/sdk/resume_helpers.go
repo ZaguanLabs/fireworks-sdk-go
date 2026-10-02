@@ -6,12 +6,13 @@ import (
 )
 
 type WeightsInfo struct {
-	BaseModel    string
-	IsLora       bool
-	LoraRank     *int
-	TrainUnembed *bool
-	TrainMLP     *bool
-	TrainAttn    *bool
+	ProjectionHeadDim *int
+	BaseModel         string
+	IsLora            bool
+	LoraRank          *int
+	TrainUnembed      *bool
+	TrainMLP          *bool
+	TrainAttn         *bool
 }
 
 type TrainingClientResumePlan struct {

@@ -88,7 +88,7 @@ func (c *FireworksClient) ModelIsMoE(ctx context.Context, model string) (bool, e
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return false, fmt.Errorf("failed to fetch model details for %q (HTTP %d): %s", model, resp.StatusCode, ParseAPIErrorBody(body))
+		return false, &ModelDetailsUnavailableError{StatusCode: resp.StatusCode, Message: fmt.Sprintf("failed to fetch model details for %q (HTTP %d): %s", model, resp.StatusCode, ParseAPIErrorBody(body))}
 	}
 	var data map[string]any
 	if err := json.Unmarshal(body, &data); err != nil {

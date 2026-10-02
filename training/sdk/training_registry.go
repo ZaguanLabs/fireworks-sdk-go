@@ -6,15 +6,17 @@ import (
 )
 
 type TrainingClientKey struct {
-	BaseModel    string
-	LoraRank     int
-	Seed         int
-	HasSeed      bool
-	TrainMLP     bool
-	TrainAttn    bool
-	TrainUnembed bool
-	LoraAlpha    int
-	HasLoraAlpha bool
+	ProjectionHeadDim int
+	LoraInitMethod    string
+	BaseModel         string
+	LoraRank          int
+	Seed              int
+	HasSeed           bool
+	TrainMLP          bool
+	TrainAttn         bool
+	TrainUnembed      bool
+	LoraAlpha         int
+	HasLoraAlpha      bool
 }
 
 func NewTrainingClientKey(baseModel string, loraRank int, seed *int, trainMLP, trainAttn, trainUnembed bool, loraAlpha ...*int) TrainingClientKey {
@@ -24,6 +26,9 @@ func NewTrainingClientKey(baseModel string, loraRank int, seed *int, trainMLP, t
 		TrainMLP:     trainMLP,
 		TrainAttn:    trainAttn,
 		TrainUnembed: trainUnembed,
+	}
+	if loraRank > 0 {
+		key.LoraInitMethod = "kaiming"
 	}
 	if seed != nil {
 		key.Seed = *seed

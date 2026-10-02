@@ -42,6 +42,9 @@ type FiretitanProvisioningConfig struct {
 	TokenizerModel                 string
 	LoraRank                       int
 	LoraAlpha                      *int
+	LoraInitMethod                 string
+	ProjectionHeadDim              *int
+	WeightSyncTransport            string
 	MaxLoraRank                    *int
 	TrainingShapeID                string
 
@@ -70,6 +73,7 @@ type FiretitanProvisioningConfig struct {
 	AcceleratorCount          *int
 	CustomImageTag            string
 	ExtraArgs                 []string
+	ExtraValues               map[string]string
 	DeploymentExtraArgs       []string
 	DeploymentExtraValues     map[string]string
 	TrainerReplicaCount       *int
@@ -103,6 +107,20 @@ type ManagedDeploymentShapeResolver interface {
 
 func (c FiretitanProvisioningConfig) Normalize() (FiretitanProvisioningConfig, error) {
 	out := c
+	if out.WeightSyncTransport != "" && out.WeightSyncTransport != "RDMA" {
+		return out, fmt.Errorf("weight_sync_transport must be RDMA or empty")
+	}
+	if out.ProjectionHeadDim != nil {
+		if *out.ProjectionHeadDim < 0 {
+			return out, fmt.Errorf("projection_head_dim must be non-negative")
+		}
+		if *out.ProjectionHeadDim == 0 {
+			out.ProjectionHeadDim = nil
+		} else {
+			out.ProjectionHeadDim = cloneIntPointer(out.ProjectionHeadDim)
+		}
+	}
+	out.ExtraValues = cloneStringMap(out.ExtraValues)
 	if out.CreateDeployment == nil {
 		out.CreateDeployment = boolPointer(true)
 	}
@@ -199,6 +217,9 @@ func ReferenceManagedConfig(config FiretitanProvisioningConfig, policyLoraRank i
 	out.CreateDeployment = boolPointer(false)
 	out.ForwardOnly = true
 	out.MaxLoraRank = nil
+	out.ProjectionHeadDim = nil
+	out.WeightSyncTransport = ""
+	out.LoraInitMethod = ""
 	out.ReferenceRequired = false
 	out.TrainerReplicaCount = nil
 	out.ExtraArgs = ReferenceExtraArgs(config.ExtraArgs)
@@ -345,6 +366,7 @@ func DefaultDeploymentIDAt(baseModel string, unixSeconds int64) string {
 }
 
 type TinkerSamplerBackend struct {
+	AllowRDMA         *bool
 	DeployMgr         *DeploymentManager
 	DeploymentID      string
 	BaseModel         string

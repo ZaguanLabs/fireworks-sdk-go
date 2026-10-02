@@ -29,6 +29,7 @@ const (
 )
 
 type DeploymentInfo struct {
+	BaseModel              string
 	DeploymentID           string
 	Name                   string
 	State                  string
@@ -497,6 +498,7 @@ func (m *DeploymentManager) ParseDeploymentInfo(deploymentID string, data map[st
 		HotLoadTransitionType:  transitionType,
 		DeploymentShapeVersion: firstString(data, "deploymentShape", "deployment_shape"),
 		InferenceModel:         "accounts/" + accountID + "/deployments/" + deploymentID,
+		BaseModel:              firstString(data, "baseModel", "base_model"),
 	}
 }
 

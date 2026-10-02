@@ -649,6 +649,8 @@ func (c *FiretitanServiceClient) CreateInferenceDeploymentSampler(ctx context.Co
 }
 
 type CreateFiretitanTrainingClientOptions struct {
+	ProjectionHeadDim          *int
+	LoraInitMethod             string
 	ModelCreationResponse      *CreateModelResponse
 	ConfigOverride             *FiretitanProvisioningConfig
 	BaseModel                  string
@@ -720,6 +722,7 @@ type TrainingComputeBackend interface {
 type WeightsInfoProvider func(context.Context, string) (WeightsInfo, error)
 
 type CreateTrainingClientFromStateOptions struct {
+	ProjectionHeadDim   *int
 	UserMetadata        map[string]string
 	WeightsAccessToken  *string
 	WeightsInfo         *WeightsInfo
@@ -737,35 +740,43 @@ type CreateReferenceClientOptions struct {
 }
 
 type CreateLoraTrainingClientOptions struct {
-	Rank         int
-	Alpha        *int
-	Seed         *int
-	TrainMLP     *bool
-	TrainAttn    *bool
-	TrainUnembed *bool
-	UserMetadata map[string]string
+	ProjectionHeadDim *int
+	InitMethod        string
+	Rank              int
+	Alpha             *int
+	Seed              *int
+	TrainMLP          *bool
+	TrainAttn         *bool
+	TrainUnembed      *bool
+	UserMetadata      map[string]string
 }
 
 type FiretitanTrainingClient struct {
-	Communication       Comms
-	RoutingMatrixFormat RoutingMatrixFormat
-	R3StoreID           string
-	Service             *FiretitanServiceClient
-	Config              FiretitanProvisioningConfig
-	UserMetadata        map[string]string
-	Warnings            []string
-	HandleMetadata      ManagedHandleMetadata
-	SamplerBackend      *TinkerSamplerBackend
-	WeightSyncer        *WeightSyncer
-	StateBackend        TrainingStateBackend
-	AdapterLoader       TrainingAdapterLoader
-	ComputeBackend      TrainingComputeBackend
-	ModelID             string
-	RunName             string
-	TrainerBaseURL      string
-	RequestSeqID        int
-	SavedStateNames     map[string]bool
-	SyncState           ManagedSamplerSyncState
+	operationMu          sync.Mutex
+	SupportsRouterReplay *bool
+	trainerSupportsRDMA  bool
+	rdmaAvailable        bool
+	rdmaSessionID        string
+	rdmaSourceEpoch      string
+	Communication        Comms
+	RoutingMatrixFormat  RoutingMatrixFormat
+	R3StoreID            string
+	Service              *FiretitanServiceClient
+	Config               FiretitanProvisioningConfig
+	UserMetadata         map[string]string
+	Warnings             []string
+	HandleMetadata       ManagedHandleMetadata
+	SamplerBackend       *TinkerSamplerBackend
+	WeightSyncer         *WeightSyncer
+	StateBackend         TrainingStateBackend
+	AdapterLoader        TrainingAdapterLoader
+	ComputeBackend       TrainingComputeBackend
+	ModelID              string
+	RunName              string
+	TrainerBaseURL       string
+	RequestSeqID         int
+	SavedStateNames      map[string]bool
+	SyncState            ManagedSamplerSyncState
 }
 
 func (c *FiretitanServiceClient) CreateTrainingClient(ctx context.Context, opts ...CreateFiretitanTrainingClientOptions) (*FiretitanTrainingClient, error) {
@@ -792,6 +803,20 @@ func (c *FiretitanServiceClient) CreateTrainingClient(ctx context.Context, opts 
 			return nil, err
 		}
 		config = normalized
+	}
+	if opt.ProjectionHeadDim != nil && *opt.ProjectionHeadDim != 0 {
+		if *opt.ProjectionHeadDim < 0 {
+			return nil, fmt.Errorf("projection_head_dim must be non-negative")
+		}
+		if config.ProjectionHeadDim == nil || *config.ProjectionHeadDim != *opt.ProjectionHeadDim {
+			return nil, fmt.Errorf("projection_head_dim is fixed by the service configuration")
+		}
+	}
+	if opt.LoraInitMethod != "" {
+		if config.MaxLoraRank == nil && opt.ConfigOverride == nil {
+			return nil, fmt.Errorf("lora_init_method requires a per-model configuration or max_lora_rank")
+		}
+		config.LoraInitMethod = opt.LoraInitMethod
 	}
 	if config.LoraRank > 0 && config.LoraAlpha == nil {
 		config.LoraAlpha = intPointer(DefaultLoraAlpha)
@@ -935,6 +960,8 @@ func (c *FiretitanServiceClient) CreateLoraTrainingClient(ctx context.Context, b
 	if opt.Alpha != nil {
 		config.LoraAlpha = cloneIntPointer(opt.Alpha)
 	}
+	config.ProjectionHeadDim = cloneIntPointer(opt.ProjectionHeadDim)
+	config.LoraInitMethod = opt.InitMethod
 	config.Seed = cloneIntPointer(opt.Seed)
 	config.TrainMLP = boolPointer(true)
 	config.TrainAttn = boolPointer(true)
@@ -1044,6 +1071,7 @@ func (c *FiretitanServiceClient) CreateTrainingClientFromWeightsInfo(ctx context
 	config := c.Config
 	config.BaseModel = plan.BaseModel
 	config.LoraRank = plan.LoraRank
+	config.ProjectionHeadDim = cloneIntPointer(info.ProjectionHeadDim)
 	config.TrainUnembed = boolPointer(plan.TrainUnembed)
 	config.TrainMLP = boolPointer(plan.TrainMLP)
 	config.TrainAttn = boolPointer(plan.TrainAttn)
@@ -1051,6 +1079,9 @@ func (c *FiretitanServiceClient) CreateTrainingClientFromWeightsInfo(ctx context
 	var opt CreateTrainingClientFromStateOptions
 	if len(opts) > 0 {
 		opt = opts[0]
+	}
+	if opt.ProjectionHeadDim != nil {
+		config.ProjectionHeadDim = cloneIntPointer(opt.ProjectionHeadDim)
 	}
 	return c.CreateTrainingClient(ctx, CreateFiretitanTrainingClientOptions{
 		ConfigOverride: &config,
@@ -1110,11 +1141,12 @@ func (c *FiretitanServiceClient) createTrainingClientFromState(ctx context.Conte
 	}
 
 	client, err := c.CreateTrainingClientFromWeightsInfo(ctx, info, CreateTrainingClientFromStateOptions{
-		UserMetadata:   opt.UserMetadata,
-		StateBackend:   stateBackend,
-		AdapterLoader:  opt.AdapterLoader,
-		ModelID:        opt.ModelID,
-		TrainerBaseURL: opt.TrainerBaseURL,
+		ProjectionHeadDim: opt.ProjectionHeadDim,
+		UserMetadata:      opt.UserMetadata,
+		StateBackend:      stateBackend,
+		AdapterLoader:     opt.AdapterLoader,
+		ModelID:           opt.ModelID,
+		TrainerBaseURL:    opt.TrainerBaseURL,
 	})
 	if err != nil {
 		return nil, err
@@ -1183,6 +1215,8 @@ func (c *FiretitanTrainingClient) OptimStepExt(ctx context.Context, adamParams a
 	if err != nil {
 		return nil, err
 	}
+	c.operationMu.Lock()
+	defer c.operationMu.Unlock()
 	c.RequestSeqID++
 	return c.ComputeBackend.OptimStep(ctx, OptimStepOptions{
 		ModelID:                       c.ModelID,
@@ -1214,6 +1248,8 @@ func (c *FiretitanTrainingClient) ForwardBackward(ctx context.Context, data []Tr
 	if err := c.ValidateRoutingData(data); err != nil {
 		return ForwardBackwardOutput{}, err
 	}
+	c.operationMu.Lock()
+	defer c.operationMu.Unlock()
 	c.RequestSeqID++
 	output, err := c.ComputeBackend.ForwardBackward(ctx, ForwardBackwardOptions{
 		Comms:        c.Comms(),
@@ -1359,6 +1395,8 @@ func (c *FiretitanTrainingClient) LoadAdapter(ctx context.Context, adapterPath s
 	if trainerBaseURL == "" {
 		return LoadAdapterResponse{}, fmt.Errorf("trainer_base_url must be a non-empty string")
 	}
+	c.operationMu.Lock()
+	defer c.operationMu.Unlock()
 	c.RequestSeqID++
 	return c.AdapterLoader.LoadAdapter(ctx, LoadAdapterOptions{
 		TrainerBaseURL: trainerBaseURL,
@@ -1404,6 +1442,15 @@ func (c *FiretitanTrainingClient) SaveWeightsForSampler(ctx context.Context, nam
 }
 
 func (c *FiretitanTrainingClient) SaveWeightsForSamplerExt(ctx context.Context, name string, opts SaveWeightsForSamplerOptions) (SaveSamplerResult, error) {
+	if c == nil {
+		return SaveSamplerResult{}, fmt.Errorf("training client is nil")
+	}
+	c.operationMu.Lock()
+	defer c.operationMu.Unlock()
+	return c.saveWeightsForSamplerExt(ctx, name, opts)
+}
+
+func (c *FiretitanTrainingClient) saveWeightsForSamplerExt(ctx context.Context, name string, opts SaveWeightsForSamplerOptions) (SaveSamplerResult, error) {
 	if c == nil || c.WeightSyncer == nil {
 		return SaveSamplerResult{}, fmt.Errorf("FiretitanTrainingClient requires a WeightSyncer to save weights for sampler")
 	}
@@ -1426,6 +1473,10 @@ func (c *FiretitanTrainingClient) SaveWeightsForSamplerExt(ctx context.Context, 
 }
 
 func (c *FiretitanTrainingClient) SaveWeightsAndHotload(ctx context.Context, name string, checkpointType ...string) (SaveSamplerResult, error) {
+	if c != nil {
+		c.operationMu.Lock()
+		defer c.operationMu.Unlock()
+	}
 	if c == nil || c.WeightSyncer == nil {
 		return SaveSamplerResult{}, fmt.Errorf("FiretitanTrainingClient requires a WeightSyncer to save and hotload weights for sampler")
 	}

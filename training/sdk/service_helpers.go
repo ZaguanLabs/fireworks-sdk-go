@@ -79,11 +79,12 @@ func TrainingRunMetadataFromManagedConfig(config FiretitanProvisioningConfig, us
 
 func WeightsInfoFromManagedConfig(config FiretitanProvisioningConfig) WeightsInfo {
 	info := WeightsInfo{
-		BaseModel:    config.BaseModel,
-		IsLora:       config.LoraRank > 0,
-		TrainUnembed: cloneBoolPointer(config.TrainUnembed),
-		TrainMLP:     cloneBoolPointer(config.TrainMLP),
-		TrainAttn:    cloneBoolPointer(config.TrainAttn),
+		ProjectionHeadDim: cloneIntPointer(config.ProjectionHeadDim),
+		BaseModel:         config.BaseModel,
+		IsLora:            config.LoraRank > 0,
+		TrainUnembed:      cloneBoolPointer(config.TrainUnembed),
+		TrainMLP:          cloneBoolPointer(config.TrainMLP),
+		TrainAttn:         cloneBoolPointer(config.TrainAttn),
 	}
 	if info.IsLora {
 		info.LoraRank = intPointer(config.LoraRank)

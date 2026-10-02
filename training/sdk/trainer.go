@@ -80,6 +80,7 @@ type TrainerJobConfig struct {
 	Region                    string
 	CustomImageTag            string
 	ExtraArgs                 []string
+	ExtraValues               map[string]string
 	AcceleratorType           string
 	AcceleratorCount          *int
 	TrainingShapeRef          string
@@ -788,6 +789,9 @@ func BuildTrainerCreatePayload(config TrainerJobConfig) map[string]any {
 	}
 	if len(config.ExtraArgs) > 0 {
 		trainingConfig["extraArgs"] = flattenExtraArgs(config.ExtraArgs)
+	}
+	if len(config.ExtraValues) > 0 {
+		payload["extraValues"] = cloneStringMap(config.ExtraValues)
 	}
 	if config.ForwardOnly {
 		payload["forwardOnly"] = true
