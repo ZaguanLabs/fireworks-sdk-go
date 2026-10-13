@@ -68,6 +68,7 @@ type LoadAdapterOptions struct {
 }
 
 type TrainerJobConfig struct {
+	ProjectionHeadDim         *int
 	BaseModel                 string
 	LoraRank                  int
 	MaxContextLength          *int
@@ -114,6 +115,9 @@ func ensureRequestedJobID(config *TrainerJobConfig) string {
 
 func (c TrainerJobConfig) Validate() error {
 	var errors []string
+	if c.ProjectionHeadDim != nil && *c.ProjectionHeadDim < 0 {
+		errors = append(errors, "projection_head_dim must be non-negative")
+	}
 	if c.BaseModel == "" {
 		errors = append(errors, "base_model is required")
 	}
@@ -741,6 +745,9 @@ func BuildTrainerCreatePayload(config TrainerJobConfig) map[string]any {
 		"baseModel":    config.BaseModel,
 		"loraRank":     config.LoraRank,
 		"learningRate": learningRate,
+	}
+	if config.ProjectionHeadDim != nil && *config.ProjectionHeadDim > 0 {
+		trainingConfig["projectionHeadDim"] = *config.ProjectionHeadDim
 	}
 	payload := map[string]any{
 		"serviceMode":    true,

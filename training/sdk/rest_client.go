@@ -13,6 +13,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -22,14 +23,15 @@ var (
 )
 
 type TrainingRestClient struct {
-	apiKey            string
-	accountID         string
-	baseURL           string
-	additionalHeaders map[string]string
-	verifySSLOverride *bool
-	baseVerifySSL     bool
-	httpClient        *http.Client
-	retryOptions      *RequestRetryOptions
+	serverlessSupervised409Retry atomic.Bool
+	apiKey                       string
+	accountID                    string
+	baseURL                      string
+	additionalHeaders            map[string]string
+	verifySSLOverride            *bool
+	baseVerifySSL                bool
+	httpClient                   *http.Client
+	retryOptions                 *RequestRetryOptions
 }
 
 type TrainingRestClientOption func(*TrainingRestClient)
@@ -238,10 +240,33 @@ func (c *TrainingRestClient) request(ctx context.Context, method, path string, b
 		req.Header = c.Headers(headers)
 		return client.Do(req)
 	}
+	var options RequestRetryOptions
 	if c.retryOptions != nil {
-		return RequestWithRetries(call, *c.retryOptions)
+		options = *c.retryOptions
 	}
-	return RequestWithRetries(call)
+	if c.serverlessSupervised409Retry.Load() && strings.HasSuffix(requestURL, "/api/v1/retrieve_future") {
+		original := options.RetryResponse
+		options.RetryResponse = func(resp *http.Response) bool {
+			if original != nil && original(resp) {
+				return true
+			}
+			if resp.StatusCode != 409 {
+				return false
+			}
+			var body []byte
+			if resp.Body != nil {
+				var err error
+				body, err = io.ReadAll(resp.Body)
+				_ = resp.Body.Close()
+				resp.Body = io.NopCloser(bytes.NewReader(body))
+				if err != nil {
+					return false
+				}
+			}
+			return ShouldRetryServerlessCapacity409(requestURL, body, true)
+		}
+	}
+	return RequestWithRetries(call, options)
 }
 
 func trainingHTTPClient(verifySSL bool, timeout time.Duration) *http.Client {
@@ -264,4 +289,13 @@ func cloneStringMap(values map[string]string) map[string]string {
 		out[key] = value
 	}
 	return out
+}
+
+// EnableServerlessSupervised409Retry opts a supervised SFT/DPO client into
+// capacity/recovery retries on serverless future retrieval only.
+func (c *TrainingRestClient) EnableServerlessSupervised409Retry() {
+	c.serverlessSupervised409Retry.Store(true)
+}
+func WithServerlessSupervised409Retry() TrainingRestClientOption {
+	return func(c *TrainingRestClient) { c.EnableServerlessSupervised409Retry() }
 }

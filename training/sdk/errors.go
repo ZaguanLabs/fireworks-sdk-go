@@ -433,9 +433,11 @@ func IsRetryableStatusCode(statusCode int) bool {
 }
 
 type RequestRetryOptions struct {
-	MaxWaitTime time.Duration
-	Now         func() time.Time
-	Sleep       func(time.Duration)
+	// RetryResponse optionally classifies additional retryable responses.
+	RetryResponse func(*http.Response) bool
+	MaxWaitTime   time.Duration
+	Now           func() time.Time
+	Sleep         func(time.Duration)
 }
 
 func RequestWithRetries(fn func() (*http.Response, error), opts ...RequestRetryOptions) (*http.Response, error) {
@@ -467,9 +469,13 @@ func RequestWithRetries(fn func() (*http.Response, error), opts ...RequestRetryO
 			}
 			return nil, err
 		}
-		if resp != nil && IsRetryableStatusCode(resp.StatusCode) {
+		if resp != nil && (IsRetryableStatusCode(resp.StatusCode) || (opt.RetryResponse != nil && opt.RetryResponse(resp))) {
 			if delay, ok := trainingBackoffDelay(attempt, start, opt); ok {
 				attempt++
+				if resp.Body != nil {
+					_, _ = io.Copy(io.Discard, resp.Body)
+					_ = resp.Body.Close()
+				}
 				opt.Sleep(delay)
 				continue
 			}

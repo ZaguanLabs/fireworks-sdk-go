@@ -129,11 +129,11 @@ func TestDeploymentSamplerTimeoutErrorIncludesDiagnostics(t *testing.T) {
 		WithDeploymentSamplerRetryJitter(func() float64 { return 0 }),
 		WithDeploymentSamplerMaxConcurrency(3),
 	)
-	sampler.recentMetrics = []ServerMetrics{{
+	sampler.recordAttemptMetrics(&ServerMetrics{
 		PrefillQueueDuration:  &prefill,
 		ClientTTFT:            &ttft,
 		NumConcurrentRequests: &concurrent,
-	}}
+	})
 	_, err := sampler.SampleWithPromptTokens(context.Background(), []int{1, 2, 3}, SampleOptions{
 		N:         1,
 		MaxTokens: 4,

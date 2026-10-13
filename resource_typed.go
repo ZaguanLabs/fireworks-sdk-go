@@ -3,6 +3,7 @@ package fireworks
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -726,4 +727,25 @@ func (r *DeploymentShapeVersionsResource) MatchForModelTyped(ctx context.Context
 		return nil, err
 	}
 	return r.MatchTyped(ctx, map[string]any{"create_deployment_request": map[string]any{"parent": "accounts/" + account, "deployment": map[string]any{"base_model": model, "enable_addons": enableAddons}}}, opts...)
+}
+
+func (r *DPOJobsResource) CancelTyped(ctx context.Context, jobID string, body any, opts ...RequestOption) (Response, error) {
+	if jobID == "" {
+		return nil, fmt.Errorf("job ID must be non-empty")
+	}
+	return typedPostResponseInAccount(ctx, r.client, "/dpoJobs/"+pathEscape(jobID)+":cancel", body, opts...)
+}
+
+func (r *SupervisedFineTuningJobsResource) CancelTyped(ctx context.Context, jobID string, body any, opts ...RequestOption) (Response, error) {
+	if jobID == "" {
+		return nil, fmt.Errorf("job ID must be non-empty")
+	}
+	return typedPostResponseInAccount(ctx, r.client, "/supervisedFineTuningJobs/"+pathEscape(jobID)+":cancel", body, opts...)
+}
+
+func (r *ReinforcementFineTuningStepsResource) CancelTyped(ctx context.Context, jobID string, body any, opts ...RequestOption) (Response, error) {
+	if jobID == "" {
+		return nil, fmt.Errorf("job ID must be non-empty")
+	}
+	return typedPostResponseInAccount(ctx, r.client, "/reinforcementFineTuningSteps/"+pathEscape(jobID)+":cancel", body, opts...)
 }

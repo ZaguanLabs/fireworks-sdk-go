@@ -222,7 +222,7 @@ func ReferenceManagedConfig(config FiretitanProvisioningConfig, policyLoraRank i
 	out.LoraInitMethod = ""
 	out.ReferenceRequired = false
 	out.TrainerReplicaCount = nil
-	out.ExtraArgs = ReferenceExtraArgs(config.ExtraArgs)
+	out.ExtraArgs = append([]string(nil), config.ExtraArgs...)
 	cleanupReference := true
 	if config.CleanupReferenceTrainerOnClose != nil {
 		cleanupReference = *config.CleanupReferenceTrainerOnClose

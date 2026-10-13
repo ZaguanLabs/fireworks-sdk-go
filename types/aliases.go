@@ -204,3 +204,6 @@ func nextPageInfo(nextPageToken *string) *PageInfo {
 
 type DeploymentShapeVersionMatchCreateDeploymentRequest = DeploymentShapeVersionMatchParamsCreateDeploymentRequest
 type DeploymentShapeVersionMatchDeployment = DeploymentShapeVersionMatchParamsDeployment
+
+// DpoJobCancelParams is the upstream exported cancellation body alias.
+type DpoJobCancelParams = DPOJobCancelParamsDpoJobCancelParams

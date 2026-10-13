@@ -1164,6 +1164,12 @@ type DPOJobDpoJob struct {
 	WandbConfig               *SharedWandbConfig                     `json:"wandbConfig,omitempty"`
 }
 
+// DPOJobCancelParamsDpoJobCancelParams mirrors fireworks.types.dpo_job_cancel_params.DpoJobCancelParams.
+type DPOJobCancelParamsDpoJobCancelParams struct {
+	AccountID string `json:"account_id,omitempty"`
+	Body      any    `json:"body"`
+}
+
 // DPOJobCreateParamsDpoJobCreateParams mirrors fireworks.types.dpo_job_create_params.DpoJobCreateParams.
 type DPOJobCreateParamsDpoJobCreateParams struct {
 	AccountID                 string                                      `json:"account_id,omitempty"`
@@ -2301,6 +2307,12 @@ type ReinforcementFineTuningStep struct {
 	WandbConfig            *SharedWandbConfig                                 `json:"wandbConfig,omitempty"`
 }
 
+// ReinforcementFineTuningStepCancelParams mirrors fireworks.types.reinforcement_fine_tuning_step_cancel_params.ReinforcementFineTuningStepCancelParams.
+type ReinforcementFineTuningStepCancelParams struct {
+	AccountID string `json:"account_id,omitempty"`
+	Body      any    `json:"body"`
+}
+
 // ReinforcementFineTuningStepCreateParams mirrors fireworks.types.reinforcement_fine_tuning_step_create_params.ReinforcementFineTuningStepCreateParams.
 type ReinforcementFineTuningStepCreateParams struct {
 	AccountID              string                                                        `json:"account_id,omitempty"`
@@ -2981,6 +2993,12 @@ type SupervisedFineTuningJob struct {
 	UseReservation                     *bool                                          `json:"useReservation,omitempty"`
 	WandbConfig                        *SharedWandbConfig                             `json:"wandbConfig,omitempty"`
 	WarmStartFrom                      *string                                        `json:"warmStartFrom,omitempty"`
+}
+
+// SupervisedFineTuningJobCancelParams mirrors fireworks.types.supervised_fine_tuning_job_cancel_params.SupervisedFineTuningJobCancelParams.
+type SupervisedFineTuningJobCancelParams struct {
+	AccountID string `json:"account_id,omitempty"`
+	Body      any    `json:"body"`
 }
 
 // SupervisedFineTuningJobCreateParams mirrors fireworks.types.supervised_fine_tuning_job_create_params.SupervisedFineTuningJobCreateParams.

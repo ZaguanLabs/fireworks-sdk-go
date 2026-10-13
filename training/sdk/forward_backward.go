@@ -21,19 +21,20 @@ const (
 	LossFnCrossEntropy LossFn = "cross_entropy"
 	LossFnDAPO         LossFn = "dapo"
 	LossFnGSPO         LossFn = "gspo"
+	LossFnDPPO         LossFn = "dppo"
 )
 
 func FireworksBuiltinLossFns() []LossFn {
-	return []LossFn{LossFnDAPO, LossFnGSPO}
+	return []LossFn{LossFnDAPO, LossFnGSPO, LossFnDPPO}
 }
 
 func NormalizeLossFn(lossFn string) (LossFn, error) {
 	normalized := LossFn(strings.ToLower(strings.TrimSpace(lossFn)))
 	switch normalized {
-	case LossFnCrossEntropy, LossFnDAPO, LossFnGSPO:
+	case LossFnCrossEntropy, LossFnDAPO, LossFnGSPO, LossFnDPPO:
 		return normalized, nil
 	default:
-		return "", fmt.Errorf("unknown loss_fn %q; expected one of: cross_entropy, dapo, gspo", lossFn)
+		return "", fmt.Errorf("unknown loss_fn %q; expected one of: cross_entropy, dapo, gspo, dppo", lossFn)
 	}
 }
 
@@ -42,7 +43,7 @@ func IsFireworksBuiltinLossFn(lossFn string) bool {
 	if err != nil {
 		return false
 	}
-	return normalized == LossFnDAPO || normalized == LossFnGSPO
+	return normalized == LossFnDAPO || normalized == LossFnGSPO || normalized == LossFnDPPO
 }
 
 type TensorData struct {

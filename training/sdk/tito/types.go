@@ -90,9 +90,10 @@ func NormalizeOpenAIToolArguments(value any) string {
 }
 
 type ParsedAssistant struct {
-	Message        map[string]any `json:"message"`
-	OutputKind     string         `json:"output_kind"`
-	ParserFallback bool           `json:"parser_fallback"`
+	ResponseMessage map[string]any `json:"response_message,omitempty"`
+	Message         map[string]any `json:"message"`
+	OutputKind      string         `json:"output_kind"`
+	ParserFallback  bool           `json:"parser_fallback"`
 }
 
 type ChatRequest struct {
@@ -159,6 +160,10 @@ func NewChatRequestFromOpenAI(payload map[string]any, wireBody ...string) (ChatR
 			steps = append(steps, fmt.Sprintf("messages[%d].content:whitespace_to_empty", i))
 		}
 		for j := range calls {
+			if _, ok := calls[j]["index"]; ok {
+				delete(calls[j], "index")
+				steps = append(steps, fmt.Sprintf("messages[%d].tool_calls[%d].index:stream_index_removed", i, j))
+			}
 			fn, _ := calls[j]["function"].(map[string]any)
 			if fn == nil {
 				continue
@@ -358,6 +363,7 @@ type CallRecord struct {
 	ErrorCode            string                     `json:"error_code,omitempty"`
 }
 type Turn struct {
+	TopSamplingReferences           *sdk.RoutingReferences     `json:"top_sampling_references,omitempty"`
 	RoutingReferences               *sdk.RoutingReferences     `json:"-"`
 	PromptRoutingStart              *int                       `json:"prompt_routing_start,omitempty"`
 	PromptRoutingMatrices           []string                   `json:"prompt_routing_matrices,omitempty"`
@@ -612,6 +618,13 @@ func (v *Turn) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	value := Turn(decoded.wire)
+	if value.TopSamplingReferences != nil {
+		refs, err := sdk.ParseRoutingReferences(value.TopSamplingReferences)
+		if err != nil {
+			return err
+		}
+		value.TopSamplingReferences = refs
+	}
 	var err error
 	value.RoutingMatrices, value.RoutingReferences, err = sdk.RoutingFromWire(decoded.Routing)
 	if err != nil {
@@ -622,5 +635,36 @@ func (v *Turn) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	*v = value
+	return nil
+}
+
+// MarshalJSON omits response_message for legacy-identical canonical messages.
+func (v ParsedAssistant) MarshalJSON() ([]byte, error) {
+	type wire ParsedAssistant
+	a, _ := canonicalJSON(v.Message)
+	b, _ := canonicalJSON(v.ResponseMessage)
+	if string(a) == string(b) {
+		v.ResponseMessage = nil
+	}
+	return json.Marshal(wire(v))
+}
+func (v *ParsedAssistant) UnmarshalJSON(data []byte) error {
+	type wire ParsedAssistant
+	var value wire
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	if value.ResponseMessage != nil {
+		canonical, err := NewChatRequestFromOpenAI(map[string]any{"messages": []any{value.ResponseMessage}})
+		if err != nil {
+			return err
+		}
+		a, _ := canonicalJSON(canonical.Messages[0])
+		b, _ := canonicalJSON(value.Message)
+		if string(a) != string(b) {
+			return fmt.Errorf("assistant response_message differs from canonical message")
+		}
+	}
+	*v = ParsedAssistant(value)
 	return nil
 }

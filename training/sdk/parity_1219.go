@@ -17,26 +17,12 @@ type ModelDetailsUnavailableError struct {
 
 func (e *ModelDetailsUnavailableError) Error() string { return e.Message }
 
+// TrainerExtraArgs retains opaque caller arguments; projection topology is a typed field.
 func TrainerExtraArgs(config FiretitanProvisioningConfig) []string {
-	args := append([]string(nil), config.ExtraArgs...)
-	if config.ProjectionHeadDim != nil && *config.ProjectionHeadDim > 0 {
-		args = append(args, fmt.Sprintf("--projection-head-dim=%d", *config.ProjectionHeadDim))
-	}
-	return args
+	return append([]string(nil), config.ExtraArgs...)
 }
 func RDMACandidate(config FiretitanProvisioningConfig) bool {
-	if config.CreateDeployment != nil && !*config.CreateDeployment {
-		return false
-	}
-	if config.LoraRank != 0 || config.MaxLoraRank != nil || config.ForwardOnly || PolicyOutputCMEKResource(config.ExtraArgs) != "" {
-		return false
-	}
-	for _, values := range []map[string]string{config.ExtraValues, config.DeploymentExtraValues} {
-		if v, ok := values["rdmaWeightSyncEnabled"]; ok && v != "true" {
-			return false
-		}
-	}
-	return true
+	return (config.CreateDeployment == nil || *config.CreateDeployment) && config.LoraRank == 0 && config.MaxLoraRank == nil && !config.ForwardOnly
 }
 func deploymentBaseModel(info DeploymentInfo, fallback string) string {
 	if info.BaseModel != "" {

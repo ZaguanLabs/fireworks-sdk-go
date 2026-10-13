@@ -8,7 +8,7 @@ import (
 )
 
 func TestNormalizeLossFnIncludesFireworksBuiltins(t *testing.T) {
-	if !reflect.DeepEqual(FireworksBuiltinLossFns(), []LossFn{LossFnDAPO, LossFnGSPO}) {
+	if !reflect.DeepEqual(FireworksBuiltinLossFns(), []LossFn{LossFnDAPO, LossFnGSPO, LossFnDPPO}) {
 		t.Fatalf("builtins = %#v", FireworksBuiltinLossFns())
 	}
 	tests := map[string]LossFn{

@@ -215,6 +215,21 @@ func (s *DeploymentSampler) routingRequest(ctx context.Context, payload map[stri
 		return nil, fmt.Errorf("r3_ttl_seconds must be a positive integer")
 	}
 	headers := s.completionHeaders(opts)
+	if payload["top_sampling_format"] == "parquet_v1" {
+		k, ok := intFromStrictAny(payload["top_sampling_logprobs"])
+		_, store, required := s.routingBinding()
+		if !ok || k < 1 {
+			return nil, fmt.Errorf("Parquet sampling requires positive integer top_sampling_logprobs")
+		}
+		if store == "" || required {
+			return nil, fmt.Errorf("Parquet sampling requires a trainer shared-storage binding")
+		}
+		headers.Set(R3StoreHeader, store)
+		if ttl != nil {
+			headers.Set(R3TTLHeader, strconv.Itoa(*ttl))
+		}
+	}
+
 	if wanted, _ := payload["include_routing_matrix"].(bool); !wanted {
 		return headers, nil
 	}
@@ -239,6 +254,25 @@ func (s *DeploymentSampler) routingRequest(ctx context.Context, payload map[stri
 
 func validateRoutingData(data []TrainingDatum, format RoutingMatrixFormat, store string) error {
 	for _, datum := range data {
+		if raw := datum.ModelInput["top_sampling_references"]; raw != nil {
+			if store == "" {
+				return fmt.Errorf("top-K references require trainer shared storage")
+			}
+			refs, err := ParseRoutingReferences(raw)
+			if err != nil {
+				return err
+			}
+			count, ok := modelInputPositionCount(datum.ModelInput)
+			if !ok || count != refs.Length {
+				return fmt.Errorf("top-K references must match model input length")
+			}
+			for _, f := range refs.Files {
+				if f["store_id"] != store {
+					return fmt.Errorf("top-K reference belongs to a different storage domain")
+				}
+			}
+		}
+
 		raw := datum.ModelInput["routing_references"]
 		if raw == nil {
 			continue

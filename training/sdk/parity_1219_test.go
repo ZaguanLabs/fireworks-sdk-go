@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
-	"strings"
 	"testing"
 	"time"
 )
@@ -45,7 +44,7 @@ func Test1219ProjectionConfigAndGradients(t *testing.T) {
 	if body["projection_head_dim"] != 2 || body["lora_config"].(map[string]any)["init_method"] != "nora" {
 		t.Fatal(body)
 	}
-	if !reflect.DeepEqual(TrainerExtraArgs(config), []string{"--existing", "--projection-head-dim=2"}) {
+	if !reflect.DeepEqual(TrainerExtraArgs(config), []string{"--existing"}) {
 		t.Fatal(TrainerExtraArgs(config))
 	}
 	if len(config.ExtraArgs) != 1 {
@@ -231,12 +230,12 @@ func Test1219SamplerCloseAndDrain(t *testing.T) {
 	}
 }
 
-func Test1219TrainerChartOverrides(t *testing.T) {
+func Test1223TrainerChartOverridesAreOpaque(t *testing.T) {
 	config := FiretitanProvisioningConfig{BaseModel: "base", ProjectionHeadDim: intPointer(4), ExtraValues: map[string]string{"rdmaWeightSyncEnabled": "false"}}
-	if RDMACandidate(config) {
-		t.Fatal("explicit opt-out ignored")
+	if !RDMACandidate(config) {
+		t.Fatal("opaque overrides changed RDMA eligibility")
 	}
-	if !strings.Contains(strings.Join(TrainerExtraArgs(config), " "), "--projection-head-dim=4") {
-		t.Fatal("missing projection flag")
+	if len(TrainerExtraArgs(config)) != 0 {
+		t.Fatal("projection topology leaked into opaque flags")
 	}
 }

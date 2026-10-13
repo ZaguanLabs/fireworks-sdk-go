@@ -325,7 +325,7 @@ func ProvisionManagedHandle(ctx context.Context, opts ManagedProvisionOptions) (
 		requiresInitialSync = attached.ResetSnapshotChain
 		deploymentCreated = attached.Created
 		if opts.DeploymentManager != nil {
-			cmekResource := PolicyOutputCMEKResource(config.ExtraArgs)
+			cmekResource := ""
 			samplerBackend = &TinkerSamplerBackend{
 				DeployMgr:         opts.DeploymentManager,
 				DeploymentID:      attached.Info.DeploymentID,
@@ -432,6 +432,7 @@ func BuildManagedTrainerJobConfig(config FiretitanProvisioningConfig, maxContext
 		Region:                    config.Region,
 		CustomImageTag:            config.CustomImageTag,
 		ExtraArgs:                 TrainerExtraArgs(config),
+		ProjectionHeadDim:         cloneIntPointer(config.ProjectionHeadDim),
 		ExtraValues:               cloneStringMap(config.ExtraValues),
 		AcceleratorType:           acceleratorType,
 		AcceleratorCount:          acceleratorCount,

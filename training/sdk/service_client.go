@@ -752,31 +752,32 @@ type CreateLoraTrainingClientOptions struct {
 }
 
 type FiretitanTrainingClient struct {
-	operationMu          sync.Mutex
-	SupportsRouterReplay *bool
-	trainerSupportsRDMA  bool
-	rdmaAvailable        bool
-	rdmaSessionID        string
-	rdmaSourceEpoch      string
-	Communication        Comms
-	RoutingMatrixFormat  RoutingMatrixFormat
-	R3StoreID            string
-	Service              *FiretitanServiceClient
-	Config               FiretitanProvisioningConfig
-	UserMetadata         map[string]string
-	Warnings             []string
-	HandleMetadata       ManagedHandleMetadata
-	SamplerBackend       *TinkerSamplerBackend
-	WeightSyncer         *WeightSyncer
-	StateBackend         TrainingStateBackend
-	AdapterLoader        TrainingAdapterLoader
-	ComputeBackend       TrainingComputeBackend
-	ModelID              string
-	RunName              string
-	TrainerBaseURL       string
-	RequestSeqID         int
-	SavedStateNames      map[string]bool
-	SyncState            ManagedSamplerSyncState
+	SupportsTargetLogprobSupport bool
+	operationMu                  sync.Mutex
+	SupportsRouterReplay         *bool
+	trainerSupportsRDMA          bool
+	rdmaAvailable                bool
+	rdmaSessionID                string
+	rdmaSourceEpoch              string
+	Communication                Comms
+	RoutingMatrixFormat          RoutingMatrixFormat
+	R3StoreID                    string
+	Service                      *FiretitanServiceClient
+	Config                       FiretitanProvisioningConfig
+	UserMetadata                 map[string]string
+	Warnings                     []string
+	HandleMetadata               ManagedHandleMetadata
+	SamplerBackend               *TinkerSamplerBackend
+	WeightSyncer                 *WeightSyncer
+	StateBackend                 TrainingStateBackend
+	AdapterLoader                TrainingAdapterLoader
+	ComputeBackend               TrainingComputeBackend
+	ModelID                      string
+	RunName                      string
+	TrainerBaseURL               string
+	RequestSeqID                 int
+	SavedStateNames              map[string]bool
+	SyncState                    ManagedSamplerSyncState
 }
 
 func (c *FiretitanServiceClient) CreateTrainingClient(ctx context.Context, opts ...CreateFiretitanTrainingClientOptions) (*FiretitanTrainingClient, error) {
@@ -1240,6 +1241,13 @@ func (c *FiretitanTrainingClient) ForwardBackward(ctx context.Context, data []Tr
 	}
 	if strings.TrimSpace(c.ModelID) == "" {
 		return ForwardBackwardOutput{}, fmt.Errorf("model_id must be a non-empty string")
+	}
+	support, err := TargetLogprobSupport(lossFnConfig)
+	if err != nil {
+		return ForwardBackwardOutput{}, err
+	}
+	if support == "sampling_support" && !c.SupportsTargetLogprobSupport {
+		return ForwardBackwardOutput{}, fmt.Errorf("trainer does not advertise sampling_support")
 	}
 	normalizedLossFn, err := NormalizeLossFn(lossFn)
 	if err != nil {

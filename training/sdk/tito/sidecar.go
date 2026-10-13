@@ -28,6 +28,7 @@ type ExactTokenSampler interface {
 type CallClassifier func(ChatRequest) (CallKind, string)
 
 type SidecarOptions struct {
+	BindAddress              string
 	IncrementalPromptRouting bool
 	MaxContextTokens         int
 	MaxOutputTokens          int
@@ -87,6 +88,14 @@ func NewSidecar(sampler ExactTokenSampler, renderer Renderer, options SidecarOpt
 	if sampler == nil || renderer == nil {
 		return nil, errors.New("sampler and renderer are required")
 	}
+	if options.BindAddress == "" {
+		options.BindAddress = "127.0.0.1"
+	}
+	address := net.ParseIP(options.BindAddress)
+	if address == nil || address.IsUnspecified() || address.IsMulticast() {
+		return nil, fmt.Errorf("bind_address must be a specific unicast IPv4 or IPv6 address")
+	}
+	options.BindAddress = address.String()
 	if options.MaxContextTokens < 2 || options.MaxOutputTokens < 1 {
 		return nil, errors.New("invalid context/output token limits")
 	}
@@ -154,7 +163,7 @@ func (s *Sidecar) Start(port ...int) error {
 	if len(port) > 0 {
 		requested = port[0]
 	}
-	listener, err := net.Listen("tcp", "127.0.0.1:"+strconv.Itoa(requested))
+	listener, err := net.Listen("tcp", net.JoinHostPort(s.options.BindAddress, strconv.Itoa(requested)))
 	if err != nil {
 		return err
 	}
@@ -554,6 +563,9 @@ func (s *Sidecar) complete(ctx context.Context, t *trajectory, request ChatReque
 		}
 	}
 	completionIDs := append([]int(nil), completion.FullTokens[completion.PromptLen:]...)
+	if extra["top_sampling_format"] == "parquet_v1" && (completion.TopSamplingReferences == nil || completion.TopSamplingReferences.Length != len(completionIDs)) {
+		return CallResult{}, &Error{Code: "tito_completion_alignment_error", Status: 502, Message: "top-K references do not align with completion IDs"}
+	}
 	if err := validateCompletionArrays(completion, len(completionIDs)); err != nil {
 		return CallResult{}, err
 	}
@@ -574,12 +586,19 @@ func (s *Sidecar) complete(ctx context.Context, t *trajectory, request ChatReque
 	if assistant.OutputKind == "" {
 		assistant.OutputKind = "text"
 	}
+	if assistant.ResponseMessage == nil {
+		assistant.ResponseMessage = cloneAnyMap(assistant.Message)
+	}
+	canonicalPayload := map[string]any{"messages": []any{assistant.Message}}
+	if canonical, err := NewChatRequestFromOpenAI(canonicalPayload); err == nil {
+		assistant.Message = canonical.Messages[0]
+	}
 	turnID := randomHex(16)
 	responseID := result.UpstreamResponseID
 	if responseID == "" {
 		responseID = "chatcmpl-tito-" + turnID
 	}
-	turn := Turn{RoutingReferences: completion.RoutingReferences, PromptRoutingStart: promptRoutingStart, PromptRoutingMatrices: promptRouting, PromptRoutingReferences: promptRefs, InferenceTopKTokenIDs: cloneRows(completion.InferenceTopKTokenIDs), InferenceTopKLogprobs: cloneRows(completion.InferenceTopKLogprobs), TurnID: turnID, Request: request, Assistant: assistant, ExactPromptIDs: append([]int(nil), prompt...), ExactCompletionIDs: completionIDs, InferenceLogprobs: append([]float64(nil), completion.InferenceLogprobs...), SamplingLogprobs: append([]*float64(nil), completion.SamplingLogprobs...), RoutingMatrices: append([]string(nil), completion.RoutingMatrices...), ResponseID: responseID, FinishReason: completion.FinishReason, PromptDisposition: disposition, RealignedMaskedTokens: realigned, RequestedOutputTokens: requested, EffectiveOutputTokens: effective, ContextRemainingTokens: remaining, ServerMetrics: result.ServerMetrics, SamplerWallSeconds: result.WallSeconds, LogicalRequestID: result.LogicalRequestID, UpstreamResponseID: result.UpstreamResponseID, UpstreamAttempts: result.Attempts, PromptMode: promptMode, IncrementalFallbackReason: fallbackReason, ServerAttempts: result.ServerAttempts, ParserFallback: parserFallback}
+	turn := Turn{TopSamplingReferences: completion.TopSamplingReferences, RoutingReferences: completion.RoutingReferences, PromptRoutingStart: promptRoutingStart, PromptRoutingMatrices: promptRouting, PromptRoutingReferences: promptRefs, InferenceTopKTokenIDs: cloneRows(completion.InferenceTopKTokenIDs), InferenceTopKLogprobs: cloneRows(completion.InferenceTopKLogprobs), TurnID: turnID, Request: request, Assistant: assistant, ExactPromptIDs: append([]int(nil), prompt...), ExactCompletionIDs: completionIDs, InferenceLogprobs: append([]float64(nil), completion.InferenceLogprobs...), SamplingLogprobs: append([]*float64(nil), completion.SamplingLogprobs...), RoutingMatrices: append([]string(nil), completion.RoutingMatrices...), ResponseID: responseID, FinishReason: completion.FinishReason, PromptDisposition: disposition, RealignedMaskedTokens: realigned, RequestedOutputTokens: requested, EffectiveOutputTokens: effective, ContextRemainingTokens: remaining, ServerMetrics: result.ServerMetrics, SamplerWallSeconds: result.WallSeconds, LogicalRequestID: result.LogicalRequestID, UpstreamResponseID: result.UpstreamResponseID, UpstreamAttempts: result.Attempts, PromptMode: promptMode, IncrementalFallbackReason: fallbackReason, ServerAttempts: result.ServerAttempts, ParserFallback: parserFallback}
 	if len(t.checkpoint) > 0 {
 		p := prefix
 		turn.PrefixMatchTokens = &p
@@ -632,7 +651,10 @@ func (s *Sidecar) complete(ctx context.Context, t *trajectory, request ChatReque
 }
 
 func openAIResponse(turn Turn, text, model string) map[string]any {
-	message := cloneAnyMap(turn.Assistant.Message)
+	message := cloneAnyMap(turn.Assistant.ResponseMessage)
+	if message == nil {
+		message = cloneAnyMap(turn.Assistant.Message)
+	}
 	if _, ok := message["role"]; !ok {
 		message["role"] = "assistant"
 	}
@@ -653,9 +675,15 @@ func openAIStreamChunks(response, request map[string]any) []map[string]any {
 	if choices, ok := response["choices"].([]any); ok && len(choices) > 0 {
 		if choice, ok := choices[0].(map[string]any); ok {
 			if parsed, ok := choice["message"].(map[string]any); ok {
-				message = cloneAnyMap(parsed)
+				message, _ = cloneJSONMap(parsed)
 			}
 		}
+	}
+	if calls, err := mapSlice(message["tool_calls"]); err == nil && len(calls) > 0 {
+		for i := range calls {
+			calls[i]["index"] = i
+		}
+		message["tool_calls"] = anyMapSlice(calls)
 	}
 	first := base()
 	first["choices"] = []any{map[string]any{"index": 0, "delta": message, "finish_reason": nil}}
