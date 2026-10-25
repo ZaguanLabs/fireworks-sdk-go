@@ -233,6 +233,9 @@ func TestServerlessSamplingRouteAndAffinity(t *testing.T) {
 	if svc.Fireworks.BaseURL() != "https://api.example.com" {
 		t.Fatalf("control-plane base URL = %q", svc.Fireworks.BaseURL())
 	}
+	if _, err := svc.CreateTrainingClient(context.Background(), CreateFiretitanTrainingClientOptions{ModelID: "run-1:train:0"}); err != nil {
+		t.Fatal(err)
+	}
 	client, err := svc.CreateSamplingClient(context.Background(), "a/run-1/step-2", nil, nil)
 	if err != nil {
 		t.Fatal(err)

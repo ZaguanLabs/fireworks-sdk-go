@@ -50,8 +50,8 @@ func (c *FiretitanServiceClient) CreateDeploymentSamplerFuture(ctx context.Conte
 	})
 }
 
-func (c *FiretitanServiceClient) GetServerCapabilitiesFuture(context.Context) *Future[ServerCapabilitiesResponse] {
-	return ReadyFuture(c.GetServerCapabilities(), nil)
+func (c *FiretitanServiceClient) GetServerCapabilitiesFuture(ctx context.Context) *Future[ServerCapabilitiesResponse] {
+	return SubmitFuture(func() (ServerCapabilitiesResponse, error) { return c.FetchServerCapabilities(ctx) })
 }
 
 func (c *FiretitanServiceClient) CreateTrainingClientFromStateFuture(ctx context.Context, path string, opts ...CreateTrainingClientFromStateOptions) *Future[*FiretitanTrainingClient] {
@@ -67,85 +67,85 @@ func (c *FiretitanServiceClient) CreateTrainingClientFromStateWithOptimizerFutur
 }
 
 func (c *FiretitanTrainingClient) SaveWeightsForSamplerFuture(ctx context.Context, name string, checkpointType ...string) *Future[SaveSamplerResult] {
-	return SubmitFuture(func() (SaveSamplerResult, error) {
+	return submitTrainingFuture(c, ctx, func(ctx context.Context) (SaveSamplerResult, error) {
 		return c.SaveWeightsForSampler(ctx, name, checkpointType...)
 	})
 }
 
 func (c *FiretitanTrainingClient) SaveWeightsForSamplerExtFuture(ctx context.Context, name string, opts SaveWeightsForSamplerOptions) *Future[SaveSamplerResult] {
-	return SubmitFuture(func() (SaveSamplerResult, error) {
+	return submitTrainingFuture(c, ctx, func(ctx context.Context) (SaveSamplerResult, error) {
 		return c.SaveWeightsForSamplerExt(ctx, name, opts)
 	})
 }
 
 func (c *FiretitanTrainingClient) SaveWeightsAndHotloadFuture(ctx context.Context, name string, checkpointType ...string) *Future[SaveSamplerResult] {
-	return SubmitFuture(func() (SaveSamplerResult, error) {
+	return submitTrainingFuture(c, ctx, func(ctx context.Context) (SaveSamplerResult, error) {
 		return c.SaveWeightsAndHotload(ctx, name, checkpointType...)
 	})
 }
 
 func (c *FiretitanTrainingClient) CreateSamplingClientFuture(ctx context.Context, modelPath string, tokenizer DeploymentTokenizer, controller SamplingConcurrencyController) *Future[*FiretitanSamplingClient] {
-	return SubmitFuture(func() (*FiretitanSamplingClient, error) {
+	return submitTrainingFuture(c, ctx, func(ctx context.Context) (*FiretitanSamplingClient, error) {
 		return c.CreateSamplingClient(ctx, modelPath, tokenizer, controller)
 	})
 }
 
 func (c *FiretitanTrainingClient) CreateBaseTrainingClientFuture(ctx context.Context, baseModel string, userMetadata map[string]string) *Future[*FiretitanTrainingClient] {
-	return SubmitFuture(func() (*FiretitanTrainingClient, error) {
+	return submitTrainingFuture(c, ctx, func(ctx context.Context) (*FiretitanTrainingClient, error) {
 		return c.CreateBaseTrainingClient(ctx, baseModel, userMetadata)
 	})
 }
 
 func (c *FiretitanTrainingClient) OptimStepFuture(ctx context.Context, adamParams any, gradAccumulationNormalization any) *Future[map[string]any] {
-	return SubmitFuture(func() (map[string]any, error) {
+	return submitTrainingFuture(c, ctx, func(ctx context.Context) (map[string]any, error) {
 		return c.OptimStep(ctx, adamParams, gradAccumulationNormalization)
 	})
 }
 
 func (c *FiretitanTrainingClient) OptimStepExtFuture(ctx context.Context, adamParams any, opts OptimStepExtOptions) *Future[map[string]any] {
-	return SubmitFuture(func() (map[string]any, error) {
+	return submitTrainingFuture(c, ctx, func(ctx context.Context) (map[string]any, error) {
 		return c.OptimStepExt(ctx, adamParams, opts)
 	})
 }
 
 func (c *FiretitanTrainingClient) ForwardBackwardFuture(ctx context.Context, data []TrainingDatum, lossFn string, lossFnConfig map[string]any) *Future[ForwardBackwardOutput] {
-	return SubmitFuture(func() (ForwardBackwardOutput, error) {
+	return submitTrainingFuture(c, ctx, func(ctx context.Context) (ForwardBackwardOutput, error) {
 		return c.ForwardBackward(ctx, data, lossFn, lossFnConfig)
 	})
 }
 
 func (c *FiretitanTrainingClient) ForwardBackwardContrastiveFuture(ctx context.Context, data []TrainingDatum, opts ForwardBackwardContrastiveOptions) *Future[ForwardBackwardOutput] {
-	return SubmitFuture(func() (ForwardBackwardOutput, error) {
+	return submitTrainingFuture(c, ctx, func(ctx context.Context) (ForwardBackwardOutput, error) {
 		return c.ForwardBackwardContrastive(ctx, data, opts)
 	})
 }
 
 func (c *FiretitanTrainingClient) SaveWeightsAndGetSamplingClientFuture(ctx context.Context, name string, tokenizer DeploymentTokenizer, checkpointType ...string) *Future[*FiretitanSamplingClient] {
-	return SubmitFuture(func() (*FiretitanSamplingClient, error) {
+	return submitTrainingFuture(c, ctx, func(ctx context.Context) (*FiretitanSamplingClient, error) {
 		return c.SaveWeightsAndGetSamplingClient(ctx, name, tokenizer, checkpointType...)
 	})
 }
 
 func (c *FiretitanTrainingClient) SaveStateFuture(ctx context.Context, name string, opts ...SaveStateOptions) *Future[SaveStateResult] {
-	return SubmitFuture(func() (SaveStateResult, error) {
+	return submitTrainingFuture(c, ctx, func(ctx context.Context) (SaveStateResult, error) {
 		return c.SaveState(ctx, name, opts...)
 	})
 }
 
 func (c *FiretitanTrainingClient) LoadStateFuture(ctx context.Context, path string, weightsAccessToken *string) *Future[struct{}] {
-	return SubmitFuture(func() (struct{}, error) {
+	return submitTrainingFuture(c, ctx, func(ctx context.Context) (struct{}, error) {
 		return struct{}{}, c.LoadState(ctx, path, weightsAccessToken)
 	})
 }
 
 func (c *FiretitanTrainingClient) LoadStateWithOptimizerFuture(ctx context.Context, path string, weightsAccessToken *string) *Future[struct{}] {
-	return SubmitFuture(func() (struct{}, error) {
+	return submitTrainingFuture(c, ctx, func(ctx context.Context) (struct{}, error) {
 		return struct{}{}, c.LoadStateWithOptimizer(ctx, path, weightsAccessToken)
 	})
 }
 
 func (c *FiretitanTrainingClient) LoadAdapterFuture(ctx context.Context, adapterPath string) *Future[LoadAdapterResponse] {
-	return SubmitFuture(func() (LoadAdapterResponse, error) {
+	return submitTrainingFuture(c, ctx, func(ctx context.Context) (LoadAdapterResponse, error) {
 		return c.LoadAdapter(ctx, adapterPath)
 	})
 }

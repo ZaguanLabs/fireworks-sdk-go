@@ -763,15 +763,14 @@ func TestFiretitanTrainingClientStateDelegationAndWarnings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ttl := 60
-	result, err := client.SaveState(context.Background(), " step-1 ", SaveStateOptions{TTLSeconds: &ttl})
+	result, err := client.SaveState(context.Background(), " step-1 ")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if result.Path != "state://step-1" || len(state.saveCalls) != 1 || state.saveCalls[0] != "step-1" {
 		t.Fatalf("save result=%#v calls=%#v", result, state.saveCalls)
 	}
-	if state.saveOptions[0].TTLSeconds == nil || *state.saveOptions[0].TTLSeconds != 60 {
+	if state.saveOptions[0].TTLSeconds != nil {
 		t.Fatalf("save options = %#v", state.saveOptions[0])
 	}
 	if _, err := client.SaveState(context.Background(), "step-1"); err != nil {
@@ -1305,7 +1304,6 @@ func TestFiretitanTrainingClientSaveWeightsForSamplerExtRecordsSnapshotType(t *t
 	}
 	result, err := client.SaveWeightsForSamplerExt(context.Background(), "step-1", SaveWeightsForSamplerOptions{
 		CheckpointType: "delta",
-		TTL:            time.Hour,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1313,7 +1311,7 @@ func TestFiretitanTrainingClientSaveWeightsForSamplerExtRecordsSnapshotType(t *t
 	if result.Path != "storage/path" || result.SnapshotName != "step-1-session" {
 		t.Fatalf("result = %#v", result)
 	}
-	if len(saver.calls) != 1 || saver.calls[0].CheckpointType != "delta" || saver.calls[0].TTL != time.Hour {
+	if len(saver.calls) != 1 || saver.calls[0].CheckpointType != "delta" || saver.calls[0].TTL != 0 {
 		t.Fatalf("save calls = %#v", saver.calls)
 	}
 	if backend.snapshotTypes["step-1-session"] != "delta" {

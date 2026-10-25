@@ -15,13 +15,18 @@ const (
 
 // CreateModelResponse retains per-model optional trainer capabilities.
 type CreateModelResponse struct {
-	SupportsTargetLogprobSupport *bool               `json:"supports_target_logprob_support,omitempty"`
-	SupportsRouterReplay         *bool               `json:"supports_router_replay,omitempty"`
-	SupportsRDMAWeightSync       bool                `json:"supports_rdma_weight_sync,omitempty"`
-	ModelID                      string              `json:"model_id"`
-	Comms                        Comms               `json:"comms,omitempty"`
-	RoutingMatrixFormat          RoutingMatrixFormat `json:"routing_matrix_format,omitempty"`
-	R3StoreID                    string              `json:"r3_store_id,omitempty"`
+	SupportsReinforce                *bool               `json:"supports_reinforce,omitempty"`
+	SupportsScoreCentering           *bool               `json:"supports_score_centering,omitempty"`
+	SupportsPolicyImportanceSampling *bool               `json:"supports_policy_importance_sampling,omitempty"`
+	SupportsPolicyDiagnostics        *bool               `json:"supports_policy_diagnostics,omitempty"`
+	RDMAWeightSyncEnabled            *bool               `json:"rdma_weight_sync_enabled,omitempty"`
+	SupportsTargetLogprobSupport     *bool               `json:"supports_target_logprob_support,omitempty"`
+	SupportsRouterReplay             *bool               `json:"supports_router_replay,omitempty"`
+	SupportsRDMAWeightSync           bool                `json:"supports_rdma_weight_sync,omitempty"`
+	ModelID                          string              `json:"model_id"`
+	Comms                            Comms               `json:"comms,omitempty"`
+	RoutingMatrixFormat              RoutingMatrixFormat `json:"routing_matrix_format,omitempty"`
+	R3StoreID                        string              `json:"r3_store_id,omitempty"`
 }
 
 // TrainingModelCreator lets a transport return the complete model-creation result.
@@ -32,6 +37,11 @@ type TrainingModelCreator interface {
 
 func (c *FiretitanTrainingClient) ApplyModelCreationResponse(response CreateModelResponse) {
 	c.ModelID = response.ModelID
+	c.SupportsReinforce = response.SupportsReinforce != nil && *response.SupportsReinforce
+	c.SupportsScoreCentering = response.SupportsScoreCentering != nil && *response.SupportsScoreCentering
+	c.SupportsPolicyImportanceSampling = response.SupportsPolicyImportanceSampling != nil && *response.SupportsPolicyImportanceSampling
+	c.SupportsPolicyDiagnostics = response.SupportsPolicyDiagnostics != nil && *response.SupportsPolicyDiagnostics
+	c.trainerRDMAEnabled = cloneBoolPointer(response.RDMAWeightSyncEnabled)
 	c.SupportsTargetLogprobSupport = response.SupportsTargetLogprobSupport != nil && *response.SupportsTargetLogprobSupport
 	c.SupportsRouterReplay = cloneBoolPointer(response.SupportsRouterReplay)
 	c.trainerSupportsRDMA = response.SupportsRDMAWeightSync
@@ -97,6 +107,11 @@ func (r *CreateModelResponse) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
+	flags := map[string]json.RawMessage{}
+	for _, key := range []string{"supports_reinforce", "supports_score_centering", "supports_policy_importance_sampling", "supports_policy_diagnostics", "rdma_weight_sync_enabled"} {
+		flags[key] = raw[key]
+		delete(raw, key)
+	}
 	support := raw["supports_target_logprob_support"]
 	delete(raw, "supports_target_logprob_support")
 	replay := raw["supports_router_replay"]
@@ -121,6 +136,25 @@ func (r *CreateModelResponse) UnmarshalJSON(data []byte) error {
 		out.SupportsTargetLogprobSupport = &v
 	}
 	out.SupportsRDMAWeightSync = string(rdma) == "true"
+	for key, data := range flags {
+		var flag *bool
+		if string(data) == "true" || string(data) == "false" {
+			value := string(data) == "true"
+			flag = &value
+		}
+		switch key {
+		case "supports_reinforce":
+			out.SupportsReinforce = flag
+		case "supports_score_centering":
+			out.SupportsScoreCentering = flag
+		case "supports_policy_importance_sampling":
+			out.SupportsPolicyImportanceSampling = flag
+		case "supports_policy_diagnostics":
+			out.SupportsPolicyDiagnostics = flag
+		case "rdma_weight_sync_enabled":
+			out.RDMAWeightSyncEnabled = flag
+		}
+	}
 	*r = CreateModelResponse(out)
 	return nil
 }

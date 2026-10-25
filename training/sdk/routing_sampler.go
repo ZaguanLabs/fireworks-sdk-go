@@ -86,7 +86,7 @@ func unsupportedRoutingFormat(code int, body []byte) bool {
 	if json.Unmarshal(body, &result) != nil {
 		return false
 	}
-	return (result.Error.Code == "invalid_request_error" || result.Error.Code == "INVALID_ARGUMENT") && result.Error.Message == "Extra inputs are not permitted, field: 'routing_matrix_format', value: 'parquet_v1'"
+	return (result.Error.Code == "invalid_request_error" || result.Error.Code == "INVALID_ARGUMENT") && (result.Error.Message == "Extra inputs are not permitted, field: 'routing_matrix_format', value: 'parquet_v1'" || result.Error.Message == "Extra inputs are not permitted, field: 'routing_matrix_format'")
 }
 func (s *DeploymentSampler) completionHeaders(opts CompletionRequestOptions) http.Header {
 	h := http.Header{}
@@ -215,10 +215,10 @@ func (s *DeploymentSampler) routingRequest(ctx context.Context, payload map[stri
 		return nil, fmt.Errorf("r3_ttl_seconds must be a positive integer")
 	}
 	headers := s.completionHeaders(opts)
-	if payload["top_sampling_format"] == "parquet_v1" {
+	if payload["top_sampling_format"] == "parquet_v1" || payload["sampling_mask"] == "parquet_v1" {
 		k, ok := intFromStrictAny(payload["top_sampling_logprobs"])
 		_, store, required := s.routingBinding()
-		if !ok || k < 1 {
+		if payload["top_sampling_format"] == "parquet_v1" && (!ok || k < 1) {
 			return nil, fmt.Errorf("Parquet sampling requires positive integer top_sampling_logprobs")
 		}
 		if store == "" || required {
@@ -254,25 +254,27 @@ func (s *DeploymentSampler) routingRequest(ctx context.Context, payload map[stri
 
 func validateRoutingData(data []TrainingDatum, format RoutingMatrixFormat, store string) error {
 	for _, datum := range data {
-		if raw := datum.ModelInput["top_sampling_references"]; raw != nil {
-			if store == "" {
-				return fmt.Errorf("top-K references require trainer shared storage")
-			}
-			refs, err := ParseRoutingReferences(raw)
-			if err != nil {
-				return err
-			}
-			count, ok := modelInputPositionCount(datum.ModelInput)
-			if !ok || count != refs.Length {
-				return fmt.Errorf("top-K references must match model input length")
-			}
-			for _, f := range refs.Files {
-				if f["store_id"] != store {
-					return fmt.Errorf("top-K reference belongs to a different storage domain")
+		for _, key := range []string{"top_sampling_references", "sampling_mask_references"} {
+			if raw := datum.ModelInput[key]; raw != nil {
+				if store == "" {
+					return fmt.Errorf("top-K references require trainer shared storage")
+				}
+				refs, err := ParseRoutingReferences(raw)
+				if err != nil {
+					return err
+				}
+				count, ok := modelInputPositionCount(datum.ModelInput)
+				if !ok || count != refs.Length {
+					return fmt.Errorf("top-K references must match model input length")
+				}
+				for _, f := range refs.Files {
+					if f["store_id"] != store {
+						return fmt.Errorf("top-K reference belongs to a different storage domain")
+					}
 				}
 			}
-		}
 
+		}
 		raw := datum.ModelInput["routing_references"]
 		if raw == nil {
 			continue

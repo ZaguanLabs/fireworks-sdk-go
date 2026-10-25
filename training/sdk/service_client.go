@@ -10,6 +10,8 @@ import (
 )
 
 type FiretitanServiceClientOptions struct {
+	AdditionalHeaders map[string]string
+
 	APIKey              string
 	BaseURL             string
 	TrainingSessionID   string
@@ -22,6 +24,8 @@ type FiretitanServiceClientOptions struct {
 }
 
 type FiretitanServiceClient struct {
+	AdditionalHeaders map[string]string
+
 	trainingClients           []*FiretitanTrainingClient
 	Config                    FiretitanProvisioningConfig
 	ServerlessSessionID       string
@@ -68,6 +72,7 @@ func NewFiretitanServiceClient(opts FiretitanServiceClientOptions) (*FiretitanSe
 		now = time.Now
 	}
 	client := &FiretitanServiceClient{
+		AdditionalHeaders:   serverlessCallerHeaders(opts.AdditionalHeaders),
 		Config:              config,
 		ServerlessSessionID: strings.TrimSpace(opts.TrainingSessionID),
 		DefaultUserMetadata: cloneStringMap(opts.DefaultUserMetadata),
@@ -418,6 +423,12 @@ func (c *FiretitanServiceClient) CreateSamplingClient(ctx context.Context, model
 	if err != nil {
 		return nil, err
 	}
+	if strings.Contains(sampler.DeploymentSampler.Model, "/trainingSamplers/") {
+		return sampler, nil
+	}
+	if _, session, _, ok := ParseTrainingSessionCheckpointPath(sampler.DeploymentSampler.Model); ok && session != c.TrainingSessionID() {
+		return sampler, nil
+	}
 	c.lifecycleMu.Lock()
 	clients := append([]*FiretitanTrainingClient(nil), c.trainingClients...)
 	c.lifecycleMu.Unlock()
@@ -462,8 +473,8 @@ func (c *FiretitanServiceClient) createSamplingClient(ctx context.Context, model
 		}
 		return NewFiretitanSamplingClient(sampler), nil
 	}
-	if modelPath != "" && c.SamplerBackend == nil && c.ProvisionedHandle == nil && c.TrainingSessionID() != "" {
-		model, err := c.serverlessSamplingModel(ctx, modelPath)
+	if modelPath != "" && c.SamplerBackend == nil && c.ProvisionedHandle == nil && strings.HasSuffix(c.ManagedBaseURL, "/training/v1/serverless") {
+		model, err := c.serverlessCheckpointModel(ctx, modelPath)
 		if err != nil {
 			return nil, err
 		}
@@ -491,7 +502,15 @@ func (c *FiretitanServiceClient) CreateServerlessBaseSamplingClient(ctx context.
 
 func (c *FiretitanServiceClient) serverlessSamplingModel(ctx context.Context, modelPath string) (string, error) {
 	sessionID := c.TrainingSessionID()
-	accountID := c.ResolvedAccountID(ctx)
+	accountID := ""
+	if account, session, checkpoint, explicit := ParseTrainingSessionCheckpointPath(modelPath); explicit {
+		accountID = account
+		sessionID = session
+		modelPath = checkpoint
+	}
+	if accountID == "" {
+		accountID = c.ResolvedAccountID(ctx)
+	}
 	if sessionID == "" || accountID == "" {
 		return "", fmt.Errorf("serverless sampling requires a resolvable Fireworks account id and a bound training session")
 	}
@@ -507,7 +526,9 @@ func (c *FiretitanServiceClient) newServerlessSamplingClient(model string, token
 	if !strings.HasSuffix(baseURL, "/training/v1/serverless") {
 		return nil, fmt.Errorf("serverless sampling requires FiretitanServiceClient base_url to end with /training/v1/serverless; got %q", baseURL)
 	}
-	opts := []DeploymentSamplerOption{WithDeploymentSamplerAdditionalHeaders(map[string]string{"X-Session-Affinity": model})}
+	headers := serverlessCallerHeaders(c.AdditionalHeaders)
+	headers["X-Session-Affinity"] = model
+	opts := []DeploymentSamplerOption{WithDeploymentSamplerAdditionalHeaders(headers)}
 	if tokenizer != nil {
 		opts = append(opts, WithDeploymentSamplerTokenizer(tokenizer))
 	}
@@ -752,6 +773,16 @@ type CreateLoraTrainingClientOptions struct {
 }
 
 type FiretitanTrainingClient struct {
+	SupportsReinforce                bool
+	SupportsScoreCentering           bool
+	SupportsPolicyImportanceSampling bool
+	SupportsPolicyDiagnostics        bool
+	trainerRDMAEnabled               *bool
+	admissionMu                      sync.Mutex
+	pendingOperations                sync.WaitGroup
+	unloading                        bool
+	unloadFuture                     *Future[map[string]any]
+
 	SupportsTargetLogprobSupport bool
 	operationMu                  sync.Mutex
 	SupportsRouterReplay         *bool
@@ -922,6 +953,18 @@ func (c *FiretitanServiceClient) CreateTrainingClient(ctx context.Context, opts 
 			return nil, err
 		}
 		client.ApplyModelCreationResponse(response)
+	}
+	if native, ok := opt.ComputeBackend.(*NativeTrainingRuntime); ok {
+		bound := native.ForModel(client.ModelID)
+		if client.StateBackend == nil {
+			client.StateBackend = bound
+		}
+		if client.AdapterLoader == nil {
+			client.AdapterLoader = bound
+		}
+		if client.WeightSyncer == nil {
+			client.WeightSyncer = NewWeightSyncer(WeightSyncerConfig{PolicyClient: bound, BaseModel: config.BaseModel, LoraRank: config.LoraRank})
+		}
 	}
 	if opt.RunName == "" {
 		client.RunName = c.ServerlessRunName(ctx, client.ModelID)
@@ -1202,6 +1245,12 @@ type OptimStepExtOptions struct {
 }
 
 func (c *FiretitanTrainingClient) OptimStepExt(ctx context.Context, adamParams any, opts OptimStepExtOptions) (map[string]any, error) {
+	ctx, operationDone, operationErr := c.beginOperation(ctx)
+	if operationErr != nil {
+		return nil, operationErr
+	}
+	defer operationDone()
+
 	if c == nil || c.ComputeBackend == nil {
 		return nil, fmt.Errorf("FiretitanTrainingClient requires a ComputeBackend to optim_step")
 	}
@@ -1236,6 +1285,12 @@ func (c *FiretitanTrainingClient) RunID() string {
 }
 
 func (c *FiretitanTrainingClient) ForwardBackward(ctx context.Context, data []TrainingDatum, lossFn string, lossFnConfig map[string]any) (ForwardBackwardOutput, error) {
+	ctx, operationDone, operationErr := c.beginOperation(ctx)
+	if operationErr != nil {
+		return ForwardBackwardOutput{}, operationErr
+	}
+	defer operationDone()
+
 	if c == nil || c.ComputeBackend == nil {
 		return ForwardBackwardOutput{}, fmt.Errorf("FiretitanTrainingClient requires a ComputeBackend to forward_backward")
 	}
@@ -1248,6 +1303,9 @@ func (c *FiretitanTrainingClient) ForwardBackward(ctx context.Context, data []Tr
 	}
 	if support == "sampling_support" && !c.SupportsTargetLogprobSupport {
 		return ForwardBackwardOutput{}, fmt.Errorf("trainer does not advertise sampling_support")
+	}
+	if err := c.ValidateLossCapabilities(lossFn, lossFnConfig); err != nil {
+		return ForwardBackwardOutput{}, err
 	}
 	normalizedLossFn, err := NormalizeLossFn(lossFn)
 	if err != nil {
@@ -1277,6 +1335,12 @@ func (c *FiretitanTrainingClient) ForwardBackward(ctx context.Context, data []Tr
 }
 
 func (c *FiretitanTrainingClient) ForwardBackwardContrastive(ctx context.Context, data []TrainingDatum, opts ForwardBackwardContrastiveOptions) (ForwardBackwardOutput, error) {
+	ctx, operationDone, operationErr := c.beginOperation(ctx)
+	if operationErr != nil {
+		return ForwardBackwardOutput{}, operationErr
+	}
+	defer operationDone()
+
 	expectedLen := 2*opts.NumQueries + opts.NumExtraNegatives
 	if len(data) != expectedLen {
 		return ForwardBackwardOutput{}, fmt.Errorf(
@@ -1336,12 +1400,21 @@ func (c *FiretitanTrainingClient) ResolveCheckpointPath(checkpointName string, s
 }
 
 func (c *FiretitanTrainingClient) SaveState(ctx context.Context, name string, opts ...SaveStateOptions) (SaveStateResult, error) {
+	ctx, operationDone, operationErr := c.beginOperation(ctx)
+	if operationErr != nil {
+		return SaveStateResult{}, operationErr
+	}
+	defer operationDone()
+
 	if c == nil {
 		return SaveStateResult{}, fmt.Errorf("FiretitanTrainingClient is nil")
 	}
 	var opt SaveStateOptions
 	if len(opts) > 0 {
 		opt = opts[0]
+	}
+	if opt.TTLSeconds != nil {
+		return SaveStateResult{}, fmt.Errorf("Fireworks training does not support checkpoint ttl_seconds")
 	}
 	if err := ValidateSaveStateOptions(opt.Overwrite); err != nil {
 		return SaveStateResult{}, err
@@ -1364,6 +1437,12 @@ func (c *FiretitanTrainingClient) SaveState(ctx context.Context, name string, op
 }
 
 func (c *FiretitanTrainingClient) LoadState(ctx context.Context, path string, weightsAccessToken *string) error {
+	ctx, operationDone, operationErr := c.beginOperation(ctx)
+	if operationErr != nil {
+		return operationErr
+	}
+	defer operationDone()
+
 	if err := RejectTrainingLoadWeightsAccessToken("load_state", weightsAccessToken); err != nil {
 		return err
 	}
@@ -1374,6 +1453,12 @@ func (c *FiretitanTrainingClient) LoadState(ctx context.Context, path string, we
 }
 
 func (c *FiretitanTrainingClient) LoadStateWithOptimizer(ctx context.Context, path string, weightsAccessToken *string) error {
+	ctx, operationDone, operationErr := c.beginOperation(ctx)
+	if operationErr != nil {
+		return operationErr
+	}
+	defer operationDone()
+
 	if err := RejectTrainingLoadWeightsAccessToken("load_state_with_optimizer", weightsAccessToken); err != nil {
 		return err
 	}
@@ -1384,6 +1469,12 @@ func (c *FiretitanTrainingClient) LoadStateWithOptimizer(ctx context.Context, pa
 }
 
 func (c *FiretitanTrainingClient) LoadAdapter(ctx context.Context, adapterPath string) (LoadAdapterResponse, error) {
+	ctx, operationDone, operationErr := c.beginOperation(ctx)
+	if operationErr != nil {
+		return LoadAdapterResponse{}, operationErr
+	}
+	defer operationDone()
+
 	adapterPath = strings.TrimSpace(adapterPath)
 	if adapterPath == "" {
 		return LoadAdapterResponse{}, fmt.Errorf("adapter_path must be a non-empty string")
@@ -1450,6 +1541,12 @@ func (c *FiretitanTrainingClient) SaveWeightsForSampler(ctx context.Context, nam
 }
 
 func (c *FiretitanTrainingClient) SaveWeightsForSamplerExt(ctx context.Context, name string, opts SaveWeightsForSamplerOptions) (SaveSamplerResult, error) {
+	ctx, operationDone, operationErr := c.beginOperation(ctx)
+	if operationErr != nil {
+		return SaveSamplerResult{}, operationErr
+	}
+	defer operationDone()
+
 	if c == nil {
 		return SaveSamplerResult{}, fmt.Errorf("training client is nil")
 	}
@@ -1466,6 +1563,14 @@ func (c *FiretitanTrainingClient) saveWeightsForSamplerExt(ctx context.Context, 
 	if err != nil {
 		return SaveSamplerResult{}, err
 	}
+	if opts.TTL != 0 {
+		return SaveSamplerResult{}, fmt.Errorf("Fireworks training does not support checkpoint ttl_seconds")
+	}
+	if opts.Metadata != nil && opts.Metadata.DecisionCalibration != nil {
+		if err := opts.Metadata.DecisionCalibration.Validate(); err != nil {
+			return SaveSamplerResult{}, err
+		}
+	}
 	opts.CheckpointType = string(ckptType)
 	result, err := c.WeightSyncer.SaveOnlyExt(ctx, name, opts)
 	if err != nil {
@@ -1481,6 +1586,12 @@ func (c *FiretitanTrainingClient) saveWeightsForSamplerExt(ctx context.Context, 
 }
 
 func (c *FiretitanTrainingClient) SaveWeightsAndHotload(ctx context.Context, name string, checkpointType ...string) (SaveSamplerResult, error) {
+	ctx, operationDone, operationErr := c.beginOperation(ctx)
+	if operationErr != nil {
+		return SaveSamplerResult{}, operationErr
+	}
+	defer operationDone()
+
 	if c != nil {
 		c.operationMu.Lock()
 		defer c.operationMu.Unlock()
@@ -1505,6 +1616,12 @@ func (c *FiretitanTrainingClient) RequiresInitialSamplerSync() bool {
 }
 
 func (c *FiretitanTrainingClient) HotloadSamplerSnapshot(ctx context.Context, modelPath string) error {
+	ctx, operationDone, operationErr := c.beginOperation(ctx)
+	if operationErr != nil {
+		return operationErr
+	}
+	defer operationDone()
+
 	if c == nil || c.SamplerBackend == nil {
 		return CreateSamplingClientUnsupportedError()
 	}
@@ -1520,6 +1637,12 @@ func (c *FiretitanTrainingClient) HotloadSamplerSnapshot(ctx context.Context, mo
 }
 
 func (c *FiretitanTrainingClient) CreateSamplingClient(ctx context.Context, modelPath string, tokenizer DeploymentTokenizer, controller SamplingConcurrencyController) (*FiretitanSamplingClient, error) {
+	ctx, operationDone, operationErr := c.beginOperation(ctx)
+	if operationErr != nil {
+		return nil, operationErr
+	}
+	defer operationDone()
+
 	if c == nil || c.SamplerBackend == nil {
 		return nil, CreateSamplingClientUnsupportedError()
 	}

@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"sync"
-	"syscall"
 	"time"
 )
 
@@ -196,11 +195,10 @@ func (s *LocalDebugSink) reserve(size int64) error {
 	if s.bytesWritten+size > s.Config.MaxLocalBytes {
 		return &DebugStorageFullError{Message: "TITO debug byte budget exhausted"}
 	}
-	var stat syscall.Statfs_t
-	if err := syscall.Statfs(s.Config.RootDir, &stat); err != nil {
+	free, err := traceFreeBytes(s.Config.RootDir)
+	if err != nil {
 		return err
 	}
-	free := int64(stat.Bavail) * int64(stat.Bsize)
 	if free-size < s.Config.MinFreeBytes {
 		return &DebugStorageFullError{Message: "TITO debug free-space floor reached"}
 	}

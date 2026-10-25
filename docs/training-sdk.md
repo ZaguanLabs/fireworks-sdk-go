@@ -322,3 +322,13 @@ behaviors are represented explicitly rather than copied literally:
 - Python async/future behavior is represented by context-aware methods and
   `Future` wrappers.
 - Pydantic model mutation is not needed; Go uses typed structs and maps.
+
+## Native training protocol (1.2.30)
+
+`NewNativeTrainingRuntime(restClient, sessionID)` implements the owned JSON training service. Supply it through the existing `ComputeBackend` option when creating a training client; model-specific state, adapter and weight-sync operations attach automatically unless explicitly overridden. `PollInterval` controls future polling, and caller contexts bound the complete operation.
+
+`training/types` contains generated request/response models. The runtime's low-level `Request` method retains extension fields. Custom loss callbacks return explicit native gradients.
+
+Sampler handles exclude credentials; restore with `FiretitanSamplingClientFromHandle` using the receiving process's key. Mask references and top-sampling references are independent channels, both validated against the trainer's storage domain and completion length.
+
+See [the 1.2.30 release matrix](parity-1.2.30.md) for lifecycle, checkpoint, RDMA and TITO behavior changes.

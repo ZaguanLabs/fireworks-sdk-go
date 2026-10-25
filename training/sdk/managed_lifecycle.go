@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -67,6 +68,7 @@ type ManagedProvisionOptions struct {
 }
 
 type ManagedProvisionedHandle struct {
+	closeMu                    sync.Mutex
 	Config                     FiretitanProvisioningConfig
 	UserMetadata               map[string]string
 	TrainerEndpoint            TrainerServiceEndpoint
@@ -90,44 +92,44 @@ type ManagedProvisionedHandle struct {
 }
 
 func (h *ManagedProvisionedHandle) Close(ctx context.Context) error {
-	if h == nil || h.closed {
+	if h == nil {
+		return nil
+	}
+	h.closeMu.Lock()
+	defer h.closeMu.Unlock()
+	if h.closed {
 		return nil
 	}
 	h.closed = true
+	var closeError error
 	if h.ReferenceHandle != nil {
-		if err := h.ReferenceHandle.Close(ctx); err != nil {
-			return err
-		}
+		closeError = errors.Join(closeError, h.ReferenceHandle.Close(ctx))
 	}
 	for _, step := range h.CleanupPlan {
+		var err error
 		switch step.Operation {
 		case ManagedCleanupDeleteDeployment:
-			cleanup, ok := h.DeploymentManager.(ManagedDeploymentCleanup)
-			if !ok {
-				return fmt.Errorf("managed deployment cleanup requires DeleteInfo")
-			}
-			if err := cleanup.DeleteInfo(ctx, step.DeploymentID); err != nil {
-				return err
+			if cleanup, ok := h.DeploymentManager.(ManagedDeploymentCleanup); ok {
+				err = cleanup.DeleteInfo(ctx, step.DeploymentID)
+			} else {
+				err = fmt.Errorf("managed deployment cleanup requires DeleteInfo")
 			}
 		case ManagedCleanupScaleDeploymentZero:
-			cleanup, ok := h.DeploymentManager.(ManagedDeploymentCleanup)
-			if !ok {
-				return fmt.Errorf("managed deployment cleanup requires ScaleToZero")
-			}
-			if err := cleanup.ScaleToZero(ctx, step.DeploymentID); err != nil {
-				return err
+			if cleanup, ok := h.DeploymentManager.(ManagedDeploymentCleanup); ok {
+				err = cleanup.ScaleToZero(ctx, step.DeploymentID)
+			} else {
+				err = fmt.Errorf("managed deployment cleanup requires ScaleToZero")
 			}
 		case ManagedCleanupDeleteTrainer:
-			cleanup, ok := h.TrainerManager.(ManagedTrainerCleanup)
-			if !ok {
-				return fmt.Errorf("managed trainer cleanup requires DeleteJob")
-			}
-			if err := cleanup.DeleteJob(ctx, step.TrainerJobID); err != nil {
-				return err
+			if cleanup, ok := h.TrainerManager.(ManagedTrainerCleanup); ok {
+				err = cleanup.DeleteJob(ctx, step.TrainerJobID)
+			} else {
+				err = fmt.Errorf("managed trainer cleanup requires DeleteJob")
 			}
 		}
+		closeError = errors.Join(closeError, err)
 	}
-	return nil
+	return closeError
 }
 
 func (c *FiretitanServiceClient) ProvisionManagedHandle(ctx context.Context, opts ...ManagedProvisionOptions) (*ManagedProvisionedHandle, error) {

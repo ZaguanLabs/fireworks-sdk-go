@@ -12,6 +12,8 @@ type SaveSamplerResult struct {
 }
 
 type SaveWeightsForSamplerOptions struct {
+	Metadata *SamplerCheckpointMetadata
+
 	CheckpointType  string
 	TTL             time.Duration
 	ExportPrecision string

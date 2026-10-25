@@ -20,8 +20,8 @@ func TargetLogprobSupport(config map[string]any) (string, error) {
 		return "full_vocabulary", nil
 	}
 	support, ok := value.(string)
-	if !ok || (support != "full_vocabulary" && support != "sampling_support") {
-		return "", fmt.Errorf("target_logprob_support must be full_vocabulary or sampling_support")
+	if !ok || (support != "full_vocabulary" && support != "sampling_support" && support != "candidates") {
+		return "", fmt.Errorf("target_logprob_support must be full_vocabulary, sampling_support or candidates")
 	}
 	return support, nil
 }
@@ -100,13 +100,14 @@ func ShouldRetryServerlessCapacity409(requestURL string, body []byte, supervised
 
 // TopSamplingReferencesWireBytes includes compact sampling metadata in transport size estimates.
 func TopSamplingReferencesWireBytes(modelInput map[string]any) int {
-	value := modelInput["top_sampling_references"]
-	if value == nil {
-		return 0
+	total := 0
+	for _, key := range []string{"top_sampling_references", "sampling_mask_references"} {
+		if value := modelInput[key]; value != nil {
+			data, err := json.Marshal(map[string]any{key: value})
+			if err == nil {
+				total += len(data)
+			}
+		}
 	}
-	data, err := json.Marshal(map[string]any{"top_sampling_references": value})
-	if err != nil {
-		return 0
-	}
-	return len(data)
+	return total
 }

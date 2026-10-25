@@ -18,23 +18,28 @@ const (
 type LossFn string
 
 const (
-	LossFnCrossEntropy LossFn = "cross_entropy"
-	LossFnDAPO         LossFn = "dapo"
-	LossFnGSPO         LossFn = "gspo"
-	LossFnDPPO         LossFn = "dppo"
+	LossFnCrossEntropy       LossFn = "cross_entropy"
+	LossFnDAPO               LossFn = "dapo"
+	LossFnGSPO               LossFn = "gspo"
+	LossFnDPPO               LossFn = "dppo"
+	LossFnReinforce          LossFn = "reinforce"
+	LossFnImportanceSampling LossFn = "importance_sampling"
+	LossFnPPO                LossFn = "ppo"
+	LossFnCISPO              LossFn = "cispo"
+	LossFnDRO                LossFn = "dro"
 )
 
 func FireworksBuiltinLossFns() []LossFn {
-	return []LossFn{LossFnDAPO, LossFnGSPO, LossFnDPPO}
+	return []LossFn{LossFnDAPO, LossFnGSPO, LossFnDPPO, LossFnReinforce}
 }
 
 func NormalizeLossFn(lossFn string) (LossFn, error) {
 	normalized := LossFn(strings.ToLower(strings.TrimSpace(lossFn)))
 	switch normalized {
-	case LossFnCrossEntropy, LossFnDAPO, LossFnGSPO, LossFnDPPO:
+	case LossFnCrossEntropy, LossFnDAPO, LossFnGSPO, LossFnDPPO, LossFnReinforce, LossFnImportanceSampling, LossFnPPO, LossFnCISPO, LossFnDRO:
 		return normalized, nil
 	default:
-		return "", fmt.Errorf("unknown loss_fn %q; expected one of: cross_entropy, dapo, gspo, dppo", lossFn)
+		return "", fmt.Errorf("unknown loss_fn %q; expected one of: cross_entropy, dapo, gspo, dppo, reinforce, importance_sampling, ppo, cispo, dro", lossFn)
 	}
 }
 
@@ -43,7 +48,7 @@ func IsFireworksBuiltinLossFn(lossFn string) bool {
 	if err != nil {
 		return false
 	}
-	return normalized == LossFnDAPO || normalized == LossFnGSPO || normalized == LossFnDPPO
+	return normalized == LossFnDAPO || normalized == LossFnGSPO || normalized == LossFnDPPO || normalized == LossFnReinforce
 }
 
 type TensorData struct {

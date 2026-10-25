@@ -28,6 +28,8 @@ type ExactTokenSampler interface {
 type CallClassifier func(ChatRequest) (CallKind, string)
 
 type SidecarOptions struct {
+	FailureTraceConfig *FailureTraceConfig
+
 	BindAddress              string
 	IncrementalPromptRouting bool
 	MaxContextTokens         int
@@ -43,6 +45,8 @@ type SidecarOptions struct {
 }
 
 type Sidecar struct {
+	traces *failureTraceRecorder
+
 	sampler  ExactTokenSampler
 	renderer Renderer
 	options  SidecarOptions
@@ -58,6 +62,8 @@ type TITOSidecar = Sidecar
 type TITOSidecarOptions = SidecarOptions
 
 type trajectory struct {
+	discardError *Error
+
 	mu                 sync.Mutex
 	id                 string
 	credential         string
@@ -122,7 +128,14 @@ func NewSidecar(sampler ExactTokenSampler, renderer Renderer, options SidecarOpt
 	if options.Keepalive == 0 {
 		options.Keepalive = 5 * time.Second
 	}
-	return &Sidecar{sampler: sampler, renderer: renderer, options: options, trajectories: make(map[string]*trajectory)}, nil
+	config := DefaultFailureTraceConfig()
+	if options.FailureTraceConfig != nil {
+		config = *options.FailureTraceConfig
+	}
+	if err := config.Validate(); err != nil {
+		return nil, err
+	}
+	return &Sidecar{traces: newFailureTraceRecorder(config), sampler: sampler, renderer: renderer, options: options, trajectories: make(map[string]*trajectory)}, nil
 }
 
 func NewSidecarFromDeploymentSampler(sampler *sdk.DeploymentSampler, renderer Renderer, options SidecarOptions) (*Sidecar, error) {
@@ -182,10 +195,30 @@ func (s *Sidecar) Close(ctx context.Context) error {
 	s.listener = nil
 	s.baseURL = ""
 	s.mu.Unlock()
-	if server == nil {
-		return nil
+	var shutdownErr error
+	if server != nil {
+		shutdownErr = server.Shutdown(ctx)
 	}
-	return server.Shutdown(ctx)
+	s.mu.RLock()
+	ids := make([]string, 0, len(s.trajectories))
+	for id := range s.trajectories {
+		ids = append(ids, id)
+	}
+	s.mu.RUnlock()
+	for _, id := range ids {
+		t, err := s.trajectoryFor(id)
+		if err != nil {
+			continue
+		}
+		t.mu.Lock()
+		active := t.status == TrajectoryStatusActive
+		t.mu.Unlock()
+		if active {
+			_, err := s.AbandonTrajectory(id, "sidecar_closed")
+			shutdownErr = errors.Join(shutdownErr, err)
+		}
+	}
+	return shutdownErr
 }
 
 func (s *Sidecar) CreateTrajectory(trajectoryID, servingAffinityKey string, metadata map[string]any, policy ...TrajectoryDriftPolicy) (TrajectoryEndpoint, error) {
@@ -214,8 +247,12 @@ func (s *Sidecar) CreateTrajectory(trajectoryID, servingAffinityKey string, meta
 	t := &trajectory{id: trajectoryID, credential: credential, affinityHash: hashJSON(servingAffinityKey), servingAffinityKey: servingAffinityKey, metadata: cloneAnyMap(metadata), status: TrajectoryStatusActive, metrics: MetricSummary{Counters: make(map[string]int), Distributions: make(map[string]Distribution)}, startedAt: nowSeconds(), driftPolicy: drift, idempotency: make(map[string]idempotencyEntry)}
 	s.trajectories[trajectoryID] = t
 	if s.options.Observer != nil {
-		_, _ = s.options.Observer.Record("trajectory_created", trajectoryID, map[string]any{"metadata": metadata}, nil)
+		if _, err := s.options.Observer.Record("trajectory_created", trajectoryID, map[string]any{"metadata": metadata}, nil); err != nil {
+			delete(s.trajectories, trajectoryID)
+			return TrajectoryEndpoint{}, err
+		}
 	}
+	s.traces.record(trajectoryID, "trajectory_open", map[string]any{"metadata": metadata})
 	return TrajectoryEndpoint{TrajectoryID: trajectoryID, OpenAIBaseURL: s.baseURL + "/trajectories/" + trajectoryID + "/v1", APIKey: credential}, nil
 }
 
@@ -245,6 +282,10 @@ func (s *Sidecar) terminate(id string, status TrajectoryStatus, reason string) (
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	if t.discardError != nil {
+		status = TrajectoryStatusFailed
+		reason = t.discardError.Code
+	}
 	if t.status == TrajectoryStatusActive {
 		t.status = status
 		t.terminalReason = reason
@@ -255,8 +296,14 @@ func (s *Sidecar) terminate(id string, status TrajectoryStatus, reason string) (
 	}
 	artifact := t.artifact()
 	if s.options.Observer != nil {
-		_, _ = s.options.Observer.CloseTrajectory(id, t.status, map[string]any{"terminal_reason": t.terminalReason})
+		if _, err := s.options.Observer.CloseTrajectory(id, t.status, map[string]any{"terminal_reason": t.terminalReason}); err != nil {
+			t.status = TrajectoryStatusFailed
+			s.traces.record(id, "terminalization_error", map[string]any{"message": err.Error()})
+			s.traces.closeTrajectory(id, true)
+			return t.artifact(), err
+		}
 	}
+	s.traces.closeTrajectory(id, t.status != TrajectoryStatusCompleted)
 	return artifact, nil
 }
 
@@ -351,9 +398,33 @@ func (s *Sidecar) handleChat(w http.ResponseWriter, r *http.Request, t *trajecto
 	s.recordEmission(t, result.TurnID, emission)
 }
 
-func (s *Sidecar) complete(ctx context.Context, t *trajectory, request ChatRequest, idempotencyKey string) (CallResult, error) {
+func (s *Sidecar) complete(ctx context.Context, t *trajectory, request ChatRequest, idempotencyKey string) (callResult CallResult, returnErr error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			returnErr = &Error{Code: "tito_sdk_internal_error", Status: 500, Message: "local TITO SDK operation failed", Origin: "sdk", DiscardTrajectory: true}
+		}
+		if returnErr != nil {
+			typed := asTITOError(returnErr)
+			if typed.Code == "tito_completion_alignment_error" || typed.Code == "tito_sampler_contract_error" {
+				typed.DiscardTrajectory = true
+			}
+			if typed.DiscardTrajectory {
+				t.discardError = typed
+				t.metadata["tito_failure"] = typed.AsErrorRecord()
+			}
+			s.traces.record(t.id, "call_failure", typed.AsErrorRecord())
+			for key, value := range s.traces.evidence(t.id) {
+				if typed.Context == nil {
+					typed.Context = map[string]any{}
+				}
+				typed.Context[key] = value
+			}
+			returnErr = typed
+		}
+	}()
+	s.traces.record(t.id, "call_request", map[string]any{"request": request})
 	if err := requireActive(t); err != nil {
 		return CallResult{}, err
 	}
@@ -497,14 +568,18 @@ func (s *Sidecar) complete(ctx context.Context, t *trajectory, request ChatReque
 			call.LogicalRequestID = sampled.LogicalRequestID
 		}
 		t.recordCall(call)
-		return CallResult{}, &Error{Code: call.ErrorCode, Status: 502, Message: "policy inference failed before commit", ShouldRetry: true}
+		return CallResult{}, operationError(sampleErr, "sampling")
 	}
-	if len(result.Completions) == 0 {
-		return CallResult{}, &Error{Code: "tito_upstream_error", Status: 502, Message: "policy inference returned no completion", ShouldRetry: true}
+	if len(result.Completions) != 1 {
+		return CallResult{}, &Error{Code: "tito_sampler_contract_error", Status: 502, Message: "policy inference must return exactly one completion", DiscardTrajectory: true}
 	}
 	completion := result.Completions[0]
+	s.traces.record(t.id, "sampled_completion", map[string]any{"completion": completion, "result": result})
+	if completion.FinishReason != "stop" && completion.FinishReason != "length" && completion.FinishReason != "tool_calls" {
+		return CallResult{}, &Error{Code: "tito_sampler_finish_contract_error", Status: 502, Message: "sampler returned no supported successful finish reason", DiscardTrajectory: true, Origin: "sdk"}
+	}
 	if completion.PromptLen < 0 || completion.PromptLen > len(completion.FullTokens) {
-		return CallResult{}, &Error{Code: "tito_upstream_error", Status: 502, Message: "policy inference returned invalid token boundaries", ShouldRetry: true}
+		return CallResult{}, &Error{Code: "tito_sampler_contract_error", Status: 502, Message: "policy inference returned invalid token boundaries", DiscardTrajectory: true}
 	}
 
 	var promptRouting []string
@@ -563,6 +638,9 @@ func (s *Sidecar) complete(ctx context.Context, t *trajectory, request ChatReque
 		}
 	}
 	completionIDs := append([]int(nil), completion.FullTokens[completion.PromptLen:]...)
+	if extra["sampling_mask"] == "parquet_v1" && (completion.SamplingMaskReferences == nil || completion.SamplingMaskReferences.Length != len(completionIDs)) {
+		return CallResult{}, &Error{Code: "tito_completion_alignment_error", Status: 502, Message: "sampling mask references do not align with completion IDs", DiscardTrajectory: true}
+	}
 	if extra["top_sampling_format"] == "parquet_v1" && (completion.TopSamplingReferences == nil || completion.TopSamplingReferences.Length != len(completionIDs)) {
 		return CallResult{}, &Error{Code: "tito_completion_alignment_error", Status: 502, Message: "top-K references do not align with completion IDs"}
 	}
@@ -572,17 +650,20 @@ func (s *Sidecar) complete(ctx context.Context, t *trajectory, request ChatReque
 	assistant, parseErr := s.renderer.ParseAssistant(request, completionIDs, completion.Text, completion.FinishReason)
 	parserFallback := false
 	if parseErr != nil {
-		fallback := s.renderer.FallbackAssistantText(request, completionIDs, completion.FinishReason, parseErr)
-		if fallback == nil {
-			call.Outcome = CallOutcomeModelMalformed
-			call.EndedAt = nowSeconds()
-			call.ErrorCode = "tito_model_malformed"
-			t.recordCall(call)
-			return CallResult{}, &Error{Code: call.ErrorCode, Status: 422, Message: "model completion could not be parsed"}
+		code := "tito_sdk_parser_internal_error"
+		context := map[string]any{"parser_error_type": fmt.Sprintf("%T", parseErr), "finish_reason": completion.FinishReason, "prompt_tokens": completion.PromptLen, "completion_tokens": len(completionIDs), "requested_max_tokens": requested, "max_output_tokens": s.options.MaxOutputTokens}
+		var recognized *ParseError
+		if errors.As(parseErr, &recognized) {
+			code = "tito_sdk_parse_error"
+			context["parser_reason_code"] = safeParserTag(recognized.ReasonCode)
 		}
-		assistant = ParsedAssistant{Message: map[string]any{"role": "assistant", "content": *fallback}, OutputKind: "text", ParserFallback: true}
-		parserFallback = true
+		call.Outcome = CallOutcomeModelMalformed
+		call.EndedAt = nowSeconds()
+		call.ErrorCode = code
+		t.recordCall(call)
+		return CallResult{}, &Error{Code: code, Status: 422, Message: "local TITO parser rejected the sampled output; discard this trajectory", Origin: "sdk_parser", DiscardTrajectory: true, Context: context}
 	}
+
 	if assistant.OutputKind == "" {
 		assistant.OutputKind = "text"
 	}
@@ -598,7 +679,7 @@ func (s *Sidecar) complete(ctx context.Context, t *trajectory, request ChatReque
 	if responseID == "" {
 		responseID = "chatcmpl-tito-" + turnID
 	}
-	turn := Turn{TopSamplingReferences: completion.TopSamplingReferences, RoutingReferences: completion.RoutingReferences, PromptRoutingStart: promptRoutingStart, PromptRoutingMatrices: promptRouting, PromptRoutingReferences: promptRefs, InferenceTopKTokenIDs: cloneRows(completion.InferenceTopKTokenIDs), InferenceTopKLogprobs: cloneRows(completion.InferenceTopKLogprobs), TurnID: turnID, Request: request, Assistant: assistant, ExactPromptIDs: append([]int(nil), prompt...), ExactCompletionIDs: completionIDs, InferenceLogprobs: append([]float64(nil), completion.InferenceLogprobs...), SamplingLogprobs: append([]*float64(nil), completion.SamplingLogprobs...), RoutingMatrices: append([]string(nil), completion.RoutingMatrices...), ResponseID: responseID, FinishReason: completion.FinishReason, PromptDisposition: disposition, RealignedMaskedTokens: realigned, RequestedOutputTokens: requested, EffectiveOutputTokens: effective, ContextRemainingTokens: remaining, ServerMetrics: result.ServerMetrics, SamplerWallSeconds: result.WallSeconds, LogicalRequestID: result.LogicalRequestID, UpstreamResponseID: result.UpstreamResponseID, UpstreamAttempts: result.Attempts, PromptMode: promptMode, IncrementalFallbackReason: fallbackReason, ServerAttempts: result.ServerAttempts, ParserFallback: parserFallback}
+	turn := Turn{SamplingMaskReferences: completion.SamplingMaskReferences, TopSamplingReferences: completion.TopSamplingReferences, RoutingReferences: completion.RoutingReferences, PromptRoutingStart: promptRoutingStart, PromptRoutingMatrices: promptRouting, PromptRoutingReferences: promptRefs, InferenceTopKTokenIDs: cloneRows(completion.InferenceTopKTokenIDs), InferenceTopKLogprobs: cloneRows(completion.InferenceTopKLogprobs), TurnID: turnID, Request: request, Assistant: assistant, ExactPromptIDs: append([]int(nil), prompt...), ExactCompletionIDs: completionIDs, InferenceLogprobs: append([]float64(nil), completion.InferenceLogprobs...), SamplingLogprobs: append([]*float64(nil), completion.SamplingLogprobs...), RoutingMatrices: append([]string(nil), completion.RoutingMatrices...), ResponseID: responseID, FinishReason: completion.FinishReason, PromptDisposition: disposition, RealignedMaskedTokens: realigned, RequestedOutputTokens: requested, EffectiveOutputTokens: effective, ContextRemainingTokens: remaining, ServerMetrics: result.ServerMetrics, SamplerWallSeconds: result.WallSeconds, LogicalRequestID: result.LogicalRequestID, UpstreamResponseID: result.UpstreamResponseID, UpstreamAttempts: result.Attempts, PromptMode: promptMode, IncrementalFallbackReason: fallbackReason, ServerAttempts: result.ServerAttempts, ParserFallback: parserFallback}
 	if len(t.checkpoint) > 0 {
 		p := prefix
 		turn.PrefixMatchTokens = &p
@@ -738,6 +819,9 @@ func (s *Sidecar) authenticate(id, authorization string) (*trajectory, *Error) {
 	return t, nil
 }
 func requireActive(t *trajectory) *Error {
+	if t.discardError != nil {
+		return t.discardError
+	}
 	if t.status != TrajectoryStatusActive {
 		return &Error{Code: "tito_trajectory_terminal", Status: 409, Message: "trajectory is already terminal"}
 	}
@@ -815,7 +899,7 @@ func asTITOError(err error) *Error {
 	if errors.As(err, &typed) {
 		return typed
 	}
-	return &Error{Code: "tito_internal_error", Status: 500, Message: err.Error()}
+	return &Error{Code: "tito_sdk_internal_error", Status: 500, Message: "local TITO SDK operation failed", Origin: "sdk", DiscardTrajectory: true}
 }
 func writeTITOError(w http.ResponseWriter, err *Error) {
 	w.Header().Set("X-Should-Retry", strconv.FormatBool(err.ShouldRetry))

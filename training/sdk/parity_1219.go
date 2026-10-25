@@ -58,26 +58,50 @@ func (c *FiretitanTrainingClient) SupportsRDMAWeightSync() bool {
 }
 func (c *FiretitanTrainingClient) refreshRDMA(ctx context.Context) (bool, error) {
 	c.rdmaAvailable = false
-	b := c.SamplerBackend
-	if b == nil || b.DeployMgr == nil || !c.trainerSupportsRDMA || c.Config.LoraRank != 0 || c.RunName != "" || b.CMEKResource != "" || !RDMACandidate(c.Config) || (b.AllowRDMA != nil && !*b.AllowRDMA) {
+	required := c.trainerSupportsRDMA || (c.trainerRDMAEnabled != nil && *c.trainerRDMAEnabled)
+	backend := c.SamplerBackend
+	if backend == nil || backend.DeployMgr == nil {
+		if required {
+			return false, fmt.Errorf("RDMA is enabled but the sampler backend does not support RDMA")
+		}
 		return false, nil
 	}
-	state, err := b.DeployMgr.HotloadCheckStatus(ctx, b.DeploymentID, b.BaseModel)
+	eligible := (backend.AllowRDMA == nil || *backend.AllowRDMA) && c.Config.LoraRank == 0 && c.RunName == "" && backend.CMEKResource == "" && RDMACandidate(c.Config)
+	if !eligible && !required {
+		return false, nil
+	}
+	state, err := backend.DeployMgr.HotloadCheckStatus(ctx, backend.DeploymentID, backend.BaseModel)
 	if err != nil {
 		return false, err
 	}
-	if _, fanout := state["replica_distribution"]; fanout {
-		return false, nil
-	}
-	replicas, ok := state["replicas"].([]any)
-	if !ok || len(replicas) == 0 {
-		return false, nil
-	}
+	replicas, _ := state["replicas"].([]any)
+	allSupport := len(replicas) > 0
+	receiverDisabled := false
 	for _, replica := range replicas {
-		m, ok := replica.(map[string]any)
-		if !ok || m["supports_rdma_weight_sync"] != true {
-			return false, nil
+		r, ok := replica.(map[string]any)
+		if !ok {
+			allSupport = false
+			continue
 		}
+		if r["supports_rdma_weight_sync"] == true || r["rdma_weight_sync_enabled"] == true {
+			required = true
+		}
+		if r["supports_rdma_weight_sync"] != true {
+			allSupport = false
+		}
+		if r["rdma_weight_sync_enabled"] == false {
+			receiverDisabled = true
+		}
+	}
+	if !required {
+		return false, nil
+	}
+	if (c.trainerRDMAEnabled != nil && !*c.trainerRDMAEnabled) || !c.trainerSupportsRDMA || !allSupport || receiverDisabled {
+		return false, fmt.Errorf("RDMA is enabled but trainer and rollout replicas do not all support it; FILE fallback is not allowed")
+	}
+	_, fanout := state["replica_distribution"]
+	if !eligible || fanout {
+		return false, fmt.Errorf("RDMA is enabled but this configuration cannot use RDMA; FILE fallback is not allowed")
 	}
 	if c.rdmaSessionID == "" {
 		c.rdmaSessionID = newSamplingRequestID()
@@ -90,6 +114,12 @@ func (c *FiretitanTrainingClient) refreshRDMA(ctx context.Context) (bool, error)
 // WeightSync negotiates before each publication. Only a rejected 404/405 route
 // falls back to FILE; an accepted RDMA publication's errors are returned directly.
 func (c *FiretitanTrainingClient) WeightSync(ctx context.Context) (WeightSyncResponse, error) {
+	ctx, operationDone, operationErr := c.beginOperation(ctx)
+	if operationErr != nil {
+		return WeightSyncResponse{}, operationErr
+	}
+	defer operationDone()
+
 	if c == nil || c.SamplerBackend == nil {
 		return WeightSyncResponse{}, fmt.Errorf("weight_sync requires a sampler backend")
 	}
@@ -129,8 +159,7 @@ func (c *FiretitanTrainingClient) WeightSync(ctx context.Context) (WeightSyncRes
 		if !errors.As(err, &unavailable) || (unavailable.StatusCode != 404 && unavailable.StatusCode != 405) {
 			return WeightSyncResponse{}, err
 		}
-		c.trainerSupportsRDMA = false
-		c.rdmaAvailable = false
+		return WeightSyncResponse{}, fmt.Errorf("RDMA publication route is unavailable; FILE fallback is not allowed: %w", err)
 	}
 	saved, err := c.saveWeightsForSamplerExt(ctx, "weight-sync-"+newSamplingRequestID(), SaveWeightsForSamplerOptions{})
 	if err != nil {
@@ -146,7 +175,7 @@ func (c *FiretitanTrainingClient) WeightSync(ctx context.Context) (WeightSyncRes
 	return WeightSyncResponse{Version: saved.Path}, nil
 }
 func (c *FiretitanTrainingClient) WeightSyncFuture(ctx context.Context) *Future[WeightSyncResponse] {
-	return SubmitFuture(func() (WeightSyncResponse, error) { return c.WeightSync(ctx) })
+	return submitTrainingFuture(c, ctx, func(ctx context.Context) (WeightSyncResponse, error) { return c.WeightSync(ctx) })
 }
 
 // TrainingForwardBackend adds forward-only requests to a compute adapter.
@@ -162,6 +191,12 @@ func (c *FiretitanTrainingClient) ForwardProjection(ctx context.Context, data []
 	return c.forwardTensor(ctx, data, "projection", EmbeddingPoolingMean)
 }
 func (c *FiretitanTrainingClient) forwardTensor(ctx context.Context, data []TrainingDatum, output string, pooling EmbeddingPooling) (ForwardBackwardOutput, error) {
+	ctx, operationDone, operationErr := c.beginOperation(ctx)
+	if operationErr != nil {
+		return ForwardBackwardOutput{}, operationErr
+	}
+	defer operationDone()
+
 	if c == nil {
 		return ForwardBackwardOutput{}, fmt.Errorf("training client is nil")
 	}
@@ -181,9 +216,15 @@ func (c *FiretitanTrainingClient) forwardTensor(ctx context.Context, data []Trai
 	return backend.Forward(ctx, ForwardBackwardOptions{Comms: c.Comms(), ModelID: c.ModelID, SeqID: c.RequestSeqID, Data: data, LossFn: LossFnCrossEntropy, LossFnConfig: map[string]any{"output": output, "pooling": string(pooling)}})
 }
 func (c *FiretitanTrainingClient) ForwardProjectionFuture(ctx context.Context, data []TrainingDatum) *Future[ForwardBackwardOutput] {
-	return SubmitFuture(func() (ForwardBackwardOutput, error) { return c.ForwardProjection(ctx, data) })
+	return submitTrainingFuture(c, ctx, func(ctx context.Context) (ForwardBackwardOutput, error) { return c.ForwardProjection(ctx, data) })
 }
 func (c *FiretitanTrainingClient) ForwardBackwardCustom(ctx context.Context, data []TrainingDatum, loss CustomTensorLoss, output string, pooling EmbeddingPooling) (ForwardBackwardOutput, error) {
+	ctx, operationDone, operationErr := c.beginOperation(ctx)
+	if operationErr != nil {
+		return ForwardBackwardOutput{}, operationErr
+	}
+	defer operationDone()
+
 	if loss == nil {
 		return ForwardBackwardOutput{}, fmt.Errorf("custom loss is required")
 	}
@@ -269,7 +310,7 @@ func boolOrDefault(value *bool, fallback bool) bool {
 }
 
 func (c *FiretitanTrainingClient) ForwardBackwardCustomFuture(ctx context.Context, data []TrainingDatum, loss CustomTensorLoss, output string, pooling EmbeddingPooling) *Future[ForwardBackwardOutput] {
-	return SubmitFuture(func() (ForwardBackwardOutput, error) {
+	return submitTrainingFuture(c, ctx, func(ctx context.Context) (ForwardBackwardOutput, error) {
 		return c.ForwardBackwardCustom(ctx, data, loss, output, pooling)
 	})
 }

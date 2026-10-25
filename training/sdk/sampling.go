@@ -47,6 +47,8 @@ type ServerMetrics struct {
 }
 
 type SampledCompletion struct {
+	SamplingMaskReferences *RoutingReferences
+
 	TopSamplingReferences    *RoutingReferences
 	RoutingReferences        *RoutingReferences
 	EchoedPromptLogprobCount int
@@ -84,6 +86,13 @@ type SampledRequestResult struct {
 }
 
 type SamplingRequestError struct {
+	WireStatus           *int
+	UpstreamResponseID   string
+	UpstreamErrorCode    string
+	UpstreamErrorType    string
+	UpstreamFinishReason string
+	RetryBudgetExhausted *bool
+
 	Message          string
 	LogicalRequestID string
 	Model            string
@@ -143,6 +152,22 @@ func (e *SamplingRequestError) AsErrorRecord() map[string]any {
 	if len(e.ServerAttempts) > 0 {
 		record["server_attempts"] = append([]SampledServerAttempt(nil), e.ServerAttempts...)
 	}
+	for key, value := range map[string]any{"wire_status": e.WireStatus, "upstream_response_id": e.UpstreamResponseID, "upstream_error_code": e.UpstreamErrorCode, "upstream_error_type": e.UpstreamErrorType, "upstream_finish_reason": e.UpstreamFinishReason, "retry_budget_exhausted": e.RetryBudgetExhausted} {
+		switch v := value.(type) {
+		case string:
+			if v != "" {
+				record[key] = v
+			}
+		case *int:
+			if v != nil {
+				record[key] = *v
+			}
+		case *bool:
+			if v != nil {
+				record[key] = *v
+			}
+		}
+	}
 	if e.SourceError != nil {
 		record["source_error"] = e.SourceError
 	}
@@ -162,6 +187,8 @@ func (e *DeploymentSamplerTimeoutError) As(target any) bool {
 }
 
 type FiretitanSampledSequence struct {
+	SamplingMaskReferences *RoutingReferences `json:"sampling_mask_references,omitempty"`
+
 	TopSamplingReferences *RoutingReferences `json:"top_sampling_references,omitempty"`
 	RoutingReferences     *RoutingReferences `json:"-"`
 	StopReason            string             `json:"stop_reason"`
@@ -176,6 +203,8 @@ type FiretitanSampleResponse struct {
 }
 
 type FiretitanSamplingParams struct {
+	SamplingMask string
+
 	TopSamplingLogprobs  *int
 	R3TTLSeconds         *int
 	MaxTokens            *int
@@ -518,6 +547,12 @@ func (c *FiretitanSamplingClient) Sample(ctx context.Context, prompt []int, numS
 		temperature = *params.Temperature
 	}
 	extra := map[string]any{}
+	if params.SamplingMask != "" {
+		if params.SamplingMask != "parquet_v1" {
+			return FiretitanSampleResponse{}, fmt.Errorf("sampling_mask must be parquet_v1")
+		}
+		extra["sampling_mask"] = params.SamplingMask
+	}
 	if params.TopSamplingLogprobs != nil {
 		if *params.TopSamplingLogprobs < 1 {
 			return FiretitanSampleResponse{}, fmt.Errorf("top_sampling_logprobs must be positive")
@@ -602,12 +637,13 @@ func (c *FiretitanSamplingClient) Sample(ctx context.Context, prompt []int, numS
 			}
 		}
 		response.Sequences = append(response.Sequences, FiretitanSampledSequence{
-			RoutingReferences:     refs,
-			TopSamplingReferences: completion.TopSamplingReferences,
-			StopReason:            firetitanStopReason(completion.FinishReason),
-			Tokens:                completionTokens,
-			Logprobs:              completionLogprobs,
-			RoutingMatrices:       routingMatrices,
+			RoutingReferences:      refs,
+			TopSamplingReferences:  completion.TopSamplingReferences,
+			SamplingMaskReferences: completion.SamplingMaskReferences,
+			StopReason:             firetitanStopReason(completion.FinishReason),
+			Tokens:                 completionTokens,
+			Logprobs:               completionLogprobs,
+			RoutingMatrices:        routingMatrices,
 		})
 	}
 	if !opt.IncludePromptLogprobs {
@@ -931,7 +967,7 @@ func (s *DeploymentSampler) doOneCompletionResult(ctx context.Context, promptIDs
 				}
 				echoLast = &n
 			}
-			completions, parseErr := s.parseCompletionsResult(result, promptIDs, opt.MaxSeqLen, opt.Logprobs, opt.IncludeRoutingMatrix, opt.Echo, echoLast, opt.Extra["top_sampling_format"] == "parquet_v1")
+			completions, parseErr := s.parseCompletionsResult(result, promptIDs, opt.MaxSeqLen, opt.Logprobs, opt.IncludeRoutingMatrix, opt.Echo, echoLast, opt.Extra["top_sampling_format"] == "parquet_v1", opt.Extra["sampling_mask"] == "parquet_v1")
 			upstreamResponseID := stringFromAny(result["id"])
 			if parseErr != nil {
 				metrics.Error = parseErr.Error()
@@ -959,7 +995,16 @@ func (s *DeploymentSampler) doOneCompletionResult(ctx context.Context, promptIDs
 		}
 		serverAttempts = append(serverAttempts, sampledServerAttempt(attempt, outcome, err, metrics, ""))
 		if outcome != "retryable_error" {
-			return SampledRequestResult{}, err
+			if errors.Is(err, context.Canceled) {
+				return SampledRequestResult{}, err
+			}
+			var upstream *UpstreamStreamError
+			if !errors.As(err, &upstream) {
+				return SampledRequestResult{}, err
+			}
+			base := s.samplingRequestError(err, logicalRequestID, attempt, requestContext, promptIDs, opt)
+			base.ServerAttempts = append([]SampledServerAttempt(nil), serverAttempts...)
+			return SampledRequestResult{}, base
 		}
 		if attempt == SamplerRetryMaxAttempts {
 			if observer, ok := s.ConcurrencyController.(interface{ NoteRetryExhausted(*ServerMetrics) }); ok {
@@ -993,6 +1038,10 @@ func (s *DeploymentSampler) doOneCompletionResult(ctx context.Context, promptIDs
 }
 
 func sampledServerAttempt(index int, outcome string, err error, metrics *ServerMetrics, upstreamResponseID string) SampledServerAttempt {
+	var evidence *CompletionResponseError
+	if errors.As(err, &evidence) && upstreamResponseID == "" {
+		upstreamResponseID = evidence.UpstreamResponseID
+	}
 	attempt := SampledServerAttempt{
 		Index:              index,
 		Outcome:            outcome,
@@ -1048,6 +1097,14 @@ func cloneFloatPointer(value *float64) *float64 {
 }
 
 func classifySamplerError(err error) string {
+	var upstream *UpstreamStreamError
+	if errors.As(err, &upstream) {
+		return "upstream_stream"
+	}
+	var protocol *SSEProtocolError
+	if errors.As(err, &protocol) {
+		return "sse_protocol"
+	}
 	if err == nil {
 		return ""
 	}
@@ -1098,7 +1155,7 @@ func newSamplingRequestID() string {
 func extractSamplingRequestID(headers http.Header) string {
 	for _, name := range []string{"X-Request-Id", "X-Fireworks-Request-Id", "Cf-Ray"} {
 		if value := headers.Get(name); value != "" {
-			return value
+			return boundedCorrelation(value)
 		}
 	}
 	return ""
@@ -1137,6 +1194,22 @@ func (s *DeploymentSampler) samplingRequestError(err error, logicalRequestID str
 			result.FinalErrorKind = "connection"
 		}
 	}
+	var evidence *CompletionResponseError
+	if errors.As(err, &evidence) {
+		result.WireStatus = intPointer(evidence.StatusCode)
+		result.RequestID = extractSamplingRequestID(evidence.Headers)
+		result.UpstreamResponseID = evidence.UpstreamResponseID
+	}
+	var upstream *UpstreamStreamError
+	if errors.As(err, &upstream) {
+		result.FinalStatus = upstream.Status
+		result.FinalErrorKind = "upstream_stream"
+		result.UpstreamErrorCode = upstream.Code
+		result.UpstreamErrorType = upstream.Type
+		result.UpstreamFinishReason = upstream.FinishReason
+	}
+	exhausted := attempts >= SamplerRetryMaxAttempts && samplerRetryableCompletionError(err)
+	result.RetryBudgetExhausted = &exhausted
 	return result
 }
 
@@ -1327,7 +1400,7 @@ func (s *DeploymentSampler) ParseCompletionsResult(result map[string]any, prompt
 func (s *DeploymentSampler) ParseCompletionsResultWithEchoLast(result map[string]any, promptIDs []int, maxSeqLen int, userRequestedLogprobs, routingRequested, echoMode bool, echoLast *int) ([]SampledCompletion, error) {
 	return s.parseCompletionsResult(result, promptIDs, maxSeqLen, userRequestedLogprobs, routingRequested, echoMode, echoLast, false)
 }
-func (s *DeploymentSampler) parseCompletionsResult(result map[string]any, promptIDs []int, maxSeqLen int, userRequestedLogprobs, routingRequested, echoMode bool, echoLast *int, topSamplingRequested bool) ([]SampledCompletion, error) {
+func (s *DeploymentSampler) parseCompletionsResult(result map[string]any, promptIDs []int, maxSeqLen int, userRequestedLogprobs, routingRequested, echoMode bool, echoLast *int, topSamplingRequested bool, samplingMask ...bool) ([]SampledCompletion, error) {
 	if echoLast != nil && *echoLast < 0 {
 		return nil, fmt.Errorf("echo_last must be nonnegative")
 	}
@@ -1389,6 +1462,23 @@ func (s *DeploymentSampler) parseCompletionsResult(result map[string]any, prompt
 				return nil, fmt.Errorf("unsupported R3 format")
 			}
 		}
+		var maskRefs *RoutingReferences
+		if len(samplingMask) > 0 && samplingMask[0] {
+			_, store, _ := s.routingBinding()
+			if choice["sampling_mask_format"] != "parquet_v1" || store == "" || choice["r3_store_id"] != store {
+				return nil, fmt.Errorf("deployment did not acknowledge Parquet sampling-mask references")
+			}
+			var err error
+			maskRefs, err = ParseRoutingReferences(choice["sampling_mask_references"])
+			if err != nil {
+				return nil, err
+			}
+			for _, file := range maskRefs.Files {
+				if file["store_id"] != store {
+					return nil, fmt.Errorf("sampling-mask reference storage domain mismatch")
+				}
+			}
+		}
 		var topRefs *RoutingReferences
 		if topSamplingRequested {
 			_, store, _ := s.routingBinding()
@@ -1444,6 +1534,9 @@ func (s *DeploymentSampler) parseCompletionsResult(result map[string]any, prompt
 			if echoCount == len(promptForFull) {
 				drop = 1
 			}
+			if maskRefs != nil && maskRefs.Length == len(completionIDs) {
+				maskRefs, _ = maskRefs.Slice(echoCount, maskRefs.Length)
+			}
 			if topRefs != nil && topRefs.Length == len(completionIDs) {
 				topRefs, _ = topRefs.Slice(echoCount, topRefs.Length)
 			}
@@ -1468,6 +1561,9 @@ func (s *DeploymentSampler) parseCompletionsResult(result map[string]any, prompt
 			}
 		}
 
+		if maskRefs != nil && maskRefs.Length != len(completionIDs) {
+			return nil, fmt.Errorf("sampling-mask references do not align with completion tokens")
+		}
 		if topRefs != nil && topRefs.Length != len(completionIDs) {
 			return nil, fmt.Errorf("top-K references do not align with completion tokens")
 		}
@@ -1487,6 +1583,7 @@ func (s *DeploymentSampler) parseCompletionsResult(result map[string]any, prompt
 			RoutingMatrices:          routingMatrices,
 			RoutingReferences:        refs,
 			TopSamplingReferences:    topRefs,
+			SamplingMaskReferences:   maskRefs,
 			EchoedPromptLogprobCount: echoedCount,
 			InferenceTopKTokenIDs:    topIDs,
 			InferenceTopKLogprobs:    topLP,
@@ -1631,9 +1728,11 @@ func (s *DeploymentSampler) StreamCompletions(ctx context.Context, prompt []int,
 		body, readErr := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
 		if readErr != nil {
-			return nil, ServerMetrics{}, readErr
+			metrics := ServerMetricsFromHTTPHeaders(resp.Header)
+			metrics.HTTPStatusCode = intPointer(resp.StatusCode)
+			return nil, metrics, &CompletionResponseError{Err: readErr, StatusCode: resp.StatusCode, Headers: resp.Header.Clone()}
 		}
-		if payload["routing_matrix_format"] == "parquet_v1" && payload["top_sampling_format"] != "parquet_v1" && unsupportedRoutingFormat(resp.StatusCode, body) {
+		if payload["routing_matrix_format"] == "parquet_v1" && payload["top_sampling_format"] != "parquet_v1" && payload["sampling_mask"] != "parquet_v1" && unsupportedRoutingFormat(resp.StatusCode, body) {
 			s.r3Mu.Lock()
 			s.routingMatrixFormat = RoutingBase64Inline
 			s.r3Mu.Unlock()
@@ -1657,6 +1756,16 @@ func (s *DeploymentSampler) StreamCompletions(ctx context.Context, prompt []int,
 			return nil, ServerMetricsFromHTTPHeaders(resp.Header), &CompletionHTTPStatusError{StatusCode: resp.StatusCode, Body: body, Headers: resp.Header.Clone()}
 		}
 		result, metrics, err := s.assembleStreamResponse(body, resp.Header)
+		if err != nil {
+			metrics = ServerMetricsFromHTTPHeaders(resp.Header)
+			metrics.HTTPStatusCode = intPointer(resp.StatusCode)
+			id := ""
+			var upstream *UpstreamStreamError
+			if errors.As(err, &upstream) {
+				id = upstream.ResponseID
+			}
+			err = &CompletionResponseError{Err: err, StatusCode: resp.StatusCode, Headers: resp.Header.Clone(), UpstreamResponseID: id}
+		}
 		if err == nil {
 			elapsed := s.Now().Sub(requestReadStarted).Seconds()
 			metrics.ClientLatency = &elapsed
@@ -1684,20 +1793,50 @@ func (s *DeploymentSampler) assembleStreamResponse(body []byte, headers http.Hea
 	var rawOutput map[string]any
 	var perfMetrics map[string]string
 	upstreamResponseID := ""
-	hasSeenDone := false
 	hasSeenFinishReason := false
 
 	for _, event := range events {
-		if strings.HasPrefix(event.Data, "[DONE]") {
-			hasSeenDone = true
+		if event.Event == "error" {
+			payload, _ := decodeStreamEvent(event.Data)
+			if id, ok := payload["id"].(string); ok {
+				upstreamResponseID = boundedCorrelation(id)
+			}
+			return nil, ServerMetrics{}, upstreamStreamError(payload, "", upstreamResponseID)
+		}
+		if strings.TrimSpace(event.Data) == "[DONE]" {
 			break
 		}
-		var chunk map[string]any
-		if err := json.Unmarshal([]byte(event.Data), &chunk); err != nil {
+		if strings.TrimSpace(event.Data) == "" {
 			continue
 		}
+		chunk, err := decodeStreamEvent(event.Data)
+		if err != nil {
+			if event.Event == "ping" || event.Event == "heartbeat" || event.Event == "keepalive" {
+				continue
+			}
+			return nil, ServerMetrics{}, err
+		}
+		if chunk["error"] != nil {
+			return nil, ServerMetrics{}, upstreamStreamError(chunk, "", stringFromAny(chunk["id"]))
+		}
+		if value := chunk["usage"]; value != nil {
+			if _, ok := value.(map[string]any); !ok {
+				return nil, ServerMetrics{}, &SSEProtocolError{Message: "completion usage must be an object"}
+			}
+		}
+		if value, exists := chunk["choices"]; exists {
+			choices, ok := value.([]any)
+			if !ok {
+				return nil, ServerMetrics{}, &SSEProtocolError{Message: "completion choices must be a list of objects"}
+			}
+			for _, choice := range choices {
+				if _, ok := choice.(map[string]any); !ok {
+					return nil, ServerMetrics{}, &SSEProtocolError{Message: "completion choices must be a list of objects"}
+				}
+			}
+		}
 		if upstreamResponseID == "" {
-			upstreamResponseID = stringFromAny(chunk["id"])
+			upstreamResponseID = boundedCorrelation(stringFromAny(chunk["id"]))
 		}
 		choices, _ := chunk["choices"].([]any)
 		for _, item := range choices {
@@ -1705,7 +1844,7 @@ func (s *DeploymentSampler) assembleStreamResponse(body []byte, headers http.Hea
 			if choice == nil {
 				continue
 			}
-			for _, key := range []string{"routing_matrix_format", "r3_store_id", "routing_references", "top_sampling_format", "top_sampling_references"} {
+			for _, key := range []string{"routing_matrix_format", "r3_store_id", "routing_references", "top_sampling_format", "top_sampling_references", "sampling_mask_format", "sampling_mask_references"} {
 				if value, ok := choice[key]; ok {
 					routingMetadata[key] = value
 				}
@@ -1719,6 +1858,9 @@ func (s *DeploymentSampler) assembleStreamResponse(body []byte, headers http.Hea
 				}
 			}
 			if fr := stringFromAny(choice["finish_reason"]); fr != "" {
+				if fr != "stop" && fr != "length" && fr != "tool_calls" {
+					return nil, ServerMetrics{}, upstreamStreamError(nil, fr, upstreamResponseID)
+				}
 				finishReason = fr
 				hasSeenFinishReason = true
 			}
@@ -1733,8 +1875,8 @@ func (s *DeploymentSampler) assembleStreamResponse(body []byte, headers http.Hea
 			perfMetrics = stringMapFromAny(perf)
 		}
 	}
-	if rawOutput == nil && !hasSeenDone && !hasSeenFinishReason {
-		return nil, ServerMetrics{}, &SSETruncationError{Message: "Transient server-side error: the inference deployment closed the SSE stream mid-generation without sending [DONE], finish_reason, or raw_output. The SDK is retrying. If this persists across all retry attempts, contact the Fireworks team."}
+	if !hasSeenFinishReason {
+		return nil, ServerMetrics{}, &SSETruncationError{Message: "Transient server-side error: the inference deployment closed the SSE stream without a successful finish_reason. The SDK is retrying. If this persists across all retry attempts, contact the Fireworks team."}
 	}
 	if finishReason == "" {
 		finishReason = "stop"
@@ -1999,6 +2141,10 @@ func mapKeys(values map[string]any) []string {
 }
 
 func samplerRetryableCompletionError(err error) bool {
+	var upstream *UpstreamStreamError
+	if errors.As(err, &upstream) {
+		return samplerRetryHTTPTransientCodes[upstream.Status]
+	}
 	if errors.Is(err, context.Canceled) {
 		return false
 	}

@@ -51,6 +51,10 @@ const (
 
 // Error is an OpenAI-compatible TITO error.
 type Error struct {
+	Origin            string
+	DiscardTrajectory bool
+	Context           map[string]any
+
 	Code        string
 	Status      int
 	Message     string
@@ -59,13 +63,46 @@ type Error struct {
 
 func (e *Error) Error() string { return e.Message }
 
-func (e *Error) OpenAIBody() map[string]any {
-	return map[string]any{"error": map[string]any{
-		"message": e.Message,
-		"type":    "invalid_request_error",
-		"code":    e.Code,
-	}}
+func (e *Error) AsErrorRecord() map[string]any {
+	origin := e.Origin
+	if origin == "" {
+		origin = "sdk"
+	}
+	switch origin {
+	case "sdk", "sdk_parser", "server", "transport", "adapter", "environment", "unknown":
+	default:
+		origin = "unknown"
+	}
+	kind := "invalid_request_error"
+	if e.DiscardTrajectory {
+		kind = "trajectory_error"
+	} else if origin == "server" || origin == "transport" {
+		kind = "server_error"
+	} else if e.Status >= 500 {
+		kind = "sdk_error"
+	}
+	record := cloneAnyMap(e.Context)
+	if record == nil {
+		record = map[string]any{}
+	}
+	record["message"] = e.Message
+	record["type"] = kind
+	record["code"] = e.Code
+	record["origin"] = origin
+	record["should_retry"] = e.ShouldRetry
+	record["discard_trajectory"] = e.DiscardTrajectory
+	return record
 }
+func (e *Error) OpenAIBody() map[string]any { return map[string]any{"error": e.AsErrorRecord()} }
+
+type ParseError struct {
+	Message    string
+	ReasonCode string
+}
+
+func (e *ParseError) Error() string { return e.Message }
+
+type TITOParseError = ParseError
 
 func invalidRequest(message string) *Error {
 	return &Error{Code: "tito_invalid_request", Status: 400, Message: message}
@@ -227,7 +264,6 @@ type Renderer interface {
 	RendererID() string
 	RenderConversationTokens(ChatRequest) ([]int, error)
 	ParseAssistant(ChatRequest, []int, string, string) (ParsedAssistant, error)
-	FallbackAssistantText(ChatRequest, []int, string, error) *string
 	RenderContractID(ChatRequest) string
 	StopSequences(ChatRequest) []string
 }
@@ -363,6 +399,8 @@ type CallRecord struct {
 	ErrorCode            string                     `json:"error_code,omitempty"`
 }
 type Turn struct {
+	SamplingMaskReferences *sdk.RoutingReferences `json:"sampling_mask_references,omitempty"`
+
 	TopSamplingReferences           *sdk.RoutingReferences     `json:"top_sampling_references,omitempty"`
 	RoutingReferences               *sdk.RoutingReferences     `json:"-"`
 	PromptRoutingStart              *int                       `json:"prompt_routing_start,omitempty"`
@@ -618,6 +656,13 @@ func (v *Turn) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	value := Turn(decoded.wire)
+	if value.SamplingMaskReferences != nil {
+		refs, err := sdk.ParseRoutingReferences(value.SamplingMaskReferences)
+		if err != nil {
+			return err
+		}
+		value.SamplingMaskReferences = refs
+	}
 	if value.TopSamplingReferences != nil {
 		refs, err := sdk.ParseRoutingReferences(value.TopSamplingReferences)
 		if err != nil {

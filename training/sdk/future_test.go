@@ -295,13 +295,10 @@ func TestFiretitanServiceClientGetServerCapabilitiesFuture(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	capabilities, err := svc.GetServerCapabilitiesFuture(context.Background()).Await()
-	if err != nil {
-		t.Fatal(err)
+	if _, err := svc.GetServerCapabilitiesFuture(context.Background()).Await(); err == nil {
+		t.Fatal("lazy service must not invent server capabilities")
 	}
-	if len(capabilities.SupportedModels) != 1 || capabilities.SupportedModels[0].ModelName != "accounts/acct/models/base" {
-		t.Fatalf("capabilities = %#v", capabilities)
-	}
+
 }
 
 func TestFiretitanServiceClientCreateTrainingClientFromStateFuture(t *testing.T) {
@@ -373,11 +370,11 @@ func TestFiretitanTrainingClientWeightSyncerFutures(t *testing.T) {
 	if saved.SnapshotName != "step-1-session" {
 		t.Fatalf("saved = %#v", saved)
 	}
-	saved, err = client.SaveWeightsForSamplerExtFuture(context.Background(), "step-ext", SaveWeightsForSamplerOptions{CheckpointType: "base", TTL: time.Minute}).Await()
+	saved, err = client.SaveWeightsForSamplerExtFuture(context.Background(), "step-ext", SaveWeightsForSamplerOptions{CheckpointType: "base"}).Await()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if saved.SnapshotName != "step-2-session" || len(saver.calls) < 2 || saver.calls[1].TTL != time.Minute {
+	if saved.SnapshotName != "step-2-session" || len(saver.calls) < 2 || saver.calls[1].TTL != 0 {
 		t.Fatalf("saved ext = %#v calls=%#v", saved, saver.calls)
 	}
 	hotloaded, err := client.SaveWeightsAndHotloadFuture(context.Background(), "step-2").Await()

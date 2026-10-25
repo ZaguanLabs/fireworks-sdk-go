@@ -164,7 +164,7 @@ func Test1219RDMANegotiationAndFallback(t *testing.T) {
 				transport.failure = errors.New("accepted publication failed")
 			}
 			result, err := client.WeightSync(context.Background())
-			if mode == "completion" || mode == "route500" {
+			if mode != "rdma" {
 				if err == nil || len(saver.calls) != 0 || hotloads != 0 {
 					t.Fatalf("unsafe retry: %v %d %d", err, len(saver.calls), hotloads)
 				}

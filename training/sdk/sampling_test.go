@@ -655,8 +655,9 @@ func TestDeploymentSamplerDefaultRequesterPayload(t *testing.T) {
 		}
 		w.Header().Set("prefill-queue-duration", "0.3")
 		chunk, _ := json.Marshal(map[string]any{"choices": []any{map[string]any{
-			"text":       "x",
-			"raw_output": map[string]any{"completion_token_ids": []int{99}},
+			"text":          "x",
+			"finish_reason": "stop",
+			"raw_output":    map[string]any{"completion_token_ids": []int{99}},
 		}}})
 		_, _ = w.Write([]byte("data: " + string(chunk) + "\n\n"))
 		_, _ = w.Write([]byte("data: [DONE]\n\n"))
