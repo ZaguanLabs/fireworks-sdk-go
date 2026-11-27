@@ -309,26 +309,11 @@ func TestManagedConfigFromMapRejectsConflictingAliases(t *testing.T) {
 	}
 }
 
-func TestManagedConfigFromMapDropsDeprecatedAccelerators(t *testing.T) {
-	config, deprecated, err := ManagedConfigFromMap(map[string]any{
-		"base_model":            "accounts/acct/models/base",
-		"training_shape_id":     "accounts/acct/trainingShapes/shape",
-		"accelerator_type":      "NVIDIA_H200",
-		"accelerator_count":     8,
-		"replica_count":         2,
-		"trainer_replica_count": 3,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Join(deprecated, ",") != "accelerator_type,accelerator_count" {
-		t.Fatalf("deprecated = %v", deprecated)
-	}
-	if config.AcceleratorType != "" || config.AcceleratorCount != nil {
-		t.Fatalf("accelerator fields = %#v", config)
-	}
-	if config.ReplicaCount == nil || *config.ReplicaCount != 2 || config.TrainerReplicaCount == nil || *config.TrainerReplicaCount != 3 {
-		t.Fatalf("scaling fields = %#v", config)
+func TestManagedConfigFromMapRejectsManualHardware(t *testing.T) {
+	for key, value := range map[string]any{"accelerator_type": "H200", "accelerator_count": 2, "node_count": 2} {
+		if _, _, err := ManagedConfigFromMap(map[string]any{key: value}); err == nil {
+			t.Errorf("accepted %s", key)
+		}
 	}
 }
 

@@ -150,30 +150,11 @@ func (r RoutingReferences) HasGaps() bool {
 	return false
 }
 func (r RoutingReferences) ModelInputKwargs() map[string]any {
-	return map[string]any{"routing_matrix_format": "parquet_v1", "routing_references": r, "routing_matrices": nil}
+	return map[string]any{"routing_matrix_format": "parquet_v1", "routing_references": r}
 }
 
-// ConcatRouting accepts references or inline []string. Nonempty inline rows cannot
-// share a trajectory with Parquet references; empty inline rows represent gaps.
+// ConcatRouting joins compact references and runs of empty positions.
 func ConcatRouting(values ...any) (any, error) {
-	parquet := false
-	for _, v := range values {
-		switch v.(type) {
-		case RoutingReferences, *RoutingReferences:
-			parquet = true
-		}
-	}
-	if !parquet {
-		var out []string
-		for _, v := range values {
-			rows, ok := v.([]string)
-			if !ok {
-				return nil, fmt.Errorf("invalid inline routing")
-			}
-			out = append(out, rows...)
-		}
-		return out, nil
-	}
 	out := RoutingReferences{Files: []RoutingFile{}, Spans: []RoutingSpan{}}
 	for _, v := range values {
 		var r *RoutingReferences
@@ -185,7 +166,7 @@ func ConcatRouting(values ...any) (any, error) {
 		case []string:
 			for _, row := range value {
 				if row != "" {
-					return nil, fmt.Errorf("cannot mix inline and Parquet routes")
+					return nil, fmt.Errorf("inline routing matrices are unsupported")
 				}
 			}
 			if len(value) > 0 {

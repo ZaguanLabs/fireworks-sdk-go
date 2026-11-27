@@ -43,15 +43,7 @@ Promotion is destructive/costly enough to require a second opt-in:
 - `FIREWORKS_LIVE_OUTPUT_MODEL_ID`
 - `FIREWORKS_LIVE_BASE_MODEL`
 
-Identify the checkpoint with either:
-
-- `FIREWORKS_LIVE_CHECKPOINT_NAME`, or
-- `FIREWORKS_LIVE_TRAINER_JOB_ID` and `FIREWORKS_LIVE_CHECKPOINT_ID`
-
-Optional:
-
-- `FIREWORKS_LIVE_DEPLOYMENT_ID`
-- `FIREWORKS_LIVE_PROMOTE_TIMEOUT_S`
+Set `FIREWORKS_LIVE_CHECKPOINT_NAME` to the full checkpoint resource name returned by the list operation. Use `FIREWORKS_LIVE_PROMOTE_TIMEOUT_S` to override the promotion timeout.
 
 ## Deployment Hotload And Sampling
 

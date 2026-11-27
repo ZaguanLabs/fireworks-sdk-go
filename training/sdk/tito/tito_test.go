@@ -21,7 +21,7 @@ func (s *fakeSampler) SampleWithPromptTokensResult(_ context.Context, prompt []i
 	full := append(append([]int(nil), prompt...), 90+s.calls)
 	status := 200
 	return sdk.SampledRequestResult{
-		Completions:   []sdk.SampledCompletion{{Text: "answer", FullTokens: full, PromptLen: len(prompt), CompletionLen: 1, FinishReason: "stop", InferenceLogprobs: []float64{-0.1}, RoutingMatrices: []string{"route"}}},
+		Completions:   []sdk.SampledCompletion{{Text: "answer", FullTokens: full, PromptLen: len(prompt), CompletionLen: 1, FinishReason: "stop", InferenceLogprobs: []float64{-0.1}}},
 		ServerMetrics: &sdk.ServerMetrics{HTTPStatusCode: &status}, LogicalRequestID: "logical", Attempts: 1, WallSeconds: 0.25, UpstreamResponseID: "upstream",
 	}, nil
 }
@@ -72,7 +72,7 @@ func TestArtifactRoundTripIsDeterministic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if decoded.SchemaVersion != 1 || decoded.TrajectoryID != "t" || decoded.Metadata["a"].(float64) != 1 {
+	if decoded.SchemaVersion != 2 || decoded.LineageMode != "tree" || decoded.TrajectoryID != "t" || decoded.Metadata["a"].(float64) != 1 {
 		t.Fatalf("decoded = %#v", decoded)
 	}
 }

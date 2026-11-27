@@ -1,0 +1,25 @@
+[package]
+name = "fireworks-tokenizer"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.94"
+publish = false
+license = "Apache-2.0"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+tokenizers = { version = "=0.23.2", default-features = false, features = ["fancy-regex"] }
+minijinja = { version = "=3.1.0", features = ["json", "loop_controls", "preserve_order", "fuel", "unicode", "serde", "unstable_machinery"] }
+minijinja-contrib = { version = "=3.1.0", features = ["pycompat"] }
+chrono = { version = "0.4", default-features = false, features = ["std"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

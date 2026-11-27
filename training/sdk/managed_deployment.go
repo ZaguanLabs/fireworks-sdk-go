@@ -75,7 +75,7 @@ func ManagedDeploymentCreateConfig(config FiretitanProvisioningConfig, trainerJo
 	if deploymentID == "" {
 		return DeploymentConfig{}, fmt.Errorf("managed deployment requires a deployment ID")
 	}
-	if deploymentShape == "" && config.AcceleratorType == "" {
+	if deploymentShape == "" {
 		return DeploymentConfig{}, fmt.Errorf(
 			"cannot create a managed deployment without a deployment shape: the deployment accelerator is owned by the deployment shape. Provide a deployment_shape or a training_shape_id whose shape references one",
 		)
@@ -101,8 +101,9 @@ func ManagedDeploymentCreateConfig(config FiretitanProvisioningConfig, trainerJo
 		ForTraining:                true,
 		SkipShapeValidation:        false,
 		DisableSpeculativeDecoding: config.DisableSpeculativeDecoding,
-		ExtraArgs:                  append([]string(nil), config.DeploymentExtraArgs...),
-		ExtraValues:                cloneStringMap(config.DeploymentExtraValues),
-		Preemptible:                config.Preemptible,
+		DraftModel:                 config.DraftModel, DraftTokenCount: cloneIntPointer(config.DraftTokenCount),
+		ExtraArgs:   append([]string(nil), config.DeploymentExtraArgs...),
+		ExtraValues: cloneStringMap(config.DeploymentExtraValues),
+		Preemptible: config.Preemptible,
 	}, nil
 }

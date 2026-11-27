@@ -26,9 +26,13 @@ type FiretitanServiceClientOptions struct {
 type FiretitanServiceClient struct {
 	AdditionalHeaders map[string]string
 
+	reservedRuntime           *NativeTrainingRuntime
+	stopHeartbeat             context.CancelFunc
+	heartbeatDone             chan struct{}
 	trainingClients           []*FiretitanTrainingClient
 	Config                    FiretitanProvisioningConfig
 	ServerlessSessionID       string
+	accountMu                 sync.Mutex
 	AccountIDCache            string
 	DefaultUserMetadata       map[string]string
 	DefaultProjectID          string
@@ -122,6 +126,8 @@ func (c *FiretitanServiceClient) ResolvedAccountID(ctx context.Context) string {
 	if c == nil {
 		return ""
 	}
+	c.accountMu.Lock()
+	defer c.accountMu.Unlock()
 	if c.AccountIDCache != "" {
 		return c.AccountIDCache
 	}
@@ -281,6 +287,10 @@ func (c *FiretitanServiceClient) Close(ctx context.Context) error {
 		return nil
 	}
 	c.closed = true
+	if c.stopHeartbeat != nil {
+		c.stopHeartbeat()
+		<-c.heartbeatDone
+	}
 	var closeErr error
 	if err := c.ReleaseReferences(ctx); err != nil {
 		closeErr = errors.Join(closeErr, err)
@@ -338,15 +348,8 @@ func (c *FiretitanServiceClient) PromoteCheckpoint(ctx context.Context, opts Pro
 	if c == nil || c.PromoteCheckpointFunc == nil {
 		return nil, ControlPlaneCheckpointClientError()
 	}
-	if opts.Name == "" && opts.JobID == "" {
-		jobID, err := c.TrainerJobID()
-		if err != nil {
-			return nil, ControlPlaneCheckpointClientError()
-		}
-		opts.JobID = jobID
-	}
-	if opts.BaseModel == "" {
-		opts.BaseModel = c.Config.BaseModel
+	if _, _, _, ok := ParseCheckpointName(opts.Name); !ok || opts.BaseModel == "" || opts.OutputModelID == "" {
+		return nil, fmt.Errorf("full checkpoint name, base model and output model ID are required")
 	}
 	return c.PromoteCheckpointFunc(ctx, opts)
 }
@@ -426,13 +429,23 @@ func (c *FiretitanServiceClient) CreateSamplingClient(ctx context.Context, model
 	if strings.Contains(sampler.DeploymentSampler.Model, "/trainingSamplers/") {
 		return sampler, nil
 	}
-	if _, session, _, ok := ParseTrainingSessionCheckpointPath(sampler.DeploymentSampler.Model); ok && session != c.TrainingSessionID() {
-		return sampler, nil
+	if _, route, ok := strings.Cut(sampler.DeploymentSampler.Model, "/trainingSessions/"); ok {
+		session, _, _ := strings.Cut(route, "/")
+		if session != c.TrainingSessionID() {
+			return sampler, nil
+		}
 	}
 	c.lifecycleMu.Lock()
-	clients := append([]*FiretitanTrainingClient(nil), c.trainingClients...)
+	clients := c.trainingClients
+	if c.ProvisionedHandle != nil && len(c.ProvisionedHandle.TrainingClients) != 0 {
+		clients = c.ProvisionedHandle.TrainingClients
+	}
+	clients = append([]*FiretitanTrainingClient(nil), clients...)
 	c.lifecycleMu.Unlock()
-	format := RoutingBase64Inline
+	if len(clients) == 0 {
+		return sampler, nil
+	}
+	var format RoutingMatrixFormat
 	store := ""
 	required := false
 	if len(clients) == 1 {
@@ -445,31 +458,31 @@ func (c *FiretitanServiceClient) CreateSamplingClient(ctx context.Context, model
 			}
 		}
 	}
-	if format == RoutingParquetV1 || required {
-		sampler.DeploymentSampler = sampler.DeploymentSampler.CopyForR3Binding(format, store)
-		sampler.DeploymentSampler.r3BindingRequired = required
-	}
+	sampler.DeploymentSampler.NegotiateRoutingMatrixFormat(format, store)
+	sampler.DeploymentSampler.r3BindingRequired = required
 	return sampler, nil
 }
-func (c *FiretitanServiceClient) CreateSamplingClientForTraining(ctx context.Context, modelPath string, tokenizer DeploymentTokenizer, controller SamplingConcurrencyController, training *FiretitanTrainingClient) (*FiretitanSamplingClient, error) {
+func (c *FiretitanServiceClient) CreateSamplingClientForTraining(ctx context.Context, modelPath string, tokenizer DeploymentTokenizer, controller SamplingConcurrencyController, training *FiretitanTrainingClient, deploymentSampler ...*DeploymentSampler) (*FiretitanSamplingClient, error) {
 	if training == nil {
 		return nil, fmt.Errorf("training client is required")
 	}
-	sampler, err := c.createSamplingClient(ctx, modelPath, tokenizer, controller)
+	sampler, err := c.createSamplingClient(ctx, modelPath, tokenizer, controller, deploymentSampler...)
 	if err != nil {
 		return nil, err
 	}
-	sampler.DeploymentSampler = sampler.DeploymentSampler.CopyForR3Binding(training.RoutingMatrixFormat, training.R3StoreID)
+	sampler.DeploymentSampler.NegotiateRoutingMatrixFormat(training.RoutingMatrixFormat, training.R3StoreID)
 	return sampler, nil
 }
 func (c *FiretitanServiceClient) createSamplingClient(ctx context.Context, modelPath string, tokenizer DeploymentTokenizer, controller SamplingConcurrencyController, deploymentSampler ...*DeploymentSampler) (*FiretitanSamplingClient, error) {
 	if len(deploymentSampler) > 0 && deploymentSampler[0] != nil {
-		sampler := deploymentSampler[0]
+		sampler := deploymentSampler[0].CopyForR3Binding("", "")
 		if tokenizer != nil {
 			sampler.Tokenizer = tokenizer
 		}
 		if controller != nil {
-			sampler.ConcurrencyController = controller
+			// An explicit option overrides the source handle's scheduler.
+			sampler.backendManagedConcurrency = false
+			WithDeploymentSamplerConcurrencyController(controller)(sampler)
 		}
 		return NewFiretitanSamplingClient(sampler), nil
 	}
@@ -774,6 +787,8 @@ type CreateLoraTrainingClientOptions struct {
 
 type FiretitanTrainingClient struct {
 	SupportsReinforce                bool
+	SupportsMCScoreCentering         bool
+	SupportsTopKScoreCentering       bool
 	SupportsScoreCentering           bool
 	SupportsPolicyImportanceSampling bool
 	SupportsPolicyDiagnostics        bool
@@ -824,6 +839,24 @@ func (c *FiretitanServiceClient) CreateTrainingClient(ctx context.Context, opts 
 	var opt CreateFiretitanTrainingClientOptions
 	if len(opts) > 0 {
 		opt = opts[0]
+	}
+	if c.reservedRuntime != nil {
+		if opt.TrainerBaseURL == "" {
+			opt.TrainerBaseURL = c.ManagedBaseURL
+		}
+		if opt.ComputeBackend == nil {
+			opt.ComputeBackend = c.reservedRuntime
+		}
+		opt.SkipRegistry = true
+		if opt.ConfigOverride == nil {
+			config := c.Config
+			config.BaseModel = opt.BaseModel
+			if opt.LoraRank != nil {
+				config.LoraRank = *opt.LoraRank
+			}
+			config.LoraAlpha = opt.LoraAlpha
+			opt.ConfigOverride = &config
+		}
 	}
 	if c.Registry == nil {
 		c.Registry = NewTrainingClientConfigRegistry()
@@ -881,33 +914,21 @@ func (c *FiretitanServiceClient) CreateTrainingClient(ctx context.Context, opts 
 			return nil, err
 		}
 	}
+	if opt.BaseModel != "" && opt.BaseModel != config.BaseModel {
+		return nil, fmt.Errorf("base_model is fixed by service configuration")
+	}
+	if opt.LoraRank != nil && *opt.LoraRank != config.LoraRank {
+		return nil, fmt.Errorf("lora_rank is fixed by service configuration")
+	}
+	if opt.LoraAlpha != nil && (config.LoraAlpha == nil || *opt.LoraAlpha != *config.LoraAlpha) {
+		return nil, fmt.Errorf("lora_alpha is fixed by service configuration")
+	}
 	if !opt.SkipRegistry && !multiModel {
 		key := ManagedTrainingClientKey(config)
 		if err := c.Registry.Add(key); err != nil {
 			return nil, err
 		}
 	}
-	var warnings []string
-	if opt.BaseModel != "" {
-		if warning := DeprecatedManagedOverrideMessage("create_training_client", "base_model", opt.BaseModel, config.BaseModel); warning != "" {
-			warnings = append(warnings, warning)
-		}
-	}
-	if opt.LoraRank != nil {
-		if warning := DeprecatedManagedOverrideMessage("create_training_client", "lora_rank", *opt.LoraRank, config.LoraRank); warning != "" {
-			warnings = append(warnings, warning)
-		}
-	}
-	if opt.LoraAlpha != nil {
-		var configuredAlpha any
-		if config.LoraAlpha != nil {
-			configuredAlpha = *config.LoraAlpha
-		}
-		if warning := DeprecatedManagedOverrideMessage("create_training_client", "lora_alpha", *opt.LoraAlpha, configuredAlpha); warning != "" {
-			warnings = append(warnings, warning)
-		}
-	}
-
 	handle := ManagedHandleMetadata{}
 	if c.ManagedHandle != nil {
 		handle = *c.ManagedHandle
@@ -928,10 +949,10 @@ func (c *FiretitanServiceClient) CreateTrainingClient(ctx context.Context, opts 
 		runName = c.ServerlessRunName(ctx, opt.ModelID)
 	}
 	client := &FiretitanTrainingClient{
-		Service:         c,
-		Config:          config,
-		UserMetadata:    ResolveUserMetadata(c.DefaultUserMetadata, opt.UserMetadata),
-		Warnings:        warnings,
+		Service:      c,
+		Config:       config,
+		UserMetadata: ResolveUserMetadata(c.DefaultUserMetadata, opt.UserMetadata),
+
 		HandleMetadata:  handle,
 		SamplerBackend:  backend,
 		WeightSyncer:    opt.WeightSyncer,
@@ -1311,6 +1332,9 @@ func (c *FiretitanTrainingClient) ForwardBackward(ctx context.Context, data []Tr
 	if err != nil {
 		return ForwardBackwardOutput{}, err
 	}
+	if err := validateScoreCenteringInputs(data, lossFnConfig); err != nil {
+		return ForwardBackwardOutput{}, err
+	}
 	if err := c.ValidateRoutingData(data); err != nil {
 		return ForwardBackwardOutput{}, err
 	}
@@ -1379,16 +1403,6 @@ func (c *FiretitanTrainingClient) ListCheckpoints(ctx context.Context, pageSize 
 }
 
 func (c *FiretitanTrainingClient) PromoteCheckpoint(ctx context.Context, opts PromoteCheckpointOptions) (map[string]any, error) {
-	jobID, err := c.TrainerJobID()
-	if err != nil {
-		return nil, ControlPlaneCheckpointClientError()
-	}
-	if opts.Name == "" && opts.JobID == "" {
-		opts.JobID = jobID
-	}
-	if opts.BaseModel == "" {
-		opts.BaseModel = c.Config.BaseModel
-	}
 	if c.Service == nil {
 		return nil, ControlPlaneCheckpointClientError()
 	}
@@ -1475,9 +1489,9 @@ func (c *FiretitanTrainingClient) LoadAdapter(ctx context.Context, adapterPath s
 	}
 	defer operationDone()
 
-	adapterPath = strings.TrimSpace(adapterPath)
-	if adapterPath == "" {
-		return LoadAdapterResponse{}, fmt.Errorf("adapter_path must be a non-empty string")
+	adapterPath, err := adapterResource(adapterPath)
+	if err != nil {
+		return LoadAdapterResponse{}, err
 	}
 	if c == nil || c.AdapterLoader == nil {
 		return LoadAdapterResponse{}, fmt.Errorf("FiretitanTrainingClient requires an AdapterLoader to load_adapter")

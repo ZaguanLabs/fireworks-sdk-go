@@ -5,46 +5,36 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"reflect"
 	"strconv"
-	"strings"
-	"time"
 )
 
-type routingProbe struct {
-	done chan struct{}
-	err  error
-}
-
-// NegotiateRoutingMatrixFormat binds trainer capabilities; the first R3 request
-// probes inference. Unknown capabilities retain the inline protocol.
+// NegotiateRoutingMatrixFormat binds a sampler to the trainer's shared store.
 func (s *DeploymentSampler) NegotiateRoutingMatrixFormat(format RoutingMatrixFormat, storeID string) {
 	s.r3Mu.Lock()
 	defer s.r3Mu.Unlock()
-	s.routingMatrixFormat = RoutingBase64Inline
+	s.routingMatrixFormat = ""
 	s.r3StoreID = ""
-	if format == RoutingParquetV1 {
+	if format == RoutingParquetV1 && storeID != "" {
 		s.r3StoreID = storeID
+		s.routingMatrixFormat = RoutingParquetV1
 	}
-	s.r3Negotiated = s.r3StoreID == ""
-	s.r3Probe = nil
 }
 func (s *DeploymentSampler) routingBinding() (RoutingMatrixFormat, string, bool) {
 	s.r3Mu.Lock()
 	defer s.r3Mu.Unlock()
-	format := s.routingMatrixFormat
-	if format == "" {
-		format = RoutingBase64Inline
-	}
-	return format, s.r3StoreID, s.r3BindingRequired
+	return s.routingMatrixFormat, s.r3StoreID, s.r3BindingRequired
 }
 func (s *DeploymentSampler) RoutingMatrixFormat() RoutingMatrixFormat {
 	f, _, _ := s.routingBinding()
 	return f
 }
 func (s *DeploymentSampler) R3StoreID() string { _, id, _ := s.routingBinding(); return id }
+
+// A custom transport belongs to its caller. A copied handle may send through it,
+// but closing one handle must not close another handle's connections.
+type borrowedSamplerTransport struct{ http.RoundTripper }
 
 func (s *DeploymentSampler) CopyForR3Binding(format RoutingMatrixFormat, store string) *DeploymentSampler {
 	clone := NewDeploymentSampler(s.InferenceURL, s.Model, s.APIKey)
@@ -54,6 +44,7 @@ func (s *DeploymentSampler) CopyForR3Binding(format RoutingMatrixFormat, store s
 	}
 	clone.Tokenizer = s.Tokenizer
 	clone.ConcurrencyController = s.ConcurrencyController
+	clone.backendManagedConcurrency = s.backendManagedConcurrency
 	clone.Now = s.Now
 	clone.Sleep = s.Sleep
 	clone.RetryJitter = s.RetryJitter
@@ -67,26 +58,13 @@ func (s *DeploymentSampler) CopyForR3Binding(format RoutingMatrixFormat, store s
 		}
 		if t, ok := transport.(*http.Transport); ok {
 			client.Transport = t.Clone()
+		} else {
+			client.Transport = borrowedSamplerTransport{transport}
 		}
 		clone.HTTPClient = &client
 	}
 	clone.NegotiateRoutingMatrixFormat(format, store)
 	return clone
-}
-func unsupportedRoutingFormat(code int, body []byte) bool {
-	if code != 400 {
-		return false
-	}
-	var result struct {
-		Error struct {
-			Code    string `json:"code"`
-			Message string `json:"message"`
-		} `json:"error"`
-	}
-	if json.Unmarshal(body, &result) != nil {
-		return false
-	}
-	return (result.Error.Code == "invalid_request_error" || result.Error.Code == "INVALID_ARGUMENT") && (result.Error.Message == "Extra inputs are not permitted, field: 'routing_matrix_format', value: 'parquet_v1'" || result.Error.Message == "Extra inputs are not permitted, field: 'routing_matrix_format'")
 }
 func (s *DeploymentSampler) completionHeaders(opts CompletionRequestOptions) http.Header {
 	h := http.Header{}
@@ -107,97 +85,6 @@ func (s *DeploymentSampler) completionHeaders(opts CompletionRequestOptions) htt
 	}
 	return h
 }
-func (s *DeploymentSampler) postRoutingProbe(ctx context.Context, headers http.Header, store string) error {
-	payload := map[string]any{"model": s.Model, "prompt": "R3 compatibility check.", "max_tokens": 0, "n": 1, "echo": true, "stream": false, "logprobs": true, "routing_matrix_format": "parquet_v1"}
-	data, _ := json.Marshal(payload)
-	req, err := http.NewRequestWithContext(ctx, "POST", s.InferenceURL+"/inference/v1/completions", bytes.NewReader(data))
-	if err != nil {
-		return err
-	}
-	req.Header = headers.Clone()
-	req.Header.Set("X-Request-Id", newSamplingRequestID())
-	req.Header.Set(R3StoreHeader, store)
-	req.Header.Set(R3TTLHeader, "60")
-	resp, err := s.HTTPClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return err
-	}
-	format := RoutingBase64Inline
-	if !unsupportedRoutingFormat(resp.StatusCode, body) {
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			return &CompletionHTTPStatusError{StatusCode: resp.StatusCode, Body: body, Headers: resp.Header.Clone()}
-		}
-		var result struct {
-			Choices []map[string]any `json:"choices"`
-		}
-		if err := json.Unmarshal(body, &result); err != nil {
-			return err
-		}
-		if len(result.Choices) == 0 {
-			return fmt.Errorf("R3 probe returned no choice")
-		}
-		choice := result.Choices[0]
-		if choice["routing_matrix_format"] != "parquet_v1" || choice["r3_store_id"] != store {
-			return fmt.Errorf("inference did not acknowledge trainer shared storage")
-		}
-		refs, err := ParseRoutingReferences(choice["routing_references"])
-		if err != nil {
-			return err
-		}
-		if len(refs.Files) == 0 {
-			return fmt.Errorf("R3 probe published no files")
-		}
-		for _, f := range refs.Files {
-			if f["store_id"] != store {
-				return fmt.Errorf("R3 probe used incompatible storage")
-			}
-		}
-		format = RoutingParquetV1
-	}
-	s.r3Mu.Lock()
-	s.routingMatrixFormat = format
-	s.r3Negotiated = true
-	s.r3Mu.Unlock()
-	return nil
-}
-func (s *DeploymentSampler) ensureRoutingFormat(ctx context.Context, headers http.Header) error {
-	s.r3Mu.Lock()
-	if s.r3StoreID == "" || s.r3Negotiated {
-		s.r3Mu.Unlock()
-		return nil
-	}
-	probe := s.r3Probe
-	if probe == nil {
-		probe = &routingProbe{done: make(chan struct{})}
-		s.r3Probe = probe
-		store := s.r3StoreID
-		go func() {
-			// One cancelled caller must not abort a probe shared by other requests.
-			probeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Minute)
-			defer cancel()
-			err := s.postRoutingProbe(probeCtx, headers, store)
-			s.r3Mu.Lock()
-			probe.err = err
-			if err != nil && s.r3Probe == probe {
-				s.r3Probe = nil
-			}
-			close(probe.done)
-			s.r3Mu.Unlock()
-		}()
-	}
-	s.r3Mu.Unlock()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-probe.done:
-		return probe.err
-	}
-}
 func (s *DeploymentSampler) routingRequest(ctx context.Context, payload map[string]any, opts CompletionRequestOptions) (http.Header, error) {
 	if _, exists := opts.Extra["routing_matrix_format"]; exists {
 		return nil, fmt.Errorf("routing_matrix_format is selected by the trainer-bound sampler")
@@ -215,106 +102,169 @@ func (s *DeploymentSampler) routingRequest(ctx context.Context, payload map[stri
 		return nil, fmt.Errorf("r3_ttl_seconds must be a positive integer")
 	}
 	headers := s.completionHeaders(opts)
-	if payload["top_sampling_format"] == "parquet_v1" || payload["sampling_mask"] == "parquet_v1" {
-		k, ok := intFromStrictAny(payload["top_sampling_logprobs"])
-		_, store, required := s.routingBinding()
-		if payload["top_sampling_format"] == "parquet_v1" && (!ok || k < 1) {
-			return nil, fmt.Errorf("Parquet sampling requires positive integer top_sampling_logprobs")
-		}
-		if store == "" || required {
-			return nil, fmt.Errorf("Parquet sampling requires a trainer shared-storage binding")
-		}
-		headers.Set(R3StoreHeader, store)
-		if ttl != nil {
-			headers.Set(R3TTLHeader, strconv.Itoa(*ttl))
-		}
-	}
-
-	if wanted, _ := payload["include_routing_matrix"].(bool); !wanted {
-		return headers, nil
-	}
-	_, _, required := s.routingBinding()
-	if required {
-		return nil, fmt.Errorf("bind sampler to a training client when the service has multiple model handles")
-	}
-	if err := s.ensureRoutingFormat(ctx, headers); err != nil {
+	if err := normalizeCaptureFormats(payload); err != nil {
 		return nil, err
 	}
-	format, store, _ := s.routingBinding()
-	if format == RoutingParquetV1 {
+	routing, _ := payload["include_routing_matrix"].(bool)
+	capture := payload["top_sampling_format"] == "parquet_v1" || payload["sample_extra_format"] == "parquet_v1" || payload["sampling_mask"] == "parquet_v1"
+	if !routing && !capture {
+		return headers, nil
+	}
+	format, store, required := s.routingBinding()
+	if required || format != RoutingParquetV1 || store == "" {
+		return nil, fmt.Errorf("capture requires a sampler bound to trainer shared storage")
+	}
+	if routing {
 		delete(payload, "include_routing_matrix")
 		payload["routing_matrix_format"] = "parquet_v1"
-		headers.Set(R3StoreHeader, store)
-		if ttl != nil {
-			headers.Set(R3TTLHeader, strconv.Itoa(*ttl))
-		}
+	}
+	headers.Set(R3StoreHeader, store)
+	if ttl != nil {
+		headers.Set(R3TTLHeader, strconv.Itoa(*ttl))
 	}
 	return headers, nil
 }
 
 func validateRoutingData(data []TrainingDatum, format RoutingMatrixFormat, store string) error {
 	for _, datum := range data {
-		for _, key := range []string{"top_sampling_references", "sampling_mask_references"} {
-			if raw := datum.ModelInput[key]; raw != nil {
-				if store == "" {
-					return fmt.Errorf("top-K references require trainer shared storage")
-				}
-				refs, err := ParseRoutingReferences(raw)
-				if err != nil {
-					return err
-				}
-				count, ok := modelInputPositionCount(datum.ModelInput)
-				if !ok || count != refs.Length {
-					return fmt.Errorf("top-K references must match model input length")
-				}
-				for _, f := range refs.Files {
-					if f["store_id"] != store {
-						return fmt.Errorf("top-K reference belongs to a different storage domain")
-					}
-				}
-			}
-
-		}
-		raw := datum.ModelInput["routing_references"]
-		if raw == nil {
-			continue
-		}
-		if format != RoutingParquetV1 || store == "" {
-			return fmt.Errorf("Parquet R3 requires trainer support and shared storage")
-		}
-		if fmt.Sprint(datum.ModelInput["routing_matrix_format"]) != "parquet_v1" {
-			return fmt.Errorf("Parquet references require routing_matrix_format=parquet_v1")
-		}
 		if datum.ModelInput["routing_matrices"] != nil {
-			return fmt.Errorf("supply inline routing matrices or references, not both")
+			return fmt.Errorf("inline routing matrices are unsupported")
 		}
-		refs, err := ParseRoutingReferences(raw)
-		if err != nil {
-			return err
-		}
-		count, ok := modelInputPositionCount(datum.ModelInput)
-		if !ok || count != refs.Length {
-			return fmt.Errorf("R3 references must match model input length")
-		}
-		for _, f := range refs.Files {
-			if f["store_id"] != store {
-				return fmt.Errorf("R3 reference belongs to a different storage domain")
+		for _, field := range []string{"routing_references", "top_sampling_references", "sampling_mask_references", "sample_extra_references"} {
+			raw := datum.ModelInput[field]
+			if raw == nil {
+				continue
+			}
+			if field == "routing_references" && fmt.Sprint(datum.ModelInput["routing_matrix_format"]) != "parquet_v1" {
+				return fmt.Errorf("R3 references require parquet_v1")
+			}
+			if store == "" {
+				return fmt.Errorf("%s requires trainer shared storage", field)
+			}
+			refs, err := ParseRoutingReferences(raw)
+			if err != nil {
+				return err
+			}
+			count, ok := modelInputPositionCount(datum.ModelInput)
+			if !ok || count != refs.Length {
+				return fmt.Errorf("%s length must match model input length", field)
+			}
+			for _, file := range refs.Files {
+				if file["store_id"] != store {
+					return fmt.Errorf("%s belongs to a different storage domain", field)
+				}
 			}
 		}
 	}
 	return nil
 }
 
-// RoutingFromWire decodes the upstream routing union without expanding references.
+// RoutingFromWire decodes compact routing references. The legacy slice result is always nil.
 func RoutingFromWire(data json.RawMessage) ([]string, *RoutingReferences, error) {
+	data = bytes.TrimSpace(data)
 	if len(data) == 0 || string(data) == "null" {
 		return nil, nil, nil
 	}
-	if strings.HasPrefix(strings.TrimSpace(string(data)), "{") {
-		r, err := ParseRoutingReferences(data)
-		return nil, r, err
+	if data[0] != '{' {
+		return nil, nil, fmt.Errorf("inline routing matrices are unsupported")
 	}
-	var rows []string
-	err := json.Unmarshal(data, &rows)
-	return rows, nil, err
+	r, err := ParseRoutingReferences(data)
+	return nil, r, err
+}
+
+func normalizeCaptureFormats(payload map[string]any) error {
+	for _, pair := range [][2]string{{"top_sampling_logprobs", "top_sampling_format"}, {"sample_extra_tokens", "sample_extra_format"}} {
+		raw, exists := payload[pair[0]]
+		count := 0
+		if exists {
+			var ok bool
+			count, ok = intFromStrictAny(raw)
+			if !ok || count < 0 {
+				return fmt.Errorf("%s must be a nonnegative integer", pair[0])
+			}
+		}
+		format := payload[pair[1]]
+		if format != nil && (format != "parquet_v1" || count == 0) {
+			return fmt.Errorf("invalid %s", pair[1])
+		}
+		if count > 0 {
+			payload[pair[1]] = "parquet_v1"
+		}
+	}
+	switch payload["sampling_mask"] {
+	case nil, false:
+		delete(payload, "sampling_mask")
+	case true, "parquet_v1":
+		payload["sampling_mask"] = "parquet_v1"
+	default:
+		return fmt.Errorf("sampling_mask must request shared-storage capture")
+	}
+	if payload["sample_extra_format"] == "parquet_v1" {
+		if payload["top_sampling_format"] != nil {
+			return fmt.Errorf("extra and top sampling captures are mutually exclusive")
+		}
+		if payload["logprobs"] != true {
+			return fmt.Errorf("extra sampling requires logprobs")
+		}
+		if (payload["temperature"] != nil && floatFromAny(payload["temperature"]) <= 0) || (payload["top_p"] != nil && floatFromAny(payload["top_p"]) <= 0) || floatFromAny(payload["min_p"]) >= 1 || floatFromAny(payload["top_k"]) == 1 {
+			return fmt.Errorf("extra sampling requires stochastic decoding")
+		}
+	}
+	return nil
+}
+
+func scoreCenteringEstimator(config map[string]any) (string, error) {
+	enabled := false
+	if raw, ok := config["score_centering"]; ok {
+		var valid bool
+		enabled, valid = raw.(bool)
+		if !valid {
+			return "", fmt.Errorf("score_centering must be a boolean")
+		}
+	}
+	est, exists := config["score_centering_estimator"]
+	if !enabled {
+		if exists || floatFromAny(config["sampler_kl_coeff"]) != 0 {
+			return "", fmt.Errorf("estimator and sampler KL require score centering")
+		}
+		return "", nil
+	}
+	if !exists || est == "extra_sampling" {
+		if _, set := config["tail_mass_epsilon"]; set {
+			return "", fmt.Errorf("tail_mass_epsilon requires top_sampling")
+		}
+		return "extra_sampling", nil
+	}
+	if est == "top_sampling" {
+		return "top_sampling", nil
+	}
+	return "", fmt.Errorf("unsupported score_centering_estimator")
+}
+func validateScoreCenteringInputs(data []TrainingDatum, config map[string]any) error {
+	est, err := scoreCenteringEstimator(config)
+	if err != nil {
+		return err
+	}
+	for i, datum := range data {
+		top := datum.ModelInput["top_sampling_references"] != nil
+		extra := datum.ModelInput["sample_extra_references"] != nil
+		if (est == "top_sampling") != top || (est == "extra_sampling") != extra {
+			return fmt.Errorf("datum %d: score centering capture does not match estimator %q", i, est)
+		}
+	}
+	return nil
+}
+
+func ModelInputFromIntsWithExtraSampling(tokens []int, refs *RoutingReferences) (map[string]any, error) {
+	input := ModelInputFromInts(tokens)
+	if refs != nil {
+		if err := refs.Validate(); err != nil {
+			return nil, err
+		}
+		if len(tokens) != refs.Length {
+			return nil, fmt.Errorf("extra sampling references must match model input length")
+		}
+		input["sample_extra_references"] = refs.Compact()
+	}
+	return input, nil
 }

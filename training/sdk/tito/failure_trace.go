@@ -29,7 +29,7 @@ type FailureTraceConfig struct {
 type TITOFailureTraceConfig = FailureTraceConfig
 
 func DefaultFailureTraceConfig() FailureTraceConfig {
-	return FailureTraceConfig{RootDir: filepath.Join(os.TempDir(), "fireworks-tito-traces"), MaxLocalBytes: 256 << 20, MaxTrajectoryBytes: 32 << 20, MaxFailedTraces: 32, MaxActiveTraces: 128, MinFreeBytes: 64 << 20, Enabled: true, StaleWriterAge: 7 * 24 * time.Hour}
+	return FailureTraceConfig{RootDir: filepath.Join(os.TempDir(), "fireworks-tito-traces"), MaxLocalBytes: (5000 + 128) * (256 << 20), MaxTrajectoryBytes: 256 << 20, MaxFailedTraces: 5000, MaxActiveTraces: 128, MinFreeBytes: 64 << 20, Enabled: true, StaleWriterAge: 7 * 24 * time.Hour}
 }
 func (c FailureTraceConfig) Validate() error {
 	if !filepath.IsAbs(c.RootDir) || c.MaxLocalBytes < 1 || c.MaxTrajectoryBytes < 1 || c.MaxTrajectoryBytes > c.MaxLocalBytes || c.MaxFailedTraces < 1 || c.MaxActiveTraces < 1 || c.MinFreeBytes < 0 || c.StaleWriterAge <= 0 {

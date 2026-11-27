@@ -67,112 +67,29 @@ func TestCompactRoutingRoundTripSliceAndMask(t *testing.T) {
 	}
 }
 
-func TestR3NegotiationAndReplicaFallback(t *testing.T) {
-	for _, mode := range []string{"parquet", "old", "replica", "invalid"} {
-		t.Run(mode, func(t *testing.T) {
-			var probes, real atomic.Int32
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				var body map[string]any
-				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-					t.Error(err)
-				}
-				unsupported := func() {
-					w.WriteHeader(400)
-					json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"code": "INVALID_ARGUMENT", "message": "Extra inputs are not permitted, field: 'routing_matrix_format', value: 'parquet_v1'"}})
-				}
-				if body["prompt"] == "R3 compatibility check." {
-					probes.Add(1)
-					if r.Header.Get(R3TTLHeader) != "60" || r.Header.Get(R3StoreHeader) != "store" || body["max_tokens"] != float64(0) {
-						t.Errorf("bad probe %v %v", body, r.Header)
-					}
-					if mode == "old" {
-						unsupported()
-						return
-					}
-					store := "store"
-					if mode == "invalid" {
-						store = "wrong"
-					}
-					json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"routing_matrix_format": "parquet_v1", "r3_store_id": store, "routing_references": testRouting(1)}}})
-					return
-				}
-				n := real.Add(1)
-				if mode == "replica" && n == 1 {
-					unsupported()
-					return
-				}
-				if mode == "old" || mode == "replica" {
-					if body["include_routing_matrix"] != true || body["routing_matrix_format"] != nil || r.Header.Get(R3StoreHeader) != "" || r.Header.Get(R3TTLHeader) != "" {
-						t.Errorf("inline fallback %v %v", body, r.Header)
-					}
-				} else if r.Header.Get(R3TTLHeader) != "300" || r.Header.Get(R3StoreHeader) != "store" || body["routing_matrix_format"] != "parquet_v1" || body["r3_ttl_seconds"] != nil {
-					t.Errorf("Parquet request %v %v", body, r.Header)
-				}
-				w.Header().Set("Content-Type", "text/event-stream")
-				fmt.Fprint(w, "data: {\"choices\":[{\"finish_reason\":\"stop\",\"raw_output\":{\"completion_token_ids\":[2]},\"routing_matrix_format\":\"parquet_v1\",\"r3_store_id\":\"store\"}]}\n\ndata: [DONE]\n\n")
-			}))
-			defer server.Close()
-			s := NewDeploymentSampler(server.URL, "model", "key")
-			defer s.Close()
-			s.NegotiateRoutingMatrixFormat(RoutingParquetV1, "store")
-			opts := CompletionRequestOptions{IncludeRoutingMatrix: true, R3TTLSeconds: intPointer(300), AdditionalHeaders: map[string]string{R3StoreHeader: "attacker", R3TTLHeader: "1"}}
-			_, _, err := s.StreamCompletions(context.Background(), []int{1}, opts)
-			if mode == "invalid" {
-				if err == nil || real.Load() != 0 {
-					t.Fatal("invalid probe did not stop request")
-				}
-				return
-			}
-			if err != nil {
-				t.Fatal(err)
-			}
-			if probes.Load() != 1 {
-				t.Fatal("probe count", probes.Load())
-			}
-			if mode != "replica" {
-				_, _, err = s.StreamCompletions(context.Background(), []int{1}, opts)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if probes.Load() != 1 {
-					t.Fatal("repeated probe")
-				}
-			}
-		})
-	}
-}
-
-func TestR3SharedProbeSurvivesCallerCancellation(t *testing.T) {
-	started := make(chan struct{})
-	release := make(chan struct{})
-	var probes atomic.Int32
+func TestRoutingCaptureRequiresBindingAndDoesNotRetryInline(t *testing.T) {
+	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if probes.Add(1) == 1 {
-			close(started)
+		requests.Add(1)
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
 		}
-		<-release
-		json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"routing_matrix_format": "parquet_v1", "r3_store_id": "store", "routing_references": testRouting(1)}}})
+		if body["routing_matrix_format"] != "parquet_v1" || body["include_routing_matrix"] != nil || r.Header.Get(R3StoreHeader) != "store" || r.Header.Get(R3TTLHeader) != "300" {
+			t.Error(body, r.Header)
+		}
+		http.Error(w, "unsupported", 400)
 	}))
 	defer server.Close()
 	s := NewDeploymentSampler(server.URL, "model", "key")
 	defer s.Close()
+	opts := CompletionRequestOptions{IncludeRoutingMatrix: true, R3TTLSeconds: intPointer(300)}
+	if _, _, err := s.StreamCompletions(context.Background(), []int{1}, opts); err == nil || requests.Load() != 0 {
+		t.Fatal("unbound capture submitted")
+	}
 	s.NegotiateRoutingMatrixFormat(RoutingParquetV1, "store")
-	ctx, cancel := context.WithCancel(context.Background())
-	first := make(chan error, 1)
-	go func() { first <- s.ensureRoutingFormat(ctx, http.Header{}) }()
-	<-started
-	second := make(chan error, 1)
-	go func() { second <- s.ensureRoutingFormat(context.Background(), http.Header{}) }()
-	cancel()
-	if err := <-first; !errors.Is(err, context.Canceled) {
-		t.Fatal(err)
-	}
-	close(release)
-	if err := <-second; err != nil {
-		t.Fatal(err)
-	}
-	if probes.Load() != 1 || s.RoutingMatrixFormat() != RoutingParquetV1 {
-		t.Fatal("shared negotiation lost")
+	if _, _, err := s.StreamCompletions(context.Background(), []int{1}, opts); err == nil || requests.Load() != 1 {
+		t.Fatal("expected single rejected capture", err, requests.Load())
 	}
 }
 
@@ -191,12 +108,10 @@ func TestTopLogprobsAndPartialEchoAlignment(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := out[0]
-	if c.EchoedPromptLogprobCount != 1 || c.CompletionLen != 2 || len(c.InferenceTopKTokenIDs) != 3 || c.RoutingReferences.Length != 3 {
+	if c.EchoedPromptLogprobCount != 1 || c.CompletionLen != 2 || c.InferenceTopKTokenIDs != nil || c.RoutingReferences.Length != 3 {
 		t.Fatalf("completion %+v", c)
 	}
-	if !reflect.DeepEqual(c.InferenceTopKTokenIDs[0], []int{12, 99}) {
-		t.Fatal(c.InferenceTopKTokenIDs)
-	}
+
 	choice["r3_store_id"] = "wrong"
 	if _, err := s.ParseCompletionsResult(result, []int{10, 11, 12}, 0, true, true, false); err == nil {
 		t.Fatal("wrong storage accepted")

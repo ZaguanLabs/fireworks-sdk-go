@@ -210,13 +210,12 @@ func TestProvisionManagedHandleReattachesExistingDeployment(t *testing.T) {
 	}}
 	handle, err := ProvisionManagedHandle(context.Background(), ManagedProvisionOptions{
 		Config: FiretitanProvisioningConfig{
-			BaseModel:                 "accounts/acct/models/base",
-			TrainerJobID:              "job-existing",
-			DeploymentID:              "dep-1",
-			DeploymentShape:           "accounts/acct/deploymentShapes/serve/versions/2",
-			CleanupDeploymentOnClose:  CleanupDeploymentScaleToZero,
-			CleanupTrainerOnClose:     true,
-			GradientAccumulationSteps: 1,
+			BaseModel:                "accounts/acct/models/base",
+			TrainerJobID:             "job-existing",
+			DeploymentID:             "dep-1",
+			DeploymentShape:          "accounts/acct/deploymentShapes/serve/versions/2",
+			CleanupDeploymentOnClose: CleanupDeploymentScaleToZero,
+			CleanupTrainerOnClose:    true,
 		},
 		Trainer:              trainer,
 		Deployment:           deployment,
@@ -250,13 +249,12 @@ func TestProvisionManagedHandleCleansCreatedStableResources(t *testing.T) {
 	deployment := &fakeManagedDeployment{existing: map[string]DeploymentInfo{}}
 	handle, err := ProvisionManagedHandle(context.Background(), ManagedProvisionOptions{
 		Config: FiretitanProvisioningConfig{
-			BaseModel:                 "accounts/acct/models/base",
-			TrainerJobID:              "job-stable",
-			DeploymentID:              "dep-stable",
-			DeploymentShape:           "accounts/acct/deploymentShapes/serve/versions/1",
-			CleanupTrainerOnClose:     true,
-			CleanupDeploymentOnClose:  CleanupDeploymentDelete,
-			GradientAccumulationSteps: 1,
+			BaseModel:                "accounts/acct/models/base",
+			TrainerJobID:             "job-stable",
+			DeploymentID:             "dep-stable",
+			DeploymentShape:          "accounts/acct/deploymentShapes/serve/versions/1",
+			CleanupTrainerOnClose:    true,
+			CleanupDeploymentOnClose: CleanupDeploymentDelete,
 		},
 		Trainer:    trainer,
 		Deployment: deployment,

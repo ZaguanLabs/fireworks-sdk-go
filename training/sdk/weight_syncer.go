@@ -17,6 +17,7 @@ type SaveWeightsForSamplerOptions struct {
 	CheckpointType  string
 	TTL             time.Duration
 	ExportPrecision string
+	ExportRounding  string
 }
 
 type SamplerWeightSaver interface {
@@ -34,7 +35,7 @@ type WeightSyncerConfig struct {
 	WarmupAfterHotload  *bool
 	WarmupMaxRetries    int
 	WarmupRetryInterval time.Duration
-	ResetPromptCache    *bool
+	ResetPromptCache    ResetPromptCacheMode
 	LoraRank            int
 	Now                 func() time.Time
 	Sleep               func(time.Duration)
@@ -51,7 +52,7 @@ type WeightSyncer struct {
 	WarmupAfterHotload  bool
 	WarmupMaxRetries    int
 	WarmupRetryInterval time.Duration
-	ResetPromptCache    bool
+	ResetPromptCache    ResetPromptCacheMode
 	LoraRank            int
 
 	BaseSaved         bool
@@ -91,10 +92,6 @@ func NewWeightSyncer(config WeightSyncerConfig) *WeightSyncer {
 	if warmupRetryInterval == 0 {
 		warmupRetryInterval = 10 * time.Second
 	}
-	resetPromptCache := true
-	if config.ResetPromptCache != nil {
-		resetPromptCache = *config.ResetPromptCache
-	}
 	now := config.Now
 	if now == nil {
 		now = time.Now
@@ -114,7 +111,7 @@ func NewWeightSyncer(config WeightSyncerConfig) *WeightSyncer {
 		WarmupAfterHotload:  warmupAfterHotload,
 		WarmupMaxRetries:    warmupMaxRetries,
 		WarmupRetryInterval: warmupRetryInterval,
-		ResetPromptCache:    resetPromptCache,
+		ResetPromptCache:    config.ResetPromptCache,
 		LoraRank:            config.LoraRank,
 		LastTiming:          map[string]time.Duration{},
 		Now:                 now,
@@ -246,6 +243,10 @@ func (s *WeightSyncer) SaveOnlyExt(ctx context.Context, name string, opts SaveWe
 		return SaveSamplerResult{}, err
 	}
 	opts.ExportPrecision = string(exportPrecision)
+	opts.ExportRounding, err = ResolveExportRounding(ckptType, opts.ExportRounding)
+	if err != nil {
+		return SaveSamplerResult{}, err
+	}
 	start := s.now()()
 	saveResult, err := s.PolicyClient.SaveWeightsForSamplerExt(ctx, name, opts)
 	s.LastTiming["save_time_s"] = s.now()().Sub(start)
@@ -330,7 +331,7 @@ func (s *WeightSyncer) doHotload(ctx context.Context, snapshotName, checkpointTy
 		return err
 	}
 	incremental := s.BuildIncrementalMetadata(checkpointType)
-	resetPromptCache := s.ResetPromptCache
+
 	hotloadTimeout := s.HotloadTimeout
 	if hotloadTimeout == 0 {
 		hotloadTimeout = HotloadTimeout
@@ -338,7 +339,7 @@ func (s *WeightSyncer) doHotload(ctx context.Context, snapshotName, checkpointTy
 	start := s.now()()
 	ok, err := s.hotloadAndWait(ctx, s.DeploymentID, s.BaseModel, snapshotName, HotloadAndWaitOptions{
 		IncrementalSnapshotMetadata: incremental,
-		ResetPromptCache:            &resetPromptCache,
+		ResetPromptCache:            s.ResetPromptCache,
 		RequestTimeout:              hotloadTimeout,
 		Path:                        "",
 		Wait: HotloadWaitOptions{

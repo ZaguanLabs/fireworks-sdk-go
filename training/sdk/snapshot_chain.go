@@ -118,3 +118,14 @@ func BuildIncrementalMetadata(loraRank int, checkpointType string, baseIdentity 
 	}
 	return nil
 }
+
+func ResolveExportRounding(checkpoint SamplerCheckpointType, value string) (string, error) {
+	if value == "" {
+		return "", nil
+	}
+	value = strings.ToLower(value)
+	if checkpoint != SamplerCheckpointTypeMergedBase || (value != "nearest" && value != "stochastic") {
+		return "", fmt.Errorf("export_rounding requires a merged_base checkpoint and nearest or stochastic rounding")
+	}
+	return value, nil
+}

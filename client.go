@@ -53,6 +53,7 @@ type Client struct {
 	maxRetries        int
 	lifecycle         *clientLifecycle
 
+	WatermarkDetections          *WatermarkDetectionsResource
 	Chat                         *ChatResource
 	Completions                  *CompletionsResource
 	Messages                     *MessagesResource
@@ -440,6 +441,7 @@ func (c *Client) initResources() {
 	c.Chat = &ChatResource{client: c}
 	c.Chat.Completions = &ChatCompletionsResource{client: c}
 	c.Completions = &CompletionsResource{client: c}
+	c.WatermarkDetections = &WatermarkDetectionsResource{client: c}
 	c.Messages = &MessagesResource{client: c}
 	c.BatchInferenceJobs = &BatchInferenceJobsResource{client: c}
 	c.Deployments = &DeploymentsResource{client: c}

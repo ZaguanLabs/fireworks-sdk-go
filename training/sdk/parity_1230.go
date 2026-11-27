@@ -95,6 +95,13 @@ type SamplerCheckpointMetadata struct {
 }
 
 func (c *FiretitanTrainingClient) ValidateLossCapabilities(loss string, config map[string]any) error {
+	support, err := TargetLogprobSupport(config)
+	if err != nil {
+		return err
+	}
+	if support == "sampling_support" && !c.SupportsTargetLogprobSupport {
+		return fmt.Errorf("trainer does not advertise sampling_support")
+	}
 	if config["report_policy_diagnostics"] == true && !c.SupportsPolicyDiagnostics {
 		return fmt.Errorf("trainer does not advertise replay policy diagnostics")
 	}
@@ -102,14 +109,27 @@ func (c *FiretitanTrainingClient) ValidateLossCapabilities(loss string, config m
 		if !c.SupportsReinforce {
 			return fmt.Errorf("trainer does not advertise built-in REINFORCE")
 		}
-		if config["score_centering"] == true && !c.SupportsScoreCentering {
-			return fmt.Errorf("trainer does not advertise REINFORCE score centering")
+		est, err := scoreCenteringEstimator(config)
+		if err != nil {
+			return err
 		}
-	} else if config["weighting"] == "tis" || config["weighting"] == "mis" || config["anchor_logprob_source"] == "current_detached" {
-		if !c.SupportsPolicyImportanceSampling {
+		if est == "extra_sampling" && !c.SupportsMCScoreCentering {
+			return fmt.Errorf("trainer does not advertise extra sampling score centering")
+		}
+		if est == "top_sampling" && !c.SupportsTopKScoreCentering {
+			return fmt.Errorf("trainer does not advertise top sampling score centering")
+		}
+	} else {
+		for _, field := range []string{"score_centering", "score_centering_estimator", "sampler_kl_coeff"} {
+			if _, ok := config[field]; ok {
+				return fmt.Errorf("%s requires REINFORCE", field)
+			}
+		}
+		if (config["weighting"] == "tis" || config["weighting"] == "mis" || config["anchor_logprob_source"] == "current_detached") && !c.SupportsPolicyImportanceSampling {
 			return fmt.Errorf("trainer does not advertise server policy TIS/MIS")
 		}
 	}
+
 	return nil
 }
 
@@ -152,6 +172,9 @@ func (c *FiretitanTrainingClient) Forward(ctx context.Context, data []TrainingDa
 	if err != nil {
 		return ForwardBackwardOutput{}, err
 	}
+	if err := validateScoreCenteringInputs(data, config); err != nil {
+		return ForwardBackwardOutput{}, err
+	}
 	if err := c.ValidateRoutingData(data); err != nil {
 		return ForwardBackwardOutput{}, err
 	}
@@ -162,14 +185,15 @@ func (c *FiretitanTrainingClient) Forward(ctx context.Context, data []TrainingDa
 }
 
 type samplerHandleState struct {
-	InferenceURL      string            `json:"inference_url"`
-	Model             string            `json:"model"`
-	AdditionalHeaders map[string]string `json:"additional_headers"`
-	RequestContext    map[string]any    `json:"request_context"`
-	R3StoreID         *string           `json:"r3_store_id"`
-	R3BindingRequired bool              `json:"r3_binding_required"`
-	FixedConcurrency  *int              `json:"fixed_concurrency"`
-	APIKey            *string           `json:"api_key"`
+	BackendManagedConcurrency bool              `json:"backend_managed_concurrency,omitempty"`
+	InferenceURL              string            `json:"inference_url"`
+	Model                     string            `json:"model"`
+	AdditionalHeaders         map[string]string `json:"additional_headers"`
+	RequestContext            map[string]any    `json:"request_context"`
+	R3StoreID                 *string           `json:"r3_store_id"`
+	R3BindingRequired         bool              `json:"r3_binding_required"`
+	FixedConcurrency          *int              `json:"fixed_concurrency"`
+	APIKey                    *string           `json:"api_key"`
 }
 
 func credentialHeader(name string) bool {
@@ -188,7 +212,7 @@ func (c *FiretitanSamplingClient) GetSamplerHandle() (string, error) {
 		return "", fmt.Errorf("sampler is required")
 	}
 	s := c.DeploymentSampler
-	state := samplerHandleState{InferenceURL: s.InferenceURL, Model: s.Model, AdditionalHeaders: map[string]string{}, RequestContext: cleanSamplingContext(s.RequestContext)}
+	state := samplerHandleState{BackendManagedConcurrency: s.ConcurrencyController == nil, InferenceURL: s.InferenceURL, Model: s.Model, AdditionalHeaders: map[string]string{}, RequestContext: cleanSamplingContext(s.RequestContext)}
 	for key, value := range s.AdditionalHeaders {
 		if !credentialHeader(key) {
 			state.AdditionalHeaders[key] = value
@@ -229,6 +253,12 @@ func FiretitanSamplingClientFromHandle(handle, apiKey string, tokenizer Deployme
 	options := []DeploymentSamplerOption{WithDeploymentSamplerAdditionalHeaders(serverlessCallerHeaders(state.AdditionalHeaders))}
 	if tokenizer != nil {
 		options = append(options, WithDeploymentSamplerTokenizer(tokenizer))
+	}
+	if state.BackendManagedConcurrency {
+		if state.FixedConcurrency != nil {
+			return nil, fmt.Errorf("invalid mixed concurrency settings")
+		}
+		options = append(options, WithBackendManagedConcurrency())
 	}
 	if state.FixedConcurrency != nil {
 		if *state.FixedConcurrency < 1 {

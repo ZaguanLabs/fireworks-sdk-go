@@ -36,8 +36,8 @@ func TestVersionMatchesPythonSDK(t *testing.T) {
 	if Title != "fireworks" {
 		t.Fatalf("Title = %q, want %q", Title, "fireworks")
 	}
-	if Version != "1.2.30" {
-		t.Fatalf("Version = %q, want %q", Version, "1.2.30")
+	if Version != "1.2.39" {
+		t.Fatalf("Version = %q, want %q", Version, "1.2.39")
 	}
 }
 
@@ -3821,7 +3821,7 @@ func TestModelsTypedAllParamsUsePythonAliases(t *testing.T) {
 			if got := query.Get("skipHfConfigValidation"); got != "true" {
 				t.Errorf("skipHfConfigValidation = %q", got)
 			}
-			if got := query.Get("trustRemoteCode"); got != "true" {
+			if got := query.Get("trustRemoteCode"); got != "" {
 				t.Errorf("trustRemoteCode = %q", got)
 			}
 			for _, key := range []string{"account_id", "config_only", "skip_hf_config_validation", "trust_remote_code"} {
@@ -3933,7 +3933,6 @@ func TestModelsTypedAllParamsUsePythonAliases(t *testing.T) {
 		AccountID:              "acct",
 		ConfigOnly:             true,
 		SkipHfConfigValidation: true,
-		TrustRemoteCode:        true,
 	})
 	if err != nil {
 		t.Fatal(err)

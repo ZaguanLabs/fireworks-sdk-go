@@ -90,7 +90,7 @@ func TestFixedConcurrencyController(t *testing.T) {
 }
 
 func TestDeploymentSamplerMaxConcurrencyCreatesFixedController(t *testing.T) {
-	sampler := NewDeploymentSampler("https://api.example.com", "m", "key", WithDeploymentSamplerMaxConcurrency(3))
+	sampler := NewDeploymentSampler("https://api.example.com", "m", "key", WithDeploymentSamplerConcurrencyController(NewFixedConcurrencyController(3)))
 	ctrl, ok := sampler.ConcurrencyController.(*FixedConcurrencyController)
 	if !ok {
 		t.Fatalf("controller = %T, want *FixedConcurrencyController", sampler.ConcurrencyController)
@@ -106,7 +106,7 @@ func TestDeploymentSamplerExplicitControllerOverridesMaxConcurrency(t *testing.T
 		"https://api.example.com",
 		"m",
 		"key",
-		WithDeploymentSamplerMaxConcurrency(3),
+		WithDeploymentSamplerConcurrencyController(NewFixedConcurrencyController(3)),
 		WithDeploymentSamplerConcurrencyController(ctrl),
 	)
 	if sampler.ConcurrencyController != ctrl {
@@ -127,7 +127,7 @@ func TestDeploymentSamplerTimeoutErrorIncludesDiagnostics(t *testing.T) {
 		}),
 		WithDeploymentSamplerClock(nil, func(time.Duration) {}),
 		WithDeploymentSamplerRetryJitter(func() float64 { return 0 }),
-		WithDeploymentSamplerMaxConcurrency(3),
+		WithDeploymentSamplerConcurrencyController(NewFixedConcurrencyController(3)),
 	)
 	sampler.recordAttemptMetrics(&ServerMetrics{
 		PrefillQueueDuration:  &prefill,
@@ -378,7 +378,7 @@ func TestDeploymentSamplerSampleWithTokensUsesTokenizer(t *testing.T) {
 	sampler := NewDeploymentSampler("https://api.example.com", "m", "key",
 		WithDeploymentSamplerTokenizer(tokenizer),
 		WithDeploymentSamplerRequester(func(_ context.Context, prompt []int, opts CompletionRequestOptions) (map[string]any, ServerMetrics, error) {
-			if opts.Temperature != 1.0 || opts.MaxTokens != 1024 || !opts.RawOutput {
+			if opts.Temperature != 1.0 || opts.MaxTokens != 1024 || opts.RawOutput {
 				t.Fatalf("opts = %#v", opts)
 			}
 			if !intSlicePrefixEqual(prompt, []int{1, 100, 200}) {
@@ -423,7 +423,7 @@ func TestDeploymentSamplerMissingCompletionIDsRaises(t *testing.T) {
 		}),
 	)
 	_, err := sampler.SampleWithPromptTokens(context.Background(), []int{1, 2, 3})
-	if err == nil || !strings.Contains(err.Error(), "missing completion_token_ids") {
+	if err == nil || !strings.Contains(err.Error(), "missing completion token IDs") {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -500,12 +500,9 @@ func TestDeploymentSamplerLogprobsAndRoutingMatrices(t *testing.T) {
 			}}}, ServerMetrics{}, nil
 		}),
 	)
-	results, err := sampler.SampleWithPromptTokens(context.Background(), []int{1, 2}, SampleOptions{Logprobs: true, IncludeRoutingMatrix: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if results[0].InferenceLogprobs[0] != -1.5 || results[0].RoutingMatrices[0] != "AQID" {
-		t.Fatalf("completion = %#v", results[0])
+	_, err := sampler.SampleWithPromptTokens(context.Background(), []int{1, 2}, SampleOptions{Logprobs: true, IncludeRoutingMatrix: true})
+	if err == nil {
+		t.Fatal("legacy inline capture accepted")
 	}
 }
 
@@ -657,7 +654,8 @@ func TestDeploymentSamplerDefaultRequesterPayload(t *testing.T) {
 		chunk, _ := json.Marshal(map[string]any{"choices": []any{map[string]any{
 			"text":          "x",
 			"finish_reason": "stop",
-			"raw_output":    map[string]any{"completion_token_ids": []int{99}},
+			"token_ids":     []int{99},
+			"logprobs":      map[string]any{"content": []any{map[string]any{"logprob": -0.2}}}, "prompt_token_ids": []int{1, 2},
 		}}})
 		_, _ = w.Write([]byte("data: " + string(chunk) + "\n\n"))
 		_, _ = w.Write([]byte("data: [DONE]\n\n"))
@@ -666,11 +664,11 @@ func TestDeploymentSamplerDefaultRequesterPayload(t *testing.T) {
 
 	sampler := NewDeploymentSampler(server.URL, "accounts/test/deployments/dep", "key")
 	results, err := sampler.SampleWithPromptTokens(context.Background(), []int{1, 2}, SampleOptions{
-		MaxTokens:            2,
-		Temperature:          0.7,
-		Logprobs:             true,
-		IncludeRoutingMatrix: true,
-		Stop:                 []string{"stop"},
+		MaxTokens:   2,
+		Temperature: 0.7,
+		Logprobs:    true,
+
+		Stop: []string{"stop"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -678,7 +676,7 @@ func TestDeploymentSamplerDefaultRequesterPayload(t *testing.T) {
 	if len(results) != 1 {
 		t.Fatalf("results = %#v", results)
 	}
-	if payload["model"] != "accounts/test/deployments/dep" || payload["stream"] != true || payload["perf_metrics_in_response"] != true || payload["raw_output"] != true || payload["logprobs"] != true || payload["include_routing_matrix"] != true {
+	if payload["model"] != "accounts/test/deployments/dep" || payload["stream"] != true || payload["perf_metrics_in_response"] != true || payload["raw_output"] != false || payload["return_token_ids"] != true || payload["logprobs"] != true || payload["include_routing_matrix"] != nil {
 		t.Fatalf("payload = %#v", payload)
 	}
 	if payload["temperature"].(float64) != 0.7 || payload["max_tokens"].(float64) != 2 || payload["top_p"].(float64) != 1.0 || payload["top_k"].(float64) != 0 {
@@ -698,7 +696,7 @@ func TestDeploymentSamplerStreamingPerfMetricsPreferred(t *testing.T) {
 			"choices": []any{map[string]any{
 				"text":          "hello",
 				"finish_reason": "stop",
-				"raw_output":    map[string]any{"completion_token_ids": []int{400, 500}},
+				"token_ids":     []int{400, 500}, "prompt_token_ids": []int{1, 2, 3},
 				"logprobs": map[string]any{"content": []any{
 					map[string]any{"logprob": -0.3},
 					map[string]any{"logprob": -0.4},
@@ -738,7 +736,7 @@ func TestDeploymentSamplerStreamingTruncationRetry(t *testing.T) {
 		chunk, _ := json.Marshal(map[string]any{"choices": []any{map[string]any{
 			"text":          "ok",
 			"finish_reason": "stop",
-			"raw_output":    map[string]any{"completion_token_ids": []int{7}},
+			"token_ids":     []int{7}, "prompt_token_ids": []int{1, 2, 3}, "logprobs": map[string]any{"content": []any{map[string]any{"logprob": -0.2}}},
 		}}})
 		_, _ = w.Write([]byte("data: " + string(chunk) + "\n\n"))
 		_, _ = w.Write([]byte("data: [DONE]\n\n"))
@@ -833,7 +831,7 @@ func TestDeploymentSamplerHotloadReadinessRetry(t *testing.T) {
 		chunk, _ := json.Marshal(map[string]any{"choices": []any{map[string]any{
 			"text":          "ok",
 			"finish_reason": "stop",
-			"raw_output":    map[string]any{"completion_token_ids": []int{7}},
+			"token_ids":     []int{7}, "prompt_token_ids": []int{1, 2, 3}, "logprobs": map[string]any{"content": []any{map[string]any{"logprob": -0.2}}},
 		}}})
 		_, _ = w.Write([]byte("data: " + string(chunk) + "\n\n"))
 		_, _ = w.Write([]byte("data: [DONE]\n\n"))

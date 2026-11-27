@@ -328,9 +328,9 @@ type PromoteCheckpointOptions struct {
 }
 
 func (c *FireworksClient) PromoteCheckpoint(ctx context.Context, opts PromoteCheckpointOptions) (map[string]any, error) {
-	accountID, jobID, checkpointID, err := c.ResolvePromoteTarget(ctx, opts.Name, opts.JobID, opts.CheckpointID)
-	if err != nil {
-		return nil, err
+	accountID, jobID, checkpointID, ok := ParseCheckpointName(opts.Name)
+	if !ok || opts.JobID != "" || opts.CheckpointID != "" || opts.HotLoadDeploymentID != "" {
+		return nil, fmt.Errorf("promotion requires the full checkpoint name")
 	}
 	if opts.OutputModelID == "" || opts.BaseModel == "" {
 		return nil, fmt.Errorf("output_model_id and base_model are required")

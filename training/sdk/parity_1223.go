@@ -101,7 +101,7 @@ func ShouldRetryServerlessCapacity409(requestURL string, body []byte, supervised
 // TopSamplingReferencesWireBytes includes compact sampling metadata in transport size estimates.
 func TopSamplingReferencesWireBytes(modelInput map[string]any) int {
 	total := 0
-	for _, key := range []string{"top_sampling_references", "sampling_mask_references"} {
+	for _, key := range []string{"top_sampling_references", "sampling_mask_references", "sample_extra_references"} {
 		if value := modelInput[key]; value != nil {
 			data, err := json.Marshal(map[string]any{key: value})
 			if err == nil {

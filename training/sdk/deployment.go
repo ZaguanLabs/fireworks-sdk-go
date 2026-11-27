@@ -61,6 +61,8 @@ type DeploymentConfig struct {
 	EnableHotLoad              *bool
 	ForTraining                bool
 	SkipShapeValidation        bool
+	DraftModel                 string
+	DraftTokenCount            *int
 	DisableSpeculativeDecoding bool
 	ExtraArgs                  []string
 	ExtraValues                map[string]string
@@ -118,6 +120,9 @@ func DeploymentConfigFromTrainingProfile(deploymentID, baseModel string, profile
 }
 
 func (c DeploymentConfig) Validate() error {
+	if err := validateDraftSpec(c.DraftModel, c.DraftTokenCount, c.DisableSpeculativeDecoding); err != nil {
+		return err
+	}
 	if c.AcceptShapelessRisk && strings.TrimSpace(c.DeploymentShape) != "" {
 		return fmt.Errorf("accept_shapeless_risk cannot be combined with deployment_shape")
 	}
@@ -141,11 +146,11 @@ func (c DeploymentConfig) Validate() error {
 
 type DeploymentManager struct {
 	*TrainingRestClient
-	InferenceURL                     string
-	HotloadAPIURL                    string
-	HotloadResetPromptCacheSupported *bool
-	LastHotloadErrorMessage          string
-	BootTime                         time.Duration
+	InferenceURL  string
+	HotloadAPIURL string
+
+	LastHotloadErrorMessage string
+	BootTime                time.Duration
 }
 
 type DeploymentManagerOption func(*deploymentManagerConfig)
@@ -449,6 +454,12 @@ func BuildDeploymentBody(config DeploymentConfig, resolvedRegion ...string) map[
 		"enableHotLoad":   enableHotLoad,
 		"forTraining":     config.ForTraining,
 	}
+	if config.DraftModel != "" {
+		body["draftModel"] = config.DraftModel
+	}
+	if config.DraftTokenCount != nil && *config.DraftTokenCount > 0 {
+		body["draftTokenCount"] = *config.DraftTokenCount
+	}
 	if region != "" {
 		body["placement"] = map[string]any{"region": region}
 	}
@@ -483,7 +494,9 @@ func BuildDeploymentBody(config DeploymentConfig, resolvedRegion ...string) map[
 }
 
 func (m *DeploymentManager) ParseDeploymentInfo(deploymentID string, data map[string]any, stateOverride ...string) DeploymentInfo {
+	m.accountMu.Lock()
 	accountID := m.accountID
+	m.accountMu.Unlock()
 	state := stringOrDefault(data["state"], "UNKNOWN")
 	if len(stateOverride) > 0 && stateOverride[0] != "" {
 		state = stateOverride[0]
@@ -677,7 +690,7 @@ func (m *DeploymentManager) Update(ctx context.Context, deploymentID string, bod
 
 type HotloadOptions struct {
 	IncrementalSnapshotMetadata map[string]any
-	ResetPromptCache            *bool
+	ResetPromptCache            ResetPromptCacheMode
 	Timeout                     time.Duration
 	Path                        string
 	CMEKResource                string
@@ -692,9 +705,9 @@ func (m *DeploymentManager) Hotload(ctx context.Context, deploymentID, baseModel
 	if timeout == 0 {
 		timeout = HTTPWriteTimeout
 	}
-	resetPromptCache := true
-	if opt.ResetPromptCache != nil {
-		resetPromptCache = *opt.ResetPromptCache
+	mode, err := normalizePromptCache(opt.ResetPromptCache)
+	if err != nil {
+		return nil, err
 	}
 	headers, err := m.HotloadHeaders(ctx, deploymentID, baseModel, opt.Path, opt.CMEKResource)
 	if err != nil {
@@ -710,35 +723,13 @@ func (m *DeploymentManager) Hotload(ctx context.Context, deploymentID, baseModel
 		detail = " (source=" + opt.Path + ")"
 	}
 	log.Printf("Hotloading %s snapshot '%s' to deployment '%s'%s", ckptType, snapshotIdentity, deploymentID, detail)
-	includeResetPromptCache := m.HotloadResetPromptCacheSupported == nil || *m.HotloadResetPromptCacheSupported
-
-	payload := func(includeReset bool) map[string]any {
-		body := map[string]any{"identity": snapshotIdentity}
-		if includeReset {
-			body["reset_prompt_cache"] = resetPromptCache
-		}
-		if len(opt.IncrementalSnapshotMetadata) > 0 {
-			body["incremental_snapshot_metadata"] = cloneAnyMap(opt.IncrementalSnapshotMetadata)
-		}
-		return body
+	payload := map[string]any{"identity": snapshotIdentity, "reset_prompt_cache": mode}
+	if len(opt.IncrementalSnapshotMetadata) > 0 {
+		payload["incremental_snapshot_metadata"] = cloneAnyMap(opt.IncrementalSnapshotMetadata)
 	}
-
-	resp, err := m.gatewayJSON(ctx, http.MethodPost, url, headers, payload(includeResetPromptCache), timeout)
+	resp, err := m.gatewayJSON(ctx, http.MethodPost, url, headers, payload, timeout)
 	if err != nil {
 		return nil, err
-	}
-	if resp.statusCode < 200 || resp.statusCode >= 300 {
-		if includeResetPromptCache && resetPromptCacheUnsupported(resp.statusCode, resp.body) {
-			supported := false
-			m.HotloadResetPromptCacheSupported = &supported
-			resp, err = m.gatewayJSON(ctx, http.MethodPost, url, headers, payload(false), timeout)
-			if err != nil {
-				return nil, err
-			}
-		}
-	} else if includeResetPromptCache {
-		supported := true
-		m.HotloadResetPromptCacheSupported = &supported
 	}
 	if resp.statusCode < 200 || resp.statusCode >= 300 {
 		hint := HTTPStatusHints[resp.statusCode]
@@ -875,7 +866,7 @@ func (m *DeploymentManager) HotloadAndWait(ctx context.Context, deploymentID, ba
 
 type HotloadAndWaitOptions struct {
 	IncrementalSnapshotMetadata map[string]any
-	ResetPromptCache            *bool
+	ResetPromptCache            ResetPromptCacheMode
 	RequestTimeout              time.Duration
 	Path                        string
 	CMEKResource                string
@@ -1150,14 +1141,6 @@ func (m *DeploymentManager) gatewayJSON(ctx context.Context, method, rawURL stri
 	return gatewayJSONResponse{statusCode: resp.StatusCode, body: payload}, nil
 }
 
-func resetPromptCacheUnsupported(statusCode int, body []byte) bool {
-	if statusCode != http.StatusBadRequest {
-		return false
-	}
-	message := strings.ToLower(ParseAPIErrorBody(body) + " " + strings.TrimSpace(string(body)))
-	return strings.Contains(message, "reset_prompt_cache") && strings.Contains(message, "extra inputs are not permitted")
-}
-
 func decodeJSONMapOrEmpty(body []byte) (map[string]any, error) {
 	if len(body) == 0 {
 		return map[string]any{}, nil
@@ -1281,4 +1264,33 @@ func maxDuration(a, b time.Duration) time.Duration {
 		return a
 	}
 	return b
+}
+
+type ResetPromptCacheMode string
+
+const (
+	ResetPromptCacheAll        ResetPromptCacheMode = "all"
+	ResetPromptCacheNewSession ResetPromptCacheMode = "new_session"
+	ResetPromptCacheNone       ResetPromptCacheMode = "none"
+)
+
+func normalizePromptCache(value ResetPromptCacheMode) (ResetPromptCacheMode, error) {
+	switch value {
+	case "":
+		return ResetPromptCacheNewSession, nil
+	case ResetPromptCacheAll, ResetPromptCacheNewSession, ResetPromptCacheNone:
+		return value, nil
+	default:
+		return "", fmt.Errorf("invalid reset_prompt_cache mode %q", value)
+	}
+}
+func validateDraftSpec(model string, count *int, disabled bool) error {
+	n := 0
+	if count != nil {
+		n = *count
+	}
+	if n < 0 || model != "" && n == 0 || disabled && (model != "" || n != 0) {
+		return fmt.Errorf("invalid speculative decoding configuration (draft_model=%q, draft_token_count=%d, disabled=%t)", model, n, disabled)
+	}
+	return nil
 }

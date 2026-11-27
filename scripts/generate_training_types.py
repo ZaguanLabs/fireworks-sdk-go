@@ -7,7 +7,7 @@ import subprocess
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-SOURCE = REPO / 'docs/fireworks-py/fireworks_ai-1.2.30/dist/fireworks_ai-1.2.30/src/fireworks/training/sdk/types'
+SOURCE = REPO / 'docs/fireworks-py/fireworks_ai-1.2.39/dist/fireworks_ai-1.2.39/src/fireworks/training/sdk/types'
 OUTPUT = REPO / 'training/types/generated.go'
 classes, aliases, enums = {}, {}, {}
 paths = sorted(SOURCE.glob('*.py')) + sorted((SOURCE / '_pydantic_types').glob('*.py'))
@@ -39,7 +39,7 @@ def go_type(node):
         except SyntaxError:
             return 'any'
     if isinstance(node, ast.Name):
-        return {'str':'string', 'int':'int', 'float':'float64', 'bool':'bool', 'Any':'any', 'dict':'map[string]any', 'datetime':'time.Time'}.get(node.id, node.id if node.id in known else 'any')
+        return {'str':'string', 'int':'int', 'float':'float64', 'bool':'bool', 'Any':'any', 'dict':'map[string]any', 'datetime':'time.Time', 'RoutingMatrixFormat':'string'}.get(node.id, node.id if node.id in known else 'any')
     if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
         if isinstance(node.right, ast.Constant) and node.right.value is None:
             return optional(go_type(node.left))
@@ -80,7 +80,7 @@ def fields(node, seen=None):
             result[statement.target.id] = statement
     return result
 
-out = ['// Code generated from Fireworks Python SDK 1.2.30 training types. DO NOT EDIT.', 'package types', 'import "encoding/json"']
+out = ['// Code generated from Fireworks Python SDK 1.2.39 training types. DO NOT EDIT.', 'package types', 'import "encoding/json"']
 for name, node in sorted(aliases.items()):
     if name not in classes and name not in enums:
         out.append(f'type {name} = {go_type(node)}')

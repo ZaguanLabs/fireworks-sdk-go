@@ -15,6 +15,8 @@ const (
 
 // CreateModelResponse retains per-model optional trainer capabilities.
 type CreateModelResponse struct {
+	SupportsMCScoreCentering         *bool               `json:"supports_mc_score_centering,omitempty"`
+	SupportsTopKScoreCentering       *bool               `json:"supports_topk_score_centering,omitempty"`
 	SupportsReinforce                *bool               `json:"supports_reinforce,omitempty"`
 	SupportsScoreCentering           *bool               `json:"supports_score_centering,omitempty"`
 	SupportsPolicyImportanceSampling *bool               `json:"supports_policy_importance_sampling,omitempty"`
@@ -49,7 +51,9 @@ func (c *FiretitanTrainingClient) ApplyModelCreationResponse(response CreateMode
 	if response.Comms == CommsV2 {
 		c.Communication = CommsV2
 	}
-	c.RoutingMatrixFormat = RoutingBase64Inline
+	c.SupportsMCScoreCentering = response.SupportsMCScoreCentering != nil && *response.SupportsMCScoreCentering
+	c.SupportsTopKScoreCentering = response.SupportsTopKScoreCentering != nil && *response.SupportsTopKScoreCentering
+	c.RoutingMatrixFormat = ""
 	c.R3StoreID = ""
 	if response.RoutingMatrixFormat == RoutingParquetV1 {
 		c.RoutingMatrixFormat = RoutingParquetV1
@@ -108,7 +112,7 @@ func (r *CreateModelResponse) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	flags := map[string]json.RawMessage{}
-	for _, key := range []string{"supports_reinforce", "supports_score_centering", "supports_policy_importance_sampling", "supports_policy_diagnostics", "rdma_weight_sync_enabled"} {
+	for _, key := range []string{"supports_mc_score_centering", "supports_topk_score_centering", "supports_reinforce", "supports_score_centering", "supports_policy_importance_sampling", "supports_policy_diagnostics", "rdma_weight_sync_enabled"} {
 		flags[key] = raw[key]
 		delete(raw, key)
 	}
@@ -143,6 +147,10 @@ func (r *CreateModelResponse) UnmarshalJSON(data []byte) error {
 			flag = &value
 		}
 		switch key {
+		case "supports_mc_score_centering":
+			out.SupportsMCScoreCentering = flag
+		case "supports_topk_score_centering":
+			out.SupportsTopKScoreCentering = flag
 		case "supports_reinforce":
 			out.SupportsReinforce = flag
 		case "supports_score_centering":

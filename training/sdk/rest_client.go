@@ -13,6 +13,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -25,6 +26,7 @@ var (
 type TrainingRestClient struct {
 	serverlessSupervised409Retry atomic.Bool
 	apiKey                       string
+	accountMu                    sync.Mutex
 	accountID                    string
 	baseURL                      string
 	additionalHeaders            map[string]string
@@ -103,14 +105,21 @@ func (c *TrainingRestClient) BaseURL() string {
 }
 
 func (c *TrainingRestClient) SetAccountID(accountID string) {
+	c.accountMu.Lock()
+	defer c.accountMu.Unlock()
 	c.accountID = accountID
 }
 
 func (c *TrainingRestClient) AccountID(ctx context.Context) (string, error) {
+	return c.cachedAccountID(ctx, true)
+}
+func (c *TrainingRestClient) cachedAccountID(ctx context.Context, retry bool) (string, error) {
+	c.accountMu.Lock()
+	defer c.accountMu.Unlock()
 	if c.accountID != "" {
 		return c.accountID, nil
 	}
-	accountID, err := c.ResolveAccountID(ctx)
+	accountID, err := c.resolveAccountID(ctx, retry)
 	if err != nil {
 		return "", err
 	}
@@ -119,7 +128,10 @@ func (c *TrainingRestClient) AccountID(ctx context.Context) (string, error) {
 }
 
 func (c *TrainingRestClient) ResolveAccountID(ctx context.Context) (string, error) {
-	resp, err := c.Get(ctx, "/v1/accounts?pageSize=2", nil)
+	return c.resolveAccountID(ctx, true)
+}
+func (c *TrainingRestClient) resolveAccountID(ctx context.Context, retry bool) (string, error) {
+	resp, err := c.requestWithRetry(ctx, http.MethodGet, "/v1/accounts?pageSize=2", nil, nil, HTTPReadTimeout, retry)
 	if err != nil {
 		return "", err
 	}
@@ -211,6 +223,10 @@ func (c *TrainingRestClient) Patch(ctx context.Context, path string, body any, h
 }
 
 func (c *TrainingRestClient) request(ctx context.Context, method, path string, body any, headers map[string]string, timeout time.Duration) (*http.Response, error) {
+	return c.requestWithRetry(ctx, method, path, body, headers, timeout, true)
+}
+
+func (c *TrainingRestClient) requestWithRetry(ctx context.Context, method, path string, body any, headers map[string]string, timeout time.Duration, retry bool) (*http.Response, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -239,6 +255,9 @@ func (c *TrainingRestClient) request(ctx context.Context, method, path string, b
 		}
 		req.Header = c.Headers(headers)
 		return client.Do(req)
+	}
+	if !retry {
+		return call()
 	}
 	var options RequestRetryOptions
 	if c.retryOptions != nil {

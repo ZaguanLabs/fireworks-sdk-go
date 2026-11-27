@@ -37,12 +37,11 @@ func TestFiretitanProvisioningConfigNormalizeDoesNotInheritDeploymentRegion(t *t
 func TestFiretitanProvisioningConfigNormalizeIgnoresInactiveDeploymentRegion(t *testing.T) {
 	createDeployment := false
 	got, err := (FiretitanProvisioningConfig{
-		BaseModel:         "accounts/acct/models/base",
-		CreateDeployment:  &createDeployment,
-		Region:            "US_OHIO_1",
-		DeploymentRegion:  "US_VIRGINIA_1",
-		AcceleratorType:   "NVIDIA_H200_141GB",
-		AcceleratorCount:  intPointer(8),
+		BaseModel:        "accounts/acct/models/base",
+		CreateDeployment: &createDeployment,
+		Region:           "US_OHIO_1",
+		DeploymentRegion: "US_VIRGINIA_1",
+
 		HotloadTimeout:    77 * time.Second,
 		DeploymentTimeout: 88 * time.Second,
 	}).Normalize()
@@ -81,7 +80,7 @@ func TestFiretitanProvisioningConfigNormalizeDefaults(t *testing.T) {
 	if got.HotloadTimeout != HotloadTimeout || got.TrainerTimeout != DefaultTrainerTimeout || got.DeploymentTimeout != DeploymentReadyTimeout {
 		t.Fatalf("timeouts = %#v", got)
 	}
-	if got.LearningRate != DefaultLearningRate || got.GradientAccumulationSteps != 1 {
+	if got.LearningRate != DefaultLearningRate || got.GradientAccumulationSteps != 0 {
 		t.Fatalf("optimizer defaults = %#v", got)
 	}
 	if got.TrainMLP == nil || !*got.TrainMLP || got.TrainAttn == nil || !*got.TrainAttn || got.TrainUnembed == nil || !*got.TrainUnembed {
@@ -190,7 +189,7 @@ func TestReferenceManagedConfigLoraReferenceShape(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReferenceManagedConfig() error = %v", err)
 	}
-	if got.LoraRank != 16 || ExpectedReferenceTrainerMode(got) != LoraTrainerMode {
+	if got.LoraRank != 0 || ExpectedReferenceTrainerMode(got) != LoraTrainerMode {
 		t.Fatalf("got = %#v", got)
 	}
 	got.LoraRank = 0
@@ -334,7 +333,7 @@ func TestTinkerSamplerBackendHotloadBaseThenDelta(t *testing.T) {
 	if meta["previous_snapshot_identity"] != "snap-base" || meta["compression_format"] != DefaultDeltaCompression || meta["checksum_format"] != DefaultChecksumFormat {
 		t.Fatalf("delta metadata = %#v", meta)
 	}
-	if calls[1].ResetPromptCache == nil || !*calls[1].ResetPromptCache {
+	if calls[1].ResetPromptCache != "" && calls[1].ResetPromptCache != ResetPromptCacheNewSession {
 		t.Fatalf("reset prompt cache = %#v", calls[1].ResetPromptCache)
 	}
 	if calls[1].RequestTimeout != HotloadTimeout || calls[1].Wait.Timeout != HotloadTimeout {

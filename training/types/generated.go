@@ -1,4 +1,4 @@
-// Code generated from Fireworks Python SDK 1.2.30 training types. DO NOT EDIT.
+// Code generated from Fireworks Python SDK 1.2.39 training types. DO NOT EDIT.
 package types
 
 import (
@@ -438,11 +438,11 @@ type ModelData struct {
 }
 type ModelInput struct {
 	Chunks                 []ModelInputChunk `json:"chunks"`
-	RoutingMatrices        []string          `json:"routing_matrices,omitempty"`
 	RoutingReferences      map[string]any    `json:"routing_references,omitempty"`
-	RoutingMatrixFormat    any               `json:"routing_matrix_format,omitempty"`
+	RoutingMatrixFormat    *string           `json:"routing_matrix_format,omitempty"`
 	TopSamplingReferences  map[string]any    `json:"top_sampling_references,omitempty"`
 	SamplingMaskReferences map[string]any    `json:"sampling_mask_references,omitempty"`
+	SampleExtraReferences  map[string]any    `json:"sample_extra_references,omitempty"`
 }
 type OptimStepRequest struct {
 	AdamParams AdamParams `json:"adam_params"`

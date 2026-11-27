@@ -4,14 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	sdk "github.com/ZaguanLabs/fireworks-sdk-go/training/sdk"
-	"reflect"
+
 	"testing"
 )
 
 func TestArtifactRetainsCompactRoutingAndTopK(t *testing.T) {
 	index, row := 0, 5
 	refs := &sdk.RoutingReferences{Length: 2, Files: []sdk.RoutingFile{{"format": "parquet_v1", "store_id": "store", "row_count": 10}}, Spans: []sdk.RoutingSpan{{InputTokenStart: 0, Count: 2, FileIndex: &index, FileRowStart: &row}}}
-	artifact := TrajectoryArtifact{Segments: []SegmentResult{{Turns: []Turn{{RoutingReferences: refs, PromptRoutingReferences: refs, PromptRoutingStart: &row, InferenceTopKTokenIDs: [][]int{{1, 2}, {3}}, InferenceTopKLogprobs: [][]float64{{-1, -2}, {-0.5}}}}}}}
+	artifact := TrajectoryArtifact{Segments: []SegmentResult{{Turns: []Turn{{RoutingReferences: refs, PromptRoutingReferences: refs, PromptRoutingStart: &row, TopSamplingReferences: refs}}}}}
 	payload, err := artifact.Pack()
 	if err != nil {
 		t.Fatal(err)
@@ -21,7 +21,7 @@ func TestArtifactRetainsCompactRoutingAndTopK(t *testing.T) {
 		t.Fatal(err)
 	}
 	turn := decoded.Segments[0].Turns[0]
-	if turn.RoutingReferences == nil || turn.RoutingReferences.Length != 2 || turn.PromptRoutingReferences == nil || *turn.PromptRoutingStart != 5 || !reflect.DeepEqual(turn.InferenceTopKTokenIDs, [][]int{{1, 2}, {3}}) {
+	if turn.RoutingReferences == nil || turn.RoutingReferences.Length != 2 || turn.PromptRoutingReferences == nil || *turn.PromptRoutingStart != 5 || turn.TopSamplingReferences == nil || turn.TopSamplingReferences.Length != 2 {
 		t.Fatalf("turn %+v", turn)
 	}
 	var fields map[string]any
@@ -58,20 +58,12 @@ func (incrementalRoutingSampler) SampleWithPromptTokensResult(_ context.Context,
 	if n == len(prompt) {
 		n--
 	}
-	routes := make([]string, n+1)
-	lp := make([]float64, n+1)
-	ids := make([][]int, n+1)
-	tops := make([][]float64, n+1)
-	for i := range routes {
-		routes[i] = "route"
-		lp[i] = -0.1
-		ids[i] = []int{91}
-		tops[i] = []float64{-0.1}
-	}
-	return sdk.SampledRequestResult{Completions: []sdk.SampledCompletion{{FullTokens: append(append([]int{}, prompt...), 91), PromptLen: len(prompt), CompletionLen: 1, Text: "answer", FinishReason: "stop", RoutingMatrices: routes, InferenceLogprobs: lp, InferenceTopKTokenIDs: ids, InferenceTopKLogprobs: tops, EchoedPromptLogprobCount: n}}}, nil
+	idx, row := 0, 0
+	refs := &sdk.RoutingReferences{Length: n + 1, Files: []sdk.RoutingFile{{"format": "parquet_v1", "store_id": "store", "row_count": n + 1}}, Spans: []sdk.RoutingSpan{{Count: n + 1, FileIndex: &idx, FileRowStart: &row}}}
+	return sdk.SampledRequestResult{Completions: []sdk.SampledCompletion{{FullTokens: append(append([]int{}, prompt...), 91), PromptLen: len(prompt), CompletionLen: 1, Text: "answer", FinishReason: "stop", RoutingReferences: refs, EchoedPromptLogprobCount: n}}}, nil
 }
 func TestIncrementalPromptRoutingSavedSeparately(t *testing.T) {
-	sidecar, err := NewSidecar(incrementalRoutingSampler{}, fakeRenderer{}, SidecarOptions{MaxContextTokens: 32, MaxOutputTokens: 4, IncrementalPromptRouting: true})
+	sidecar, err := NewSidecar(incrementalRoutingSampler{}, fakeRenderer{}, SidecarOptions{MaxContextTokens: 32, MaxOutputTokens: 4, IncrementalPromptRouting: true, SamplingDefaults: map[string]any{"include_routing_matrix": true}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +90,7 @@ func TestIncrementalPromptRoutingSavedSeparately(t *testing.T) {
 		t.Fatal(err)
 	}
 	turn := artifact.Segments[0].Turns[0]
-	if len(turn.RoutingMatrices) != 1 || len(turn.PromptRoutingMatrices) != 1 || turn.PromptRoutingStart == nil || *turn.PromptRoutingStart != 0 || len(turn.InferenceTopKTokenIDs) != 1 {
+	if turn.RoutingReferences == nil || turn.RoutingReferences.Length != 1 || turn.PromptRoutingReferences == nil || turn.PromptRoutingReferences.Length != 1 || turn.PromptRoutingStart == nil || *turn.PromptRoutingStart != 0 {
 		t.Fatalf("turn %+v", turn)
 	}
 }

@@ -90,7 +90,7 @@ func Test1230SamplingMaskWire(t *testing.T) {
 		if body["sampling_mask"] != "parquet_v1" || body["top_sampling_logprobs"] != nil {
 			t.Error(body)
 		}
-		choice := map[string]any{"finish_reason": "stop", "logprobs": map[string]any{"content": []any{map[string]any{"token_id": 4, "logprob": -0.2, "sampling_logprob": -0.2}}}, "raw_output": map[string]any{"completion_token_ids": []int{4}, "completion_logprobs": []float64{-0.2}}, "sampling_mask_format": "parquet_v1", "r3_store_id": "store", "sampling_mask_references": testRouting(1)}
+		choice := map[string]any{"finish_reason": "stop", "logprobs": map[string]any{"content": []any{map[string]any{"token_id": 4, "logprob": -0.2, "sampling_logprob": -0.2}}}, "token_ids": []int{4}, "prompt_token_ids": []int{1}, "sampling_mask_format": "parquet_v1", "r3_store_id": "store", "sampling_mask_references": testRouting(1)}
 		data, _ := json.Marshal(map[string]any{"choices": []any{choice}})
 		fmt.Fprintf(w, "data: %s\n\ndata: [DONE]\n\n", data)
 	}))

@@ -562,6 +562,7 @@ type CompletionCreateParamsCompletionCreateParamsBase struct {
 	ReasoningHistory              *string                               `json:"reasoning_history,omitempty"`
 	RepetitionPenalty             *float64                              `json:"repetition_penalty,omitempty"`
 	ResponseFormat                *CompletionCreateParamsResponseFormat `json:"response_format,omitempty"`
+	ReturnTokenIdsOnly            any                                   `json:"return_token_ids_only,omitempty"`
 	ReturnTokenIds                *bool                                 `json:"return_token_ids,omitempty"`
 	Seed                          *int                                  `json:"seed,omitempty"`
 	ServiceTier                   string                                `json:"service_tier,omitempty"`
@@ -653,6 +654,7 @@ type CompletionCreateParamsCompletionCreateParamsNonStreaming struct {
 	ReasoningHistory              *string                               `json:"reasoning_history,omitempty"`
 	RepetitionPenalty             *float64                              `json:"repetition_penalty,omitempty"`
 	ResponseFormat                *CompletionCreateParamsResponseFormat `json:"response_format,omitempty"`
+	ReturnTokenIdsOnly            any                                   `json:"return_token_ids_only,omitempty"`
 	ReturnTokenIds                *bool                                 `json:"return_token_ids,omitempty"`
 	Seed                          *int                                  `json:"seed,omitempty"`
 	ServiceTier                   string                                `json:"service_tier,omitempty"`
@@ -697,6 +699,7 @@ type CompletionCreateParamsCompletionCreateParamsStreaming struct {
 	ReasoningHistory              *string                               `json:"reasoning_history,omitempty"`
 	RepetitionPenalty             *float64                              `json:"repetition_penalty,omitempty"`
 	ResponseFormat                *CompletionCreateParamsResponseFormat `json:"response_format,omitempty"`
+	ReturnTokenIdsOnly            any                                   `json:"return_token_ids_only,omitempty"`
 	ReturnTokenIds                *bool                                 `json:"return_token_ids,omitempty"`
 	Seed                          *int                                  `json:"seed,omitempty"`
 	ServiceTier                   string                                `json:"service_tier,omitempty"`
@@ -879,6 +882,7 @@ type Deployment struct {
 	AutoTune                        *AutoTune               `json:"autoTune,omitempty"`
 	Cluster                         *string                 `json:"cluster,omitempty"`
 	CreateTime                      *time.Time              `json:"createTime,omitempty"`
+	CreatedBy                       *string                 `json:"createdBy,omitempty"`
 	DeleteTime                      *time.Time              `json:"deleteTime,omitempty"`
 	DeploymentShape                 *string                 `json:"deploymentShape,omitempty"`
 	DeploymentTemplate              *string                 `json:"deploymentTemplate,omitempty"`
@@ -999,6 +1003,7 @@ type DeploymentShape struct {
 	AcceleratorCount                *int       `json:"acceleratorCount,omitempty"`
 	AcceleratorType                 *string    `json:"acceleratorType,omitempty"`
 	CreateTime                      *time.Time `json:"createTime,omitempty"`
+	CreatedBy                       *string    `json:"createdBy,omitempty"`
 	Description                     *string    `json:"description,omitempty"`
 	DisableDeploymentSizeValidation *bool      `json:"disableDeploymentSizeValidation,omitempty"`
 	DisplayName                     *string    `json:"displayName,omitempty"`
@@ -1152,6 +1157,8 @@ type DPOJobDpoJob struct {
 	CreatedBy                 *string                                `json:"createdBy,omitempty"`
 	CreateTime                *time.Time                             `json:"createTime,omitempty"`
 	DisplayName               *string                                `json:"displayName,omitempty"`
+	EvalAutoCarveout          *bool                                  `json:"evalAutoCarveout,omitempty"`
+	EvaluationDataset         *string                                `json:"evaluationDataset,omitempty"`
 	LossConfig                *SharedReinforcementLearningLossConfig `json:"lossConfig,omitempty"`
 	RendererHuggingFaceRepoID *string                                `json:"rendererHuggingFaceRepoId,omitempty"`
 	Name                      *string                                `json:"name,omitempty"`
@@ -1178,6 +1185,8 @@ type DPOJobCreateParamsDpoJobCreateParams struct {
 	AwsS3Config               DPOJobCreateParamsAwsS3Config               `json:"awsS3Config,omitempty"`
 	AzureBlobStorageConfig    DPOJobCreateParamsAzureBlobStorageConfig    `json:"azureBlobStorageConfig,omitempty"`
 	DisplayName               string                                      `json:"displayName,omitempty"`
+	EvalAutoCarveout          any                                         `json:"evalAutoCarveout,omitempty"`
+	EvaluationDataset         string                                      `json:"evaluationDataset,omitempty"`
 	LossConfig                SharedParamsReinforcementLearningLossConfig `json:"lossConfig,omitempty"`
 	RendererHuggingFaceRepoID string                                      `json:"rendererHuggingFaceRepoId,omitempty"`
 	ReservationTarget         string                                      `json:"reservationTarget,omitempty"`
@@ -1924,6 +1933,7 @@ type Model struct {
 	ContextLength                      *int                     `json:"contextLength,omitempty"`
 	ConversationConfig                 *ConversationConfig      `json:"conversationConfig,omitempty"`
 	CreateTime                         *time.Time               `json:"createTime,omitempty"`
+	CreatedBy                          *string                  `json:"createdBy,omitempty"`
 	DefaultDraftModel                  *string                  `json:"defaultDraftModel,omitempty"`
 	DefaultDraftTokenCount             *int                     `json:"defaultDraftTokenCount,omitempty"`
 	DefaultSamplingParams              map[string]float64       `json:"defaultSamplingParams,omitempty"`
@@ -2066,7 +2076,6 @@ type ModelValidateUploadParams struct {
 	AccountID              string `json:"account_id,omitempty"`
 	ConfigOnly             any    `json:"configOnly,omitempty"`
 	SkipHfConfigValidation any    `json:"skipHfConfigValidation,omitempty"`
-	TrustRemoteCode        any    `json:"trustRemoteCode,omitempty"`
 }
 
 // ModelValidateUploadResponse mirrors fireworks.types.model_validate_upload_response.ModelValidateUploadResponse.
@@ -2649,6 +2658,15 @@ type SharedChatMessage struct {
 // SharedChoiceLogprobs mirrors fireworks.types.shared.choice.Logprobs.
 type SharedChoiceLogprobs = any
 
+// SharedChoiceTokenIdLogProbs mirrors fireworks.types.shared.choice.TokenIdLogProbs.
+type SharedChoiceTokenIdLogProbs struct {
+	Format        string      `json:"format"`
+	TokenIds      []int       `json:"token_ids"`
+	TokenLogprobs []*float64  `json:"token_logprobs"`
+	TopTokenIds   [][]int     `json:"top_token_ids"`
+	TopLogprobs   [][]float64 `json:"top_logprobs"`
+}
+
 // SharedChoice mirrors fireworks.types.shared.choice.Choice.
 type SharedChoice struct {
 	Index          int                   `json:"index"`
@@ -2663,6 +2681,7 @@ type SharedChoice struct {
 // SharedDeployedModel mirrors fireworks.types.shared.deployed_model.DeployedModel.
 type SharedDeployedModel struct {
 	CreateTime  *time.Time    `json:"createTime,omitempty"`
+	CreatedBy   *string       `json:"createdBy,omitempty"`
 	Default     *bool         `json:"default,omitempty"`
 	Deployment  *string       `json:"deployment,omitempty"`
 	Description *string       `json:"description,omitempty"`
@@ -3147,4 +3166,15 @@ type UserUpdateParams struct {
 	DisplayName    string `json:"displayName,omitempty"`
 	Email          string `json:"email,omitempty"`
 	ServiceAccount any    `json:"serviceAccount,omitempty"`
+}
+
+// WatermarkDetection mirrors fireworks.types.watermark_detection.WatermarkDetection.
+type WatermarkDetection struct {
+	Object string `json:"object"`
+	Result string `json:"result"`
+}
+
+// WatermarkDetectionCreateParams mirrors fireworks.types.watermark_detection_create_params.WatermarkDetectionCreateParams.
+type WatermarkDetectionCreateParams struct {
+	Text string `json:"text"`
 }

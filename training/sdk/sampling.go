@@ -14,6 +14,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -22,31 +23,33 @@ import (
 )
 
 type ServerMetrics struct {
-	ClientLatency           *float64 `json:"client_latency,omitempty"`
-	CompletionTokens        *int     `json:"completion_tokens,omitempty"`
-	Error                   string   `json:"error,omitempty"`
-	NumConcurrentRequests   *int     `json:"num_concurrent_requests,omitempty"`
-	PrefillQueueDuration    *float64 `json:"prefill_queue_duration,omitempty"`
-	GenerationQueueDuration *float64 `json:"generation_queue_duration,omitempty"`
-	ServerTTFT              *float64 `json:"server_ttft,omitempty"`
-	CachedPromptTokens      *int     `json:"cached_prompt_tokens,omitempty"`
-	PromptTokens            *int     `json:"prompt_tokens,omitempty"`
-	ServerProcessingTime    *float64 `json:"server_processing_time,omitempty"`
-	TokenizerQueueDuration  *float64 `json:"tokenizer_queue_duration,omitempty"`
-	TokenizerDuration       *float64 `json:"tokenizer_duration,omitempty"`
-	PrefillDuration         *float64 `json:"prefill_duration,omitempty"`
-	GenerationDuration      *float64 `json:"generation_duration,omitempty"`
-	ClientTTFT              *float64 `json:"client_ttft,omitempty"`
-	HTTPStatusCode          *int     `json:"http_status_code,omitempty"`
-	TransportError          bool     `json:"transport_error"`
-	RetryAttempt            *int     `json:"retry_attempt,omitempty"`
-	ResponseRequestID       string   `json:"response_request_id,omitempty"`
-	BackendHost             string   `json:"backend_host,omitempty"`
-	Deployment              string   `json:"deployment,omitempty"`
-	PodTemplateHash         string   `json:"pod_template_hash,omitempty"`
+	ClientRequestStartedAt  time.Time `json:"-"`
+	ClientLatency           *float64  `json:"client_latency,omitempty"`
+	CompletionTokens        *int      `json:"completion_tokens,omitempty"`
+	Error                   string    `json:"error,omitempty"`
+	NumConcurrentRequests   *int      `json:"num_concurrent_requests,omitempty"`
+	PrefillQueueDuration    *float64  `json:"prefill_queue_duration,omitempty"`
+	GenerationQueueDuration *float64  `json:"generation_queue_duration,omitempty"`
+	ServerTTFT              *float64  `json:"server_ttft,omitempty"`
+	CachedPromptTokens      *int      `json:"cached_prompt_tokens,omitempty"`
+	PromptTokens            *int      `json:"prompt_tokens,omitempty"`
+	ServerProcessingTime    *float64  `json:"server_processing_time,omitempty"`
+	TokenizerQueueDuration  *float64  `json:"tokenizer_queue_duration,omitempty"`
+	TokenizerDuration       *float64  `json:"tokenizer_duration,omitempty"`
+	PrefillDuration         *float64  `json:"prefill_duration,omitempty"`
+	GenerationDuration      *float64  `json:"generation_duration,omitempty"`
+	ClientTTFT              *float64  `json:"client_ttft,omitempty"`
+	HTTPStatusCode          *int      `json:"http_status_code,omitempty"`
+	TransportError          bool      `json:"transport_error"`
+	RetryAttempt            *int      `json:"retry_attempt,omitempty"`
+	ResponseRequestID       string    `json:"response_request_id,omitempty"`
+	BackendHost             string    `json:"backend_host,omitempty"`
+	Deployment              string    `json:"deployment,omitempty"`
+	PodTemplateHash         string    `json:"pod_template_hash,omitempty"`
 }
 
 type SampledCompletion struct {
+	SampleExtraReferences  *RoutingReferences
 	SamplingMaskReferences *RoutingReferences
 
 	TopSamplingReferences    *RoutingReferences
@@ -187,6 +190,7 @@ func (e *DeploymentSamplerTimeoutError) As(target any) bool {
 }
 
 type FiretitanSampledSequence struct {
+	SampleExtraReferences  *RoutingReferences `json:"sample_extra_references,omitempty"`
 	SamplingMaskReferences *RoutingReferences `json:"sampling_mask_references,omitempty"`
 
 	TopSamplingReferences *RoutingReferences `json:"top_sampling_references,omitempty"`
@@ -203,7 +207,8 @@ type FiretitanSampleResponse struct {
 }
 
 type FiretitanSamplingParams struct {
-	SamplingMask string
+	SamplingMask      any
+	SampleExtraTokens *int
 
 	TopSamplingLogprobs  *int
 	R3TTLSeconds         *int
@@ -233,6 +238,14 @@ type SamplingConcurrencyController interface {
 	StepCompleted() map[string]float64
 }
 
+// BackendManagedConcurrency selects the deployment's own scheduler in sampler factories.
+type BackendManagedConcurrency struct{}
+
+func (BackendManagedConcurrency) Acquire(context.Context) error     { return nil }
+func (BackendManagedConcurrency) Release(*ServerMetrics)            {}
+func (BackendManagedConcurrency) WindowSize() int                   { return 0 }
+func (BackendManagedConcurrency) StepCompleted() map[string]float64 { return nil }
+
 type CompletionRequestOptions struct {
 	R3TTLSeconds         *int
 	MaxTokens            int
@@ -254,23 +267,22 @@ type DeploymentSampler struct {
 	r3Mu                sync.Mutex
 	routingMatrixFormat RoutingMatrixFormat
 	r3StoreID           string
-	r3Negotiated        bool
-	r3Probe             *routingProbe
-	r3BindingRequired   bool
-	InferenceURL        string
-	Model               string
-	APIKey              string
-	Tokenizer           DeploymentTokenizer
 
-	ConcurrencyController SamplingConcurrencyController
-	CompletionRequester   CompletionRequester
-	HTTPClient            *http.Client
-	Now                   func() time.Time
-	Sleep                 func(time.Duration)
-	RetryJitter           func() float64
-	AdditionalHeaders     map[string]string
-	RequestContext        map[string]any
-	maxConcurrency        int
+	r3BindingRequired bool
+	InferenceURL      string
+	Model             string
+	APIKey            string
+	Tokenizer         DeploymentTokenizer
+
+	ConcurrencyController     SamplingConcurrencyController
+	CompletionRequester       CompletionRequester
+	HTTPClient                *http.Client
+	Now                       func() time.Time
+	Sleep                     func(time.Duration)
+	RetryJitter               func() float64
+	AdditionalHeaders         map[string]string
+	RequestContext            map[string]any
+	backendManagedConcurrency bool
 
 	mu                           sync.Mutex
 	recentMetrics                []ServerMetrics
@@ -289,14 +301,19 @@ func WithDeploymentSamplerTokenizer(tokenizer DeploymentTokenizer) DeploymentSam
 
 func WithDeploymentSamplerConcurrencyController(controller SamplingConcurrencyController) DeploymentSamplerOption {
 	return func(s *DeploymentSampler) {
-		s.ConcurrencyController = controller
+		switch controller.(type) {
+		case BackendManagedConcurrency, *BackendManagedConcurrency:
+			s.backendManagedConcurrency = true
+			s.ConcurrencyController = nil
+		default:
+			s.ConcurrencyController = controller
+		}
 	}
 }
 
-func WithDeploymentSamplerMaxConcurrency(maxConcurrency int) DeploymentSamplerOption {
-	return func(s *DeploymentSampler) {
-		s.maxConcurrency = maxConcurrency
-	}
+// WithBackendManagedConcurrency delegates request concurrency to the serving backend.
+func WithBackendManagedConcurrency() DeploymentSamplerOption {
+	return func(s *DeploymentSampler) { s.backendManagedConcurrency = true }
 }
 
 func WithDeploymentSamplerRequester(requester CompletionRequester) DeploymentSamplerOption {
@@ -360,12 +377,8 @@ func NewDeploymentSampler(inferenceURL, model, apiKey string, opts ...Deployment
 	if sampler.CompletionRequester == nil {
 		sampler.CompletionRequester = sampler.defaultCompletionRequest
 	}
-	if sampler.ConcurrencyController == nil {
-		if sampler.maxConcurrency > 0 {
-			sampler.ConcurrencyController = NewFixedConcurrencyController(sampler.maxConcurrency)
-		} else {
-			sampler.ConcurrencyController = NewAdaptiveConcurrencyController()
-		}
+	if sampler.ConcurrencyController == nil && !sampler.backendManagedConcurrency {
+		sampler.ConcurrencyController = NewAdaptiveConcurrencyController()
 	}
 	return sampler
 }
@@ -547,11 +560,20 @@ func (c *FiretitanSamplingClient) Sample(ctx context.Context, prompt []int, numS
 		temperature = *params.Temperature
 	}
 	extra := map[string]any{}
-	if params.SamplingMask != "" {
-		if params.SamplingMask != "parquet_v1" {
-			return FiretitanSampleResponse{}, fmt.Errorf("sampling_mask must be parquet_v1")
-		}
+	if params.SamplingMask != nil && params.SamplingMask != "" {
 		extra["sampling_mask"] = params.SamplingMask
+	}
+	if params.Temperature != nil {
+		extra["temperature"] = *params.Temperature
+	}
+	if params.SampleExtraTokens != nil && params.TopSamplingLogprobs != nil {
+		return FiretitanSampleResponse{}, fmt.Errorf("extra and top sampling captures are mutually exclusive")
+	}
+	if params.SampleExtraTokens != nil {
+		if *params.SampleExtraTokens < 1 || *params.SampleExtraTokens > 64 {
+			return FiretitanSampleResponse{}, fmt.Errorf("sample_extra_tokens must be between 1 and 64")
+		}
+		extra["sample_extra_tokens"] = *params.SampleExtraTokens
 	}
 	if params.TopSamplingLogprobs != nil {
 		if *params.TopSamplingLogprobs < 1 {
@@ -640,6 +662,7 @@ func (c *FiretitanSamplingClient) Sample(ctx context.Context, prompt []int, numS
 			RoutingReferences:      refs,
 			TopSamplingReferences:  completion.TopSamplingReferences,
 			SamplingMaskReferences: completion.SamplingMaskReferences,
+			SampleExtraReferences:  completion.SampleExtraReferences,
 			StopReason:             firetitanStopReason(completion.FinishReason),
 			Tokens:                 completionTokens,
 			Logprobs:               completionLogprobs,
@@ -884,6 +907,9 @@ func (s *DeploymentSampler) doOneCompletionResult(ctx context.Context, promptIDs
 		requestContext[key] = value
 	}
 	for attempt := 1; attempt <= SamplerRetryMaxAttempts; attempt++ {
+		if s.backendManagedConcurrency && s.ConcurrencyController != nil {
+			return SampledRequestResult{}, fmt.Errorf("backend-managed concurrency cannot be combined with a client concurrency controller")
+		}
 		if s.ConcurrencyController != nil {
 			if err := s.ConcurrencyController.Acquire(ctx); err != nil {
 				outcome := "failed"
@@ -895,10 +921,11 @@ func (s *DeploymentSampler) doOneCompletionResult(ctx context.Context, promptIDs
 			}
 		}
 		var metrics *ServerMetrics
+		attemptStarted := time.Now()
 		result, serverMetrics, err := s.CompletionRequester(ctx, promptIDs, CompletionRequestOptions{
 			MaxTokens:            opt.MaxTokens,
 			Temperature:          opt.Temperature,
-			RawOutput:            true,
+			RawOutput:            false,
 			Logprobs:             opt.Logprobs,
 			Echo:                 opt.Echo,
 			IncludeRoutingMatrix: opt.IncludeRoutingMatrix,
@@ -944,6 +971,9 @@ func (s *DeploymentSampler) doOneCompletionResult(ctx context.Context, promptIDs
 				metrics.Error = "SSE truncation"
 			}
 		}
+		if metrics != nil {
+			metrics.ClientRequestStartedAt = attemptStarted
+		}
 		if s.ConcurrencyController != nil {
 			controllerMetrics := metrics
 			if err != nil && !samplerRetryableCompletionError(err) {
@@ -967,7 +997,7 @@ func (s *DeploymentSampler) doOneCompletionResult(ctx context.Context, promptIDs
 				}
 				echoLast = &n
 			}
-			completions, parseErr := s.parseCompletionsResult(result, promptIDs, opt.MaxSeqLen, opt.Logprobs, opt.IncludeRoutingMatrix, opt.Echo, echoLast, opt.Extra["top_sampling_format"] == "parquet_v1", opt.Extra["sampling_mask"] == "parquet_v1")
+			completions, parseErr := s.parseCompletionsResult(result, promptIDs, opt.MaxSeqLen, opt.Logprobs, opt.IncludeRoutingMatrix, opt.Echo, echoLast, floatFromAny(opt.Extra["top_sampling_logprobs"]) > 0, opt.Extra["sampling_mask"] == "parquet_v1" || opt.Extra["sampling_mask"] == true, floatFromAny(opt.Extra["sample_extra_tokens"]) > 0)
 			upstreamResponseID := stringFromAny(result["id"])
 			if parseErr != nil {
 				metrics.Error = parseErr.Error()
@@ -1418,12 +1448,15 @@ func (s *DeploymentSampler) parseCompletionsResult(result map[string]any, prompt
 		if raw == nil {
 			raw = map[string]any{}
 		}
-		completionIDs, ok := intSliceFromAny(raw["completion_token_ids"])
+		completionIDs, ok := intSliceFromAny(choice["token_ids"])
+		if !ok {
+			completionIDs, ok = intSliceFromAny(raw["completion_token_ids"])
+		}
 		if !ok {
 			return nil, fmt.Errorf("%s", FormatSDKError(
-				"Deployment did not return raw_output token IDs",
-				fmt.Sprintf("The API response is missing completion_token_ids. Got choice keys: %v", mapKeys(choice)),
-				"The sampler requested raw_output=True, which is required for token-in RL rollouts. Use a deployment path that returns raw_output.completion_token_ids for completions.",
+				"Deployment did not return completion token IDs",
+				fmt.Sprintf("The API response is missing completion token IDs. Got choice keys: %v", mapKeys(choice)),
+				"Use a deployment that returns incremental token IDs and server prompt IDs.",
 				SDKErrorFormatOptions{DocsURL: DocsSDK, ShowSupport: true},
 			))
 		}
@@ -1435,11 +1468,6 @@ func (s *DeploymentSampler) parseCompletionsResult(result map[string]any, prompt
 			samplingLogprobs, _ = ExtractSamplingLogprobs(choice)
 		}
 
-		var topIDs [][]int
-		var topLP [][]float64
-		if userRequestedLogprobs {
-			topIDs, topLP = ExtractTopLogprobs(choice)
-		}
 		var refs *RoutingReferences
 		if routingRequested {
 			format := stringOrDefault(choice["routing_matrix_format"], "base64_inline")
@@ -1458,49 +1486,38 @@ func (s *DeploymentSampler) parseCompletionsResult(result map[string]any, prompt
 						return nil, fmt.Errorf("R3 reference belongs to a different storage domain")
 					}
 				}
-			} else if format != "base64_inline" || choice["routing_references"] != nil {
+			} else {
 				return nil, fmt.Errorf("unsupported R3 format")
 			}
 		}
-		var maskRefs *RoutingReferences
-		if len(samplingMask) > 0 && samplingMask[0] {
-			_, store, _ := s.routingBinding()
-			if choice["sampling_mask_format"] != "parquet_v1" || store == "" || choice["r3_store_id"] != store {
-				return nil, fmt.Errorf("deployment did not acknowledge Parquet sampling-mask references")
+		var maskRefs, topRefs, extraRefs *RoutingReferences
+		for _, capture := range []struct {
+			requested bool
+			column    string
+			dst       **RoutingReferences
+		}{
+			{topSamplingRequested, "top_sampling", &topRefs},
+			{len(samplingMask) > 0 && samplingMask[0], "sampling_mask", &maskRefs},
+			{len(samplingMask) > 1 && samplingMask[1], "sample_extra", &extraRefs},
+		} {
+			if !capture.requested {
+				continue
 			}
-			var err error
-			maskRefs, err = ParseRoutingReferences(choice["sampling_mask_references"])
+			_, store, _ := s.routingBinding()
+			if choice[capture.column+"_format"] != "parquet_v1" || store == "" || choice["r3_store_id"] != store {
+				return nil, fmt.Errorf("missing Parquet %s capture in trainer storage", capture.column)
+			}
+			value, err := ParseRoutingReferences(choice[capture.column+"_references"])
 			if err != nil {
 				return nil, err
 			}
-			for _, file := range maskRefs.Files {
+			for _, file := range value.Files {
 				if file["store_id"] != store {
-					return nil, fmt.Errorf("sampling-mask reference storage domain mismatch")
+					return nil, fmt.Errorf("%s storage domain mismatch", capture.column)
 				}
 			}
+			*capture.dst = value
 		}
-		var topRefs *RoutingReferences
-		if topSamplingRequested {
-			_, store, _ := s.routingBinding()
-			if choice["top_sampling_format"] != "parquet_v1" || store == "" || choice["r3_store_id"] != store {
-				return nil, fmt.Errorf("deployment did not acknowledge Parquet top-K sampling in trainer storage")
-			}
-			var err error
-			topRefs, err = ParseRoutingReferences(choice["top_sampling_references"])
-			if err != nil {
-				return nil, err
-			}
-			for _, f := range topRefs.Files {
-				if f["store_id"] != store {
-					return nil, fmt.Errorf("top-K reference storage domain mismatch")
-				}
-			}
-		}
-		var routingMatrices []string
-		if routingRequested {
-			routingMatrices, _ = ExtractRoutingMatrices(choice)
-		}
-
 		promptForFull := append([]int(nil), promptIDs...)
 		if expanded, ok := intSliceFromAny(choice["prompt_token_ids"]); ok {
 			promptForFull = expanded
@@ -1522,7 +1539,7 @@ func (s *DeploymentSampler) parseCompletionsResult(result map[string]any, prompt
 				return nil, fmt.Errorf("Echo response format mismatch: echoed suffix differs from prompt token IDs")
 			}
 			expected := len(completionIDs)
-			for _, n := range []int{optionalLength(tokenLogprobs), optionalLength(samplingLogprobs), optionalLength(routingMatrices), optionalLength(topIDs), optionalLength(topLP)} {
+			for _, n := range []int{optionalLength(tokenLogprobs), optionalLength(samplingLogprobs)} {
 				if n >= 0 && n != expected {
 					return nil, fmt.Errorf("Echo response arrays do not align with returned token IDs")
 				}
@@ -1533,6 +1550,9 @@ func (s *DeploymentSampler) parseCompletionsResult(result map[string]any, prompt
 			drop := 0
 			if echoCount == len(promptForFull) {
 				drop = 1
+			}
+			if extraRefs != nil && extraRefs.Length == len(completionIDs) {
+				extraRefs, _ = extraRefs.Slice(echoCount, extraRefs.Length)
 			}
 			if maskRefs != nil && maskRefs.Length == len(completionIDs) {
 				maskRefs, _ = maskRefs.Slice(echoCount, maskRefs.Length)
@@ -1549,18 +1569,14 @@ func (s *DeploymentSampler) parseCompletionsResult(result map[string]any, prompt
 			if samplingLogprobs != nil {
 				samplingLogprobs = samplingLogprobs[drop:]
 			}
-			if routingMatrices != nil {
-				routingMatrices = routingMatrices[drop:]
-			}
-			if topIDs != nil {
-				topIDs = topIDs[drop:]
-				topLP = topLP[drop:]
-			}
 			if refs != nil {
 				refs, _ = refs.Slice(drop, refs.Length)
 			}
 		}
 
+		if extraRefs != nil && extraRefs.Length != len(completionIDs) {
+			return nil, fmt.Errorf("extra sampling references do not align with completion tokens")
+		}
 		if maskRefs != nil && maskRefs.Length != len(completionIDs) {
 			return nil, fmt.Errorf("sampling-mask references do not align with completion tokens")
 		}
@@ -1580,13 +1596,11 @@ func (s *DeploymentSampler) parseCompletionsResult(result map[string]any, prompt
 			InferenceLogprobs:        tokenLogprobs,
 			SamplingLogprobs:         samplingLogprobs,
 			LogprobsEchoed:           logprobsEchoed,
-			RoutingMatrices:          routingMatrices,
 			RoutingReferences:        refs,
 			TopSamplingReferences:    topRefs,
 			SamplingMaskReferences:   maskRefs,
+			SampleExtraReferences:    extraRefs,
 			EchoedPromptLogprobCount: echoedCount,
-			InferenceTopKTokenIDs:    topIDs,
-			InferenceTopKLogprobs:    topLP,
 		})
 	}
 	return completions, nil
@@ -1672,9 +1686,8 @@ func (s *DeploymentSampler) StreamCompletions(ctx context.Context, prompt []int,
 		"stream":                   true,
 		"perf_metrics_in_response": true,
 	}
-	if opts.RawOutput {
-		payload["raw_output"] = true
-	}
+	payload["raw_output"] = false
+	payload["return_token_ids"] = true
 	if opts.Logprobs {
 		payload["logprobs"] = true
 	}
@@ -1699,11 +1712,10 @@ func (s *DeploymentSampler) StreamCompletions(ctx context.Context, prompt []int,
 	if _, exists := payload["top_k"]; !exists {
 		payload["top_k"] = 0
 	}
-	if _, hasImages := opts.Extra["images"]; hasImages {
-		if _, exists := payload["return_token_ids"]; !exists {
-			payload["return_token_ids"] = true
-		}
+	if opts.RawOutput || payload["raw_output"] == true {
+		return nil, ServerMetrics{}, fmt.Errorf("deployment sampler requires raw_output=false")
 	}
+	payload["return_token_ids"] = true
 	headers, err := s.routingRequest(ctx, payload, opts)
 	if err != nil {
 		return nil, ServerMetrics{}, err
@@ -1732,21 +1744,6 @@ func (s *DeploymentSampler) StreamCompletions(ctx context.Context, prompt []int,
 			metrics.HTTPStatusCode = intPointer(resp.StatusCode)
 			return nil, metrics, &CompletionResponseError{Err: readErr, StatusCode: resp.StatusCode, Headers: resp.Header.Clone()}
 		}
-		if payload["routing_matrix_format"] == "parquet_v1" && payload["top_sampling_format"] != "parquet_v1" && payload["sampling_mask"] != "parquet_v1" && unsupportedRoutingFormat(resp.StatusCode, body) {
-			s.r3Mu.Lock()
-			s.routingMatrixFormat = RoutingBase64Inline
-			s.r3Mu.Unlock()
-			delete(payload, "routing_matrix_format")
-			payload["include_routing_matrix"] = true
-			headers.Del(R3StoreHeader)
-			headers.Del(R3TTLHeader)
-			data, err = json.Marshal(payload)
-			if err != nil {
-				return nil, ServerMetrics{}, err
-			}
-			hotloadAttempt--
-			continue
-		}
 		lastStatus = resp.StatusCode
 		if (resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusTooEarly) && hotloadAttempt < SamplerHotloadMaxRetries {
 			s.Sleep(SamplerHotloadRetryInterval)
@@ -1755,7 +1752,7 @@ func (s *DeploymentSampler) StreamCompletions(ctx context.Context, prompt []int,
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			return nil, ServerMetricsFromHTTPHeaders(resp.Header), &CompletionHTTPStatusError{StatusCode: resp.StatusCode, Body: body, Headers: resp.Header.Clone()}
 		}
-		result, metrics, err := s.assembleStreamResponse(body, resp.Header)
+		result, metrics, err := s.assembleStreamResponse(body, resp.Header, payload)
 		if err != nil {
 			metrics = ServerMetricsFromHTTPHeaders(resp.Header)
 			metrics.HTTPStatusCode = intPointer(resp.StatusCode)
@@ -1780,7 +1777,7 @@ func (s *DeploymentSampler) StreamCompletions(ctx context.Context, prompt []int,
 	return nil, ServerMetrics{}, &CompletionHTTPStatusError{StatusCode: lastStatus}
 }
 
-func (s *DeploymentSampler) assembleStreamResponse(body []byte, headers http.Header) (map[string]any, ServerMetrics, error) {
+func (s *DeploymentSampler) assembleStreamResponse(body []byte, headers http.Header, requests ...map[string]any) (map[string]any, ServerMetrics, error) {
 	events, err := NewSSEDecoder().Decode(bytes.NewReader(body))
 	if err != nil {
 		return nil, ServerMetrics{}, err
@@ -1790,7 +1787,9 @@ func (s *DeploymentSampler) assembleStreamResponse(body []byte, headers http.Hea
 	finishReason := ""
 	var usageInfo any
 	routingMetadata := map[string]any{}
-	var rawOutput map[string]any
+	var tokenIDs []int
+	var promptIDs []int
+	missingIDs := false
 	var perfMetrics map[string]string
 	upstreamResponseID := ""
 	hasSeenFinishReason := false
@@ -1844,7 +1843,51 @@ func (s *DeploymentSampler) assembleStreamResponse(body []byte, headers http.Hea
 			if choice == nil {
 				continue
 			}
-			for _, key := range []string{"routing_matrix_format", "r3_store_id", "routing_references", "top_sampling_format", "top_sampling_references", "sampling_mask_format", "sampling_mask_references"} {
+			if idx, exists := choice["index"]; exists {
+				n, ok := intFromStrictAny(idx)
+				if !ok || n != 0 {
+					return nil, ServerMetrics{}, &SSEProtocolError{Message: "streaming completions require n=1"}
+				}
+			}
+			lp, _ := choice["logprobs"].(map[string]any)
+			content, hasContent := lp["content"].([]any)
+			if ids := choice["token_ids"]; ids != nil {
+				decoded, ok := intSliceFromAny(ids)
+				if !ok {
+					return nil, ServerMetrics{}, &SSEProtocolError{Message: "completion token_ids must be a list of integers"}
+				}
+				if lp["content"] != nil {
+					if !hasContent || len(content) != len(decoded) {
+						return nil, ServerMetrics{}, &SSEProtocolError{Message: "completion token IDs and logprobs are not aligned"}
+					}
+					for i, row := range content {
+						item, ok := row.(map[string]any)
+						if !ok {
+							return nil, ServerMetrics{}, &SSEProtocolError{Message: "invalid logprob row"}
+						}
+						if value := item["token_id"]; value != nil {
+							n, ok := intFromStrictAny(value)
+							if !ok || n != decoded[i] {
+								return nil, ServerMetrics{}, &SSEProtocolError{Message: "completion token IDs disagree with logprob token IDs"}
+							}
+						}
+					}
+				}
+				if tokenIDs == nil {
+					tokenIDs = []int{}
+				}
+				tokenIDs = append(tokenIDs, decoded...)
+			} else if stringFromAny(choice["text"]) != "" || len(content) > 0 {
+				missingIDs = true
+			}
+			if ids := choice["prompt_token_ids"]; ids != nil {
+				next, ok := intSliceFromAny(ids)
+				if !ok || promptIDs != nil && !slices.Equal(promptIDs, next) {
+					return nil, ServerMetrics{}, &SSEProtocolError{Message: "invalid or inconsistent server prompt IDs"}
+				}
+				promptIDs = append([]int{}, next...)
+			}
+			for _, key := range []string{"sample_extra_format", "sample_extra_references", "routing_matrix_format", "r3_store_id", "routing_references", "top_sampling_format", "top_sampling_references", "sampling_mask_format", "sampling_mask_references"} {
 				if value, ok := choice[key]; ok {
 					routingMetadata[key] = value
 				}
@@ -1864,9 +1907,6 @@ func (s *DeploymentSampler) assembleStreamResponse(body []byte, headers http.Hea
 				finishReason = fr
 				hasSeenFinishReason = true
 			}
-			if ro, _ := choice["raw_output"].(map[string]any); ro != nil {
-				rawOutput = ro
-			}
 		}
 		if usage, ok := chunk["usage"]; ok {
 			usageInfo = usage
@@ -1878,8 +1918,28 @@ func (s *DeploymentSampler) assembleStreamResponse(body []byte, headers http.Hea
 	if !hasSeenFinishReason {
 		return nil, ServerMetrics{}, &SSETruncationError{Message: "Transient server-side error: the inference deployment closed the SSE stream without a successful finish_reason. The SDK is retrying. If this persists across all retry attempts, contact the Fireworks team."}
 	}
-	if finishReason == "" {
-		finishReason = "stop"
+	if missingIDs || tokenIDs == nil || promptIDs == nil {
+		return nil, ServerMetrics{}, &SSEProtocolError{Message: "completion stream omitted token_ids or prompt_token_ids"}
+	}
+	if len(requests) > 0 {
+		req := requests[0]
+		if req["logprobs"] == true && len(tokenIDs) != len(accumulatedLogprobs) {
+			return nil, ServerMetrics{}, &SSEProtocolError{Message: "completion token IDs and logprobs are not aligned"}
+		}
+		if usage, ok := usageInfo.(map[string]any); ok {
+			if count, ok := intFromStrictAny(usage["completion_tokens"]); ok {
+				echo := 0
+				if req["echo"] == true {
+					echo = len(promptIDs)
+				}
+				if n, ok := intFromStrictAny(req["echo_last"]); ok {
+					echo = min(n, len(promptIDs))
+				}
+				if len(tokenIDs) != count+echo {
+					return nil, ServerMetrics{}, &SSEProtocolError{Message: "completion token count disagrees with usage"}
+				}
+			}
+		}
 	}
 	choice := map[string]any{
 		"text":          accumulatedText,
@@ -1891,9 +1951,10 @@ func (s *DeploymentSampler) assembleStreamResponse(body []byte, headers http.Hea
 	if len(accumulatedLogprobs) > 0 {
 		choice["logprobs"] = map[string]any{"content": accumulatedLogprobs}
 	}
-	if rawOutput != nil {
-		choice["raw_output"] = rawOutput
+	if tokenIDs != nil {
+		choice["token_ids"] = tokenIDs
 	}
+	choice["prompt_token_ids"] = promptIDs
 	result := map[string]any{"choices": []any{choice}}
 	if upstreamResponseID != "" {
 		result["id"] = upstreamResponseID
@@ -2263,6 +2324,8 @@ type AdaptiveConcurrencyController struct {
 
 	completedRequests       int
 	stepPrefillQueues       []float64
+	ignoreStartedBefore     time.Time
+	stalePrefill            int
 	stepMetricsCount        int
 	stepCacheHits           int
 	stepCacheTotal          int
@@ -2392,9 +2455,15 @@ func (c *AdaptiveConcurrencyController) Release(metrics *ServerMetrics) {
 	c.completedRequests++
 	c.stepWindowSum += float64(c.windowSizeLocked())
 	c.stepWindowSamples++
+	stale := false
 	if metrics != nil {
 		if metrics.PrefillQueueDuration != nil {
-			c.stepPrefillQueues = append(c.stepPrefillQueues, *metrics.PrefillQueueDuration)
+			stale = !metrics.ClientRequestStartedAt.IsZero() && metrics.ClientRequestStartedAt.Before(c.ignoreStartedBefore)
+			if stale {
+				c.stalePrefill++
+			} else {
+				c.stepPrefillQueues = append(c.stepPrefillQueues, *metrics.PrefillQueueDuration)
+			}
 		} else if metrics.HTTPStatusCode != nil || metrics.TransportError {
 			status := 0
 			if metrics.HTTPStatusCode != nil {
@@ -2428,9 +2497,13 @@ func (c *AdaptiveConcurrencyController) Release(metrics *ServerMetrics) {
 			c.stepCacheTotal += *metrics.PromptTokens
 		}
 	}
-	if c.adjustmentInterval > 0 {
+	if c.adjustmentInterval > 0 && !stale {
 		c.intervalRequests++
-		if c.intervalRequests >= c.adjustmentInterval {
+		ready := c.intervalRequests >= c.adjustmentInterval
+		if len(c.stepPrefillQueues) > 0 {
+			ready = len(c.stepPrefillQueues) >= min(c.adjustmentInterval, c.windowSizeLocked())
+		}
+		if ready {
 			if len(c.stepPrefillQueues) > 0 {
 				c.updateWindowLocked(averageFloat64(c.stepPrefillQueues))
 			} else if c.intervalStatusResponses > 0 && c.intervalCongested == 0 {
@@ -2472,8 +2545,9 @@ func (c *AdaptiveConcurrencyController) StepCompleted() map[string]float64 {
 	defer c.mu.Unlock()
 
 	summary := map[string]float64{
-		"window":   float64(c.windowSizeLocked()),
-		"requests": float64(c.stepMetricsCount),
+		"window":                     float64(c.windowSizeLocked()),
+		"requests":                   float64(c.stepMetricsCount),
+		"stale_prefill_observations": float64(c.stalePrefill),
 	}
 	if len(c.stepPrefillQueues) > 0 {
 		avgPQ := averageFloat64(c.stepPrefillQueues)
@@ -2512,6 +2586,7 @@ func (c *AdaptiveConcurrencyController) StepCompleted() map[string]float64 {
 	c.stepPrefillQueues = nil
 	c.intervalRequests = 0
 	c.stepMetricsCount = 0
+	c.stalePrefill = 0
 	c.stepCacheHits = 0
 	c.stepCacheTotal = 0
 	c.intervalStatusResponses = 0
@@ -2527,7 +2602,7 @@ func (c *AdaptiveConcurrencyController) StepCompleted() map[string]float64 {
 }
 
 func (c *AdaptiveConcurrencyController) updateWindowLocked(avgPrefillQueue float64) {
-	if c.emaPrefillQueue == nil {
+	if c.emaPrefillQueue == nil || (*c.emaPrefillQueue > c.prefillQueueTarget && avgPrefillQueue <= c.prefillQueueTarget) {
 		value := avgPrefillQueue
 		c.emaPrefillQueue = &value
 	} else {
@@ -2547,6 +2622,10 @@ func (c *AdaptiveConcurrencyController) updateWindowLocked(avgPrefillQueue float
 }
 
 func (c *AdaptiveConcurrencyController) resizeWindowLocked(proposed float64) {
+	if proposed < c.window {
+		c.ignoreStartedBefore = time.Now()
+		c.stepPrefillQueues = nil
+	}
 	oldWindow := c.windowSizeLocked()
 	c.window = maxFloat64(float64(c.minWindow), minFloat64(float64(c.maxWindow), proposed))
 	newWindow := c.windowSizeLocked()
@@ -2683,6 +2762,9 @@ func ExtractTopLogprobs(choice map[string]any) ([][]int, [][]float64) {
 }
 func (v FiretitanSampledSequence) MarshalJSON() ([]byte, error) {
 	type wire FiretitanSampledSequence
+	if v.RoutingMatrices != nil {
+		return nil, fmt.Errorf("inline routing matrices are unsupported")
+	}
 	if v.RoutingReferences == nil {
 		return json.Marshal(wire(v))
 	}
@@ -2706,6 +2788,9 @@ func (v *FiretitanSampledSequence) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
-	v.RoutingMatrices, v.RoutingReferences = inline, refs
+	if inline != nil {
+		return fmt.Errorf("inline routing matrices are unsupported")
+	}
+	v.RoutingReferences = refs
 	return nil
 }

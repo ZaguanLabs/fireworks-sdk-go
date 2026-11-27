@@ -38,19 +38,19 @@ func TestTrainerJobCreateReturnsJobIdentity(t *testing.T) {
 
 func TestTrainerJobLoadAdapterValidation(t *testing.T) {
 	mgr := NewTrainerJobManager("test-key", "https://api.example.com")
-	for _, adapterPath := range []string{"", "   "} {
+	for _, adapterPath := range []string{"", "   ", "gs://bucket/adapter", "/tmp/adapter", "accounts//models/m"} {
 		_, err := mgr.LoadAdapter(context.Background(), LoadAdapterOptions{
 			TrainerBaseURL: "https://trainer.example.com",
 			ModelID:        "model-1",
 			AdapterPath:    adapterPath,
 		})
-		if err == nil || !strings.Contains(err.Error(), "adapter_path must be a non-empty string") {
+		if err == nil || !strings.Contains(err.Error(), "adapter_path must be a Fireworks PEFT model resource") {
 			t.Fatalf("adapter path %q err = %v", adapterPath, err)
 		}
 	}
 	_, err := mgr.LoadAdapter(context.Background(), LoadAdapterOptions{
 		TrainerBaseURL: "https://trainer.example.com",
-		AdapterPath:    "gs://bucket/adapter",
+		AdapterPath:    "accounts/test/models/adapter",
 	})
 	if err == nil || !strings.Contains(err.Error(), "model_id") {
 		t.Fatalf("missing model error = %v", err)
@@ -69,7 +69,7 @@ func TestTrainerJobLoadAdapterPostsGatewayRequest(t *testing.T) {
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"model_id":     "model-1",
-			"adapter_path": "gs://bucket/adapter-dir",
+			"adapter_path": "accounts/test/models/adapter-dir",
 		})
 	}))
 	defer server.Close()
@@ -78,7 +78,7 @@ func TestTrainerJobLoadAdapterPostsGatewayRequest(t *testing.T) {
 	resp, err := mgr.LoadAdapter(context.Background(), LoadAdapterOptions{
 		TrainerBaseURL: server.URL + "/",
 		ModelID:        "model-1",
-		AdapterPath:    "  gs://bucket/adapter-dir  ",
+		AdapterPath:    "  accounts/test/models/adapter-dir  ",
 		SeqID:          43,
 	})
 	if err != nil {
@@ -90,10 +90,10 @@ func TestTrainerJobLoadAdapterPostsGatewayRequest(t *testing.T) {
 	if seenAuth != "Bearer test-key" {
 		t.Fatalf("authorization = %q", seenAuth)
 	}
-	if payload["adapter_path"] != "gs://bucket/adapter-dir" || payload["model_id"] != "model-1" || payload["seq_id"].(float64) != 43 {
+	if payload["adapter_path"] != "accounts/test/models/adapter-dir" || payload["model_id"] != "model-1" || payload["seq_id"].(float64) != 43 {
 		t.Fatalf("payload = %#v", payload)
 	}
-	if resp.ModelID != "model-1" || resp.AdapterPath != "gs://bucket/adapter-dir" || resp.Type != "load_adapter" {
+	if resp.ModelID != "model-1" || resp.AdapterPath != "accounts/test/models/adapter-dir" || resp.Type != "load_adapter" {
 		t.Fatalf("response = %#v", resp)
 	}
 }
@@ -108,12 +108,12 @@ func TestTrainerJobLoadAdapterDefaultsEmptyResponse(t *testing.T) {
 	resp, err := mgr.LoadAdapter(context.Background(), LoadAdapterOptions{
 		TrainerBaseURL: server.URL,
 		ModelID:        "model-1",
-		AdapterPath:    "gs://bucket/adapter-dir",
+		AdapterPath:    "accounts/test/models/adapter-dir",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resp.ModelID != "model-1" || resp.AdapterPath != "gs://bucket/adapter-dir" || resp.Type != "load_adapter" {
+	if resp.ModelID != "model-1" || resp.AdapterPath != "accounts/test/models/adapter-dir" || resp.Type != "load_adapter" {
 		t.Fatalf("response = %#v", resp)
 	}
 }
@@ -129,7 +129,7 @@ func TestTrainerJobLoadAdapterHTTPError(t *testing.T) {
 	_, err := mgr.LoadAdapter(context.Background(), LoadAdapterOptions{
 		TrainerBaseURL: server.URL,
 		ModelID:        "model-1",
-		AdapterPath:    "gs://bucket/adapter-dir",
+		AdapterPath:    "accounts/test/models/adapter-dir",
 	})
 	if err == nil || !strings.Contains(err.Error(), "Load adapter failed") || !strings.Contains(err.Error(), "bad adapter") {
 		t.Fatalf("error = %v", err)
@@ -153,18 +153,18 @@ func TestTrainerJobPayloadConstruction(t *testing.T) {
 	mgr := NewTrainerJobManager("test-key", server.URL)
 	mgr.SetAccountID("test")
 	_, err := mgr.CreateRaw(context.Background(), TrainerJobConfig{
-		BaseModel:           "accounts/test/models/qwen3-1p7b",
-		NodeCount:           &nodeCount,
-		Region:              "US_OHIO_1",
-		LoraRank:            0,
-		MaxContextLength:    &maxContext,
-		LearningRate:        1e-5,
-		HotLoadDeploymentID: "my-deploy",
+		BaseModel:             "accounts/test/models/qwen3-1p7b",
+		NodeCount:             &nodeCount,
+		Region:                "US_OHIO_1",
+		LoraRank:              0,
+		MaxContextLength:      &maxContext,
+		LearningRate:          1e-5,
+		RolloutDeploymentName: "accounts/test/deployments/my-deploy",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(seenPath, "deploymentId=my-deploy") || !strings.Contains(seenPath, "skipValidations=true") {
+	if strings.Contains(seenPath, "deploymentId=") || !strings.Contains(seenPath, "skipValidations=true") {
 		t.Fatalf("path = %q", seenPath)
 	}
 	if payload["serviceMode"] != true || payload["nodeCount"].(float64) != 2 {
@@ -174,7 +174,7 @@ func TestTrainerJobPayloadConstruction(t *testing.T) {
 	if tc["baseModel"] != "accounts/test/models/qwen3-1p7b" || tc["region"] != "US_OHIO_1" {
 		t.Fatalf("training config = %#v", tc)
 	}
-	if payload["hotLoadDeploymentId"] != "my-deploy" {
+	if payload["rolloutDeploymentName"] != "accounts/test/deployments/my-deploy" || payload["hotLoadDeploymentId"] != nil {
 		t.Fatalf("payload = %#v", payload)
 	}
 }
@@ -481,23 +481,8 @@ func TestTrainerJobConfigValidateRejectsBaseAndDeprecatedGradientAccumulation(t 
 		t.Fatalf("error = %v", err)
 	}
 	steps = 1
-	if err := (TrainerJobConfig{BaseModel: "accounts/test/models/m", GradientAccumulationSteps: &steps}).Validate(); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestTrainerJobConfigValidationWarnings(t *testing.T) {
-	if warnings := (TrainerJobConfig{BaseModel: "accounts/test/models/m"}).ValidationWarnings(); len(warnings) != 0 {
-		t.Fatalf("warnings = %#v", warnings)
-	}
-	steps := 4
-	if warnings := (TrainerJobConfig{BaseModel: "accounts/test/models/m", GradientAccumulationSteps: &steps}).ValidationWarnings(); len(warnings) != 0 {
-		t.Fatalf("warnings = %#v", warnings)
-	}
-	steps = 1
-	warnings := (TrainerJobConfig{BaseModel: "accounts/test/models/m", GradientAccumulationSteps: &steps}).ValidationWarnings()
-	if len(warnings) != 1 || !strings.Contains(warnings[0], "gradient_accumulation_steps=1 is deprecated") {
-		t.Fatalf("warnings = %#v", warnings)
+	if err := (TrainerJobConfig{BaseModel: "accounts/test/models/m", GradientAccumulationSteps: &steps}).Validate(); err == nil {
+		t.Fatal("removed setting accepted")
 	}
 }
 

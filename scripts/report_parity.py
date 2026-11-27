@@ -10,7 +10,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-PYTHON_SDK_VERSION = "1.2.30"
+PYTHON_SDK_VERSION = "1.2.39"
 DEFAULT_FIREWORKS_ROOT = REPO_ROOT / f"docs/fireworks-py/fireworks_ai-{PYTHON_SDK_VERSION}/dist/fireworks_ai-{PYTHON_SDK_VERSION}/src/fireworks"
 FIREWORKS_ROOT = Path(os.environ.get("FIREWORKS_PY_ROOT", DEFAULT_FIREWORKS_ROOT)).expanduser()
 
@@ -35,6 +35,7 @@ RESOURCE_MODULES = {
     "secrets": "SecretsResource",
     "supervised_fine_tuning_jobs": "SupervisedFineTuningJobsResource",
     "users": "UsersResource",
+    "watermark_detections": "WatermarkDetectionsResource",
 }
 
 IGNORED_PY_METHODS = {"with_raw_response", "with_streaming_response"}

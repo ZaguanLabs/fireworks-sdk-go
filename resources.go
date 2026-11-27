@@ -144,8 +144,6 @@ func queryAlias(key string) string {
 		return "configOnly"
 	case "skip_hf_config_validation":
 		return "skipHfConfigValidation"
-	case "trust_remote_code":
-		return "trustRemoteCode"
 	default:
 		return managementBodyAlias(key)
 	}
@@ -180,6 +178,19 @@ func (r *ChatCompletionsResource) CreateStream(ctx context.Context, body any, op
 
 func (r *ChatCompletionsResource) CreateTypedStream(ctx context.Context, params fwtypes.ChatCompletionCreateParams, opts ...RequestOption) (*TypedStream[fwtypes.ChatChatCompletionChunk], error) {
 	return newTypedStream[fwtypes.ChatChatCompletionChunk](ctx, r.client, r.client.inferencePath("/v1/chat/completions"), params, opts...)
+}
+
+// WatermarkDetectionsResource checks text for a Fireworks watermark.
+type WatermarkDetectionsResource struct{ client *Client }
+
+func (r *WatermarkDetectionsResource) Create(ctx context.Context, body any, opts ...RequestOption) (Response, error) {
+	return resource{r.client}.post(ctx, r.client.inferencePath("/v1/watermark/detect"), body, opts...)
+}
+
+func (r *WatermarkDetectionsResource) CreateTyped(ctx context.Context, params fwtypes.WatermarkDetectionCreateParams, opts ...RequestOption) (*fwtypes.WatermarkDetection, error) {
+	var out fwtypes.WatermarkDetection
+	err := r.client.Request(ctx, http.MethodPost, r.client.inferencePath("/v1/watermark/detect"), params, &out, opts...)
+	return &out, err
 }
 
 type CompletionsResource struct {

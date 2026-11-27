@@ -2,11 +2,11 @@
 
 Unofficial Go port of the official Fireworks AI Python SDK.
 
-This project targets Fireworks Python SDK `1.2.30` and keeps the Go
+This project targets Fireworks Python SDK `1.2.39` and keeps the Go
 package version aligned exactly:
 
 ```go
-fireworks.Version // "1.2.30"
+fireworks.Version // "1.2.39"
 ```
 
 Upstream references:
@@ -28,9 +28,9 @@ Current parity checks cover:
 - FireTitan training lifecycle helpers and opt-in live contract tests
 
 The latest local parity report is in
-[`docs/resource-type-parity-1.2.30.md`](docs/resource-type-parity-1.2.30.md).
+[`docs/resource-type-parity-1.2.39.md`](docs/resource-type-parity-1.2.39.md).
 The broader training parity matrix is in
-[`docs/parity-1.2.30.md`](docs/parity-1.2.30.md).
+[`docs/parity-1.2.39.md`](docs/parity-1.2.39.md).
 
 ## Install
 
@@ -280,28 +280,24 @@ resp, err := client.Models.ListTyped(
 
 ## FireTitan Training SDK
 
-The Go port includes the Fireworks training infrastructure layer from
-`fireworks.training.sdk`: trainer jobs, deployments, hotload, sampler clients,
-managed provisioning, checkpoint promotion, and setup helpers.
+Use a training-scoped `FIREWORKS_API_KEY` for trainer jobs, deployment provisioning and checkpoint promotion. For a managed trainer and rollout deployment, configure a `FiretitanServiceClient` with the base model and training shape, then call `CreateManagedTrainingClient`. Managed provisioning binds the deployment to the trainer job. The [training guide](docs/training-sdk.md) includes runnable provisioning code, reserved sessions, replay captures and tokenizer setup.
 
-Training APIs require a training-scoped Fireworks API key. Inference-only keys
-may work for completions and deployment inference, but Fireworks returns HTTP
-401 for trainer lifecycle and training-shape endpoints.
-
-See [`docs/training-sdk.md`](docs/training-sdk.md) for Go examples ported from
-the official Python training docs.
-
-The setup helper CLI mirrors the Python SDK scripts:
+The CLI can also provision independent resources. For example, to set up a standalone trainer, run
 
 ```sh
 go run ./cmd/fireworks-training setup-trainer \
-  --display-name ablation-eager \
-  --extra-args "--forward-only --no-compile" \
-  --custom-image-tag your-image-tag
+  --display-name my-trainer \
+  --base-model accounts/fireworks/models/qwen3-8b \
+  --output-file trainer_info.json
+```
 
+To set up an inference deployment, substitute a deployment shape available to your account.
+
+```sh
 go run ./cmd/fireworks-training setup-deployment \
-  --deployment-id verify-ablation \
-  --deployment-shape accounts/ACCOUNT/deploymentShapes/YOUR-SHAPE
+  --deployment-id my-inference-deployment \
+  --base-model accounts/fireworks/models/qwen3-8b \
+  --deployment-shape accounts/ACCOUNT/deploymentShapes/SHAPE
 ```
 
 ## Live Contract Tests
@@ -325,14 +321,14 @@ The Python SDK source snapshot is intentionally ignored by git. To regenerate
 types, provide a local copy of the official Python SDK source:
 
 ```sh
-FIREWORKS_PY_TYPES_ROOT=/path/to/python-sdk-1.2.30/src/fireworks/types \
+FIREWORKS_PY_TYPES_ROOT=/path/to/python-sdk-1.2.39/src/fireworks/types \
   go generate ./types
 ```
 
 The default generator path is:
 
 ```text
-docs/fireworks-py/fireworks_ai-1.2.30/dist/fireworks_ai-1.2.30/src/fireworks/types
+docs/fireworks-py/fireworks_ai-1.2.39/dist/fireworks_ai-1.2.39/src/fireworks/types
 ```
 
 ## Development
@@ -360,8 +356,8 @@ Releases are created from git tags by
 Use Go module semver tags:
 
 ```sh
-git tag v1.2.30
-git push origin v1.2.30
+git tag v1.2.39
+git push origin v1.2.39
 ```
 
 The workflow checks that `version.go` matches the tag, runs `go test ./...`,

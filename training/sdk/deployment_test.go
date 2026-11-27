@@ -583,7 +583,7 @@ func TestHotloadSendsIdentityMetadataAndPathHeader(t *testing.T) {
 	if got["ok"] != true {
 		t.Fatalf("got = %#v", got)
 	}
-	if body["identity"] != "snap-2" || body["reset_prompt_cache"] != true {
+	if body["identity"] != "snap-2" || body["reset_prompt_cache"] != "new_session" {
 		t.Fatalf("body = %#v", body)
 	}
 	metadata := body["incremental_snapshot_metadata"].(map[string]any)
@@ -635,45 +635,31 @@ func TestHotloadLogsCheckpointType(t *testing.T) {
 	}
 }
 
-func TestHotloadRetriesWithoutResetPromptCacheWhenRejected(t *testing.T) {
-	var bodies []map[string]any
+func TestHotloadKeepsRequestedCachePolicy(t *testing.T) {
+	var mode string
+	var calls int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
 		var body map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Errorf("decode body: %v", err)
+			t.Error(err)
 		}
-		bodies = append(bodies, body)
-		if len(bodies) == 1 {
-			w.WriteHeader(http.StatusBadRequest)
-			_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"message": "Extra inputs are not permitted, field: 'reset_prompt_cache', value: True"}})
-			return
+		if body["reset_prompt_cache"] != mode {
+			t.Errorf("unexpected mode: %v", body)
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+		http.Error(w, "unsupported cache mode", 400)
 	}))
 	defer server.Close()
-
-	mgr := NewDeploymentManager("test-key", "https://api.example.com", WithDeploymentHotloadAPIURL(server.URL))
-	mgr.SetAccountID("test-acct")
-	if _, err := mgr.Hotload(context.Background(), "dep-1", "accounts/test/models/m", "snap-123"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := mgr.Hotload(context.Background(), "dep-1", "accounts/test/models/m", "snap-456"); err != nil {
-		t.Fatal(err)
-	}
-	if len(bodies) != 3 {
-		t.Fatalf("bodies = %#v", bodies)
-	}
-	if _, ok := bodies[0]["reset_prompt_cache"]; !ok {
-		t.Fatalf("first body = %#v", bodies[0])
-	}
-	if _, ok := bodies[1]["reset_prompt_cache"]; ok {
-		t.Fatalf("retry body = %#v", bodies[1])
-	}
-	if _, ok := bodies[2]["reset_prompt_cache"]; ok {
-		t.Fatalf("second hotload body = %#v", bodies[2])
-	}
-	if mgr.HotloadResetPromptCacheSupported == nil || *mgr.HotloadResetPromptCacheSupported {
-		t.Fatalf("reset prompt cache support = %#v", mgr.HotloadResetPromptCacheSupported)
+	mgr := NewDeploymentManager("key", "https://api.example.com", WithDeploymentHotloadAPIURL(server.URL))
+	mgr.SetAccountID("acct")
+	for i, requested := range []ResetPromptCacheMode{"", ResetPromptCacheNone, ResetPromptCacheAll} {
+		mode = string(requested)
+		if mode == "" {
+			mode = "new_session"
+		}
+		if _, err := mgr.Hotload(context.Background(), "d", "accounts/test/models/m", "snap", HotloadOptions{ResetPromptCache: requested}); err == nil || calls != i+1 {
+			t.Fatal("expected one rejected hotload", err, calls)
+		}
 	}
 }
 

@@ -112,22 +112,22 @@ func SetupTrainer(ctx context.Context, opts SetupTrainerOptions) (SetupTrainerOu
 			WithTrainingAdditionalHeaders(opts.AdditionalHeaders),
 		)
 	}
-	gradientAccumulationSteps := 1
+
 	nodeCount := opts.NodeCount
 	maxSeqLen := opts.MaxSeqLen
 	config := TrainerJobConfig{
-		BaseModel:                 opts.BaseModel,
-		LoraRank:                  opts.LoraRank,
-		MaxContextLength:          &maxSeqLen,
-		LearningRate:              DefaultLearningRate,
-		GradientAccumulationSteps: &gradientAccumulationSteps,
-		NodeCount:                 &nodeCount,
-		DisplayName:               opts.DisplayName,
-		Region:                    opts.Region,
-		CustomImageTag:            opts.CustomImageTag,
-		ExtraArgs:                 append([]string(nil), opts.ExtraArgs...),
-		AcceleratorType:           opts.AcceleratorType,
-		AcceleratorCount:          cloneIntPointer(opts.AcceleratorCount),
+		BaseModel:        opts.BaseModel,
+		LoraRank:         opts.LoraRank,
+		MaxContextLength: &maxSeqLen,
+		LearningRate:     DefaultLearningRate,
+
+		NodeCount:        &nodeCount,
+		DisplayName:      opts.DisplayName,
+		Region:           opts.Region,
+		CustomImageTag:   opts.CustomImageTag,
+		ExtraArgs:        append([]string(nil), opts.ExtraArgs...),
+		AcceleratorType:  opts.AcceleratorType,
+		AcceleratorCount: cloneIntPointer(opts.AcceleratorCount),
 	}
 	start := opts.Now()
 	endpoint, err := manager.CreateAndWait(ctx, config, TrainerPollOptions{

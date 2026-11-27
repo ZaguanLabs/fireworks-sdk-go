@@ -12,7 +12,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-PYTHON_SDK_VERSION = "1.2.30"
+PYTHON_SDK_VERSION = "1.2.39"
 DEFAULT_ROOT = REPO_ROOT / f"docs/fireworks-py/fireworks_ai-{PYTHON_SDK_VERSION}/dist/fireworks_ai-{PYTHON_SDK_VERSION}/src/fireworks/types"
 ROOT = Path(os.environ.get("FIREWORKS_PY_TYPES_ROOT", DEFAULT_ROOT)).expanduser()
 OUT = REPO_ROOT / "types/generated.go"
@@ -278,7 +278,7 @@ def go_type(
             return typ, False
         if name in {"List", "Iterable", "SequenceNotStr"} and args:
             typ, _ = go_type(args[0], current_module=current_module, imports=imports, refs=refs)
-            return "[]" + deref(typ), False
+            return "[]" + typ, False
         if name in {"Dict", "Mapping"} and len(args) >= 2:
             value_type, _ = go_type(args[1], current_module=current_module, imports=imports, refs=refs)
             return "map[string]" + deref(value_type), False

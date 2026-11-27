@@ -34,13 +34,17 @@ HTTP 401 for trainer lifecycle and training-shape endpoints.
 account from the API key automatically. `FIREWORKS_ACCOUNT_ID` is still useful
 for the generated top-level resource client.
 
-## Minimal Lifecycle
+## Provision a trainer and a rollout deployment
+
+Create the trainer first. Set `DeploymentConfig.HotLoadTrainerJob` to the full job name returned by the trainer manager. Use a deployment ID reserved for this run.
 
 ```go
 package main
 
 import (
 	"context"
+	"fmt"
+	"log"
 
 	sdk "github.com/ZaguanLabs/fireworks-sdk-go/training/sdk"
 )
@@ -51,60 +55,40 @@ func main() {
 	baseURL := sdk.FireworksBaseURL("")
 	baseModel := "accounts/fireworks/models/qwen3-8b"
 
-	deployMgr := sdk.NewDeploymentManager(apiKey, baseURL)
-	deployment, err := deployMgr.CreateOrGet(ctx, sdk.DeploymentConfig{
-		DeploymentID: "my-run",
-		BaseModel:    baseModel,
-		Region:       "US_VIRGINIA_1",
+	trainers := sdk.NewTrainerJobManager(apiKey, baseURL)
+	trainer, err := trainers.CreateAndWait(ctx, sdk.TrainerJobConfig{
+		BaseModel:               baseModel,
+		DisplayName:             "my-trainer",
+		Region:                  "US_VIRGINIA_1",
+		AutoSelectTrainingShape: true,
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(trainer.JobName)
+
+	deployments := sdk.NewDeploymentManager(apiKey, baseURL)
+	rollout, err := deployments.CreateOrGet(ctx, sdk.DeploymentConfig{
+		DeploymentID:      "my-run",
+		BaseModel:         baseModel,
+		Region:            "US_VIRGINIA_1",
+		DeploymentShape:   "accounts/ACCOUNT/deploymentShapes/SHAPE",
+		HotLoadTrainerJob: trainer.JobName,
+		MinReplicaCount:   1,
+		ForTraining:       true,
 	}, false)
 	if err != nil {
-		panic(err)
+		log.Fatal(err)
 	}
-
-	deployment, err = deployMgr.WaitForReady(ctx, deployment.DeploymentID)
+	rollout, err = deployments.WaitForReady(ctx, rollout.DeploymentID)
 	if err != nil {
-		panic(err)
+		log.Fatal(err)
 	}
-
-	trainerMgr := sdk.NewTrainerJobManager(apiKey, baseURL)
-	endpoint, err := trainerMgr.CreateAndWait(ctx, sdk.TrainerJobConfig{
-		BaseModel:           baseModel,
-		DisplayName:         "my-trainer",
-		HotLoadDeploymentID: deployment.DeploymentID,
-		Region:              "US_VIRGINIA_1",
-	})
-	if err != nil {
-		panic(err)
-	}
-
-	service, err := sdk.NewFiretitanServiceClient(sdk.FiretitanServiceClientOptions{
-		APIKey:  "tml-local",
-		BaseURL: endpoint.BaseURL,
-		Config: sdk.FiretitanProvisioningConfig{
-			BaseModel: baseModel,
-		},
-	})
-	if err != nil {
-		panic(err)
-	}
-
-	policy, err := service.CreateTrainingClient(ctx)
-	if err != nil {
-		panic(err)
-	}
-
-	syncer := sdk.NewWeightSyncer(sdk.WeightSyncerConfig{
-		PolicyClient: policy,
-		DeployMgr:    deployMgr,
-		DeploymentID: deployment.DeploymentID,
-		BaseModel:    baseModel,
-	})
-
-	if _, err := syncer.SaveAndHotload(ctx, "step-1"); err != nil {
-		panic(err)
-	}
+	fmt.Println(rollout.InferenceModel)
 }
 ```
+
+These resources continue running after the example exits. Managed provisioning can apply a cleanup policy when the service closes.
 
 ## Managed Provisioning
 
@@ -115,21 +99,23 @@ pair from `FiretitanProvisioningConfig`.
 service, err := sdk.NewFiretitanServiceClient(sdk.FiretitanServiceClientOptions{
 	APIKey: sdk.FireworksAPIKey(""),
 	Config: sdk.FiretitanProvisioningConfig{
-		BaseModel:       "accounts/fireworks/models/qwen3-8b",
-		TrainingShapeID: "accounts/fireworks/trainingShapes/ts-qwen3-8b-policy",
-		DeploymentShape: "accounts/fireworks/deploymentShapes/my-shape",
-		DisplayName:     "my-managed-run",
+		BaseModel:                "accounts/fireworks/models/qwen3-8b",
+		TrainingShapeID:          "accounts/ACCOUNT/trainingShapes/TRAINING_SHAPE",
+		DeploymentShape:          "accounts/ACCOUNT/deploymentShapes/DEPLOYMENT_SHAPE",
+		DisplayName:              "my-managed-run",
+		CleanupTrainerOnClose:    true,
+		CleanupDeploymentOnClose: string(sdk.CleanupDeploymentOnCloseDelete),
 	},
 })
 if err != nil {
 	return err
 }
 
+defer service.Close(ctx)
 client, err := service.CreateManagedTrainingClient(ctx)
 if err != nil {
 	return err
 }
-defer service.Close(ctx)
 
 trainerJobID, err := client.TrainerJobID()
 if err != nil {
@@ -138,7 +124,9 @@ if err != nil {
 fmt.Println(trainerJobID)
 ```
 
-Managed provisioning supports:
+Managed provisioning attaches the deployment as soon as it has the trainer job name. Trainer readiness and deployment setup can overlap. Set `WaitForTrainerBeforeDeployment` to `true` to wait for the trainer before starting deployment setup.
+
+Managed services also support the following operations.
 
 - creating or reconnecting trainer jobs
 - creating, reusing, or reattaching deployments
@@ -153,7 +141,7 @@ Managed provisioning supports:
 
 ## Training Shapes
 
-Two launch paths mirror the Python SDK.
+Managed services select their hardware from `TrainingShapeID` or let Fireworks choose a shape automatically. Configure the shape on the service before creating clients. The managed service fixes the base model and LoRA parameters, except that a shared trainer with `MaxLoraRank` accepts a per-client rank within its capacity. A LoRA policy can reuse its frozen base as the reference model.
 
 ### Shape Path
 
@@ -180,9 +168,9 @@ if profile.SupportsLora() {
 }
 ```
 
-### Manual Path
+### Low-level trainer jobs
 
-Omit `TrainingShapeRef` and set the infrastructure fields directly.
+When calling `TrainerJobManager` directly, a standalone `TrainerJobConfig` also accepts an explicit hardware configuration. This example applies to the low-level job manager.
 
 ```go
 config := sdk.TrainerJobConfig{
@@ -239,17 +227,24 @@ followed by delta checkpoints; LoRA checkpoints remain base checkpoints.
 Sampling uses behavior-policy `sampling_logprob` values for generated tokens,
 keeps one logical `X-Request-Id` across retries, honors `Retry-After`, and
 returns `SamplingRequestError` with payload-free request identity and status
-metadata. The default concurrency controller is adaptive.
+metadata.
 
 For serverless training sessions, `CreateSamplingClient` routes checkpoint
 paths through `/training/v1/serverless` and adds `X-Session-Affinity`.
 `CreateServerlessBaseSamplingClient` selects the session base-model route.
 
-Router Replay callers can request routing matrices with
-`FiretitanSamplingParams.IncludeRoutingMatrix`. `ModelIsMoE`,
-`R3RequestIssues`, `RoutingMatricesWireBytes`, and
-`ParallelChunkSendConcurrency` expose the corresponding control-plane and
-request-validation behavior without Python runtime model monkeypatches.
+Bind replay capture to the policy client with `service.CreateSamplingClientForTraining(ctx, modelPath, tokenizer, controller, policy)`. The trainer advertises the shared Parquet store. Capture requests validate the store and align references with the returned token IDs. Use fresh rollouts when migrating inline routing matrices.
+
+| Sampling parameter | Returned sequence field | Use |
+| --- | --- | --- |
+| `IncludeRoutingMatrix: true` | `RoutingReferences` | Router replay |
+| `SamplingMask: true` | `SamplingMaskReferences` | Replay the sampling support |
+| `SampleExtraTokens: &draws` | `SampleExtraReferences` | Draw 1–64 extra tokens per position with stochastic decoding |
+| `TopSamplingLogprobs: &k` | `TopSamplingReferences` | Capture the top candidates per position |
+
+Choose one of extra sampling and top sampling for each request. For REINFORCE score centering, call `policy.ValidateLossCapabilities("reinforce", lossConfig)` before collecting rollouts, then include references matching the chosen estimator in each datum. `ModelInputFromIntsWithExtraSampling` and `ModelInputFromIntsWithTopSampling` validate the reference lengths. An adaptive controller manages sampling concurrency by default. Pass `sdk.WithBackendManagedConcurrency()` when constructing a `DeploymentSampler` to delegate scheduling to the backend.
+
+Hotload uses `ResetPromptCacheNewSession` by default. `ResetPromptCacheAll` and `ResetPromptCacheNone` select the other server policies. RDMA publication requires compatible trainer and rollout replicas, including LoRA-specific support for a LoRA policy. Once RDMA is required, the SDK surfaces failures directly. For a `merged_base` checkpoint, `SaveWeightsForSamplerOptions.ExportRounding` accepts `nearest` or `stochastic`.
 
 ## Cross-Job Checkpoint References
 
@@ -263,7 +258,13 @@ if err != nil {
 }
 
 resolved, err := sdk.ResolveCheckpointPath("checkpoint-name", "source-trainer-job")
+if err != nil {
+	return err
+}
+fmt.Println(ref, resolved)
 ```
+
+For checkpoint promotion, pass the full checkpoint resource name returned by Fireworks together with the output model ID and base model. For example, a dedicated trainer checkpoint uses `accounts/ACCOUNT/rlorTrainerJobs/JOB/checkpoints/CHECKPOINT`. For `LoadAdapter`, pass the PEFT model resource name `accounts/ACCOUNT/models/MODEL`.
 
 ## Forward/Backward And Metrics
 
@@ -274,6 +275,8 @@ the Python SDK's built-in loss patch behavior without Python monkeypatching.
 For `cross_entropy`, the training layer preserves the Python behavior of
 tracking response-token accounting so callers can compute mean loss from
 summed loss metrics.
+
+Accumulate gradients by making multiple `ForwardBackward` calls before `OptimStep`. On customer-managed RLOR jobs, `service.LogTrainingMetrics(ctx, record)` sends a numeric `step`, finite numeric metric values and an optional string `session_id`. It submits each batch once. If the response is lost, check the job before resubmitting.
 
 ## Error Handling And Retries
 
@@ -289,16 +292,19 @@ deployment is still loading, not a generic request retry.
 
 ## Setup CLI
 
-The Go CLI mirrors the Python SDK setup scripts:
+Use the setup helpers to create a standalone trainer or a standalone inference deployment. Each command prints JSON and saves the same information to the specified file. To connect training and rollout, use one of the provisioning examples above.
 
 ```sh
 go run ./cmd/fireworks-training setup-trainer \
   --display-name my-trainer \
-  --training-shape-ref accounts/ACCOUNT/trainingShapes/SHAPE
+  --base-model accounts/fireworks/models/qwen3-8b \
+  --output-file trainer_info.json
 
 go run ./cmd/fireworks-training setup-deployment \
-  --deployment-id my-deployment \
-  --deployment-shape accounts/ACCOUNT/deploymentShapes/SHAPE
+  --deployment-id my-inference-deployment \
+  --base-model accounts/fireworks/models/qwen3-8b \
+  --deployment-shape accounts/ACCOUNT/deploymentShapes/SHAPE \
+  --output-file deployment_info.json
 ```
 
 ## Live Contract Tests
@@ -323,12 +329,41 @@ behaviors are represented explicitly rather than copied literally:
   `Future` wrappers.
 - Pydantic model mutation is not needed; Go uses typed structs and maps.
 
-## Native training protocol (1.2.30)
+## Native training protocol and reserved sessions
 
-`NewNativeTrainingRuntime(restClient, sessionID)` implements the owned JSON training service. Supply it through the existing `ComputeBackend` option when creating a training client; model-specific state, adapter and weight-sync operations attach automatically unless explicitly overridden. `PollInterval` controls future polling, and caller contexts bound the complete operation.
+`NewNativeTrainingRuntime(restClient, sessionID)` implements the JSON training protocol. Pass it as `CreateFiretitanTrainingClientOptions.ComputeBackend` to create a model on an existing trainer endpoint. The model client then exposes state, adapter and weight-sync operations. `training/types` contains generated wire models and the upstream v2 protobuf schema. Caller contexts bound future polling and result downloads.
 
-`training/types` contains generated request/response models. The runtime's low-level `Request` method retains extension fields. Custom loss callbacks return explicit native gradients.
+For a reserved serverless session, persist a unique `ts-...` session ID and ownership marker before calling `api.ReserveTrainingSession(ctx, id, marker)`. Use `api.GetTrainingSession(ctx, fullName)` to reconcile an interrupted reservation. The full name is `accounts/ACCOUNT/trainingSessions/SESSION`. A missing session returns `nil, nil`.
 
-Sampler handles exclude credentials; restore with `FiretitanSamplingClientFromHandle` using the receiving process's key. Mask references and top-sampling references are independent channels, both validated against the trainer's storage domain and completion length.
+```go
+service, err := api.OpenReservedTrainingSession(ctx, fullName, marker)
+if err != nil {
+	return err
+}
+defer service.Close(ctx)
 
-See [the 1.2.30 release matrix](parity-1.2.30.md) for lifecycle, checkpoint, RDMA and TITO behavior changes.
+rank := 8
+policy, err := service.CreateTrainingClient(ctx, sdk.CreateFiretitanTrainingClientOptions{
+	BaseModel: baseModel,
+	LoraRank:  &rank,
+})
+if err != nil {
+	return err
+}
+fmt.Println(policy.ModelID)
+```
+
+Open the fresh session from one owner. The service verifies the marker and unbound state, sends heartbeats and shares model sequence counters across clients. Closing it ends the heartbeats. Restore sampler handles with `FiretitanSamplingClientFromHandle` and the receiving process's key.
+
+## Training tokenizers
+
+Set `FiretitanProvisioningConfig.TokenizerModel` and call `policy.GetTokenizer(ctx, sdk.TokenizerOptions{})` to load the trainer's tokenizer. `LoadFastTokenizer` also opens a local saved `tokenizer.json` directory or a Hugging Face repository directly. For chat templates that iterate over tool fields, `RenderChatJSON` preserves the key order in caller-supplied JSON. Call `Close()` on a `*sdk.FastTokenizer` when the deployment finishes using it.
+
+The Go module embeds the Hugging Face tokenizer and MiniJinja WebAssembly runtime. Ordinary Go builds use that artifact directly. To rebuild it from the repository root with Rust 1.94.0 and Zsh, use
+
+```sh
+rustup toolchain install 1.94.0 --profile minimal --target wasm32-wasip1
+rustup run 1.94.0 zsh training/sdk/internal/hftokenizer/build.zsh
+```
+
+For lifecycle, checkpoint, replay and TITO changes, see the [1.2.39 release matrix](parity-1.2.39.md).

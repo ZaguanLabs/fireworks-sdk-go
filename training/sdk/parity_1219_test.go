@@ -119,11 +119,13 @@ func Test1219CapabilitiesAndModelErrors(t *testing.T) {
 }
 
 func Test1219RDMANegotiationAndFallback(t *testing.T) {
-	for _, mode := range []string{"rdma", "old", "mixed", "fanout", "lora", "cmek", "serverless", "disabled", "route404", "route405", "route500", "completion"} {
+	for _, mode := range []string{"rdma", "old", "mixed", "fanout", "lora", "lora-supported", "cmek", "serverless", "disabled", "route404", "route405", "route500", "completion"} {
 		t.Run(mode, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				state := map[string]any{"replicas": []any{map[string]any{"supports_rdma_weight_sync": true}}}
 				switch mode {
+				case "lora-supported":
+					state["replicas"] = []any{map[string]any{"supports_rdma_weight_sync": true, "supports_rdma_lora_weight_sync": true}}
 				case "old":
 					state["replicas"] = []any{map[string]any{}}
 				case "mixed":
@@ -145,8 +147,9 @@ func Test1219RDMANegotiationAndFallback(t *testing.T) {
 			saver := &fakeSamplerSaver{}
 			client := &FiretitanTrainingClient{ModelID: "m", SamplerBackend: sampler, WeightSyncer: NewWeightSyncer(WeightSyncerConfig{PolicyClient: saver}), ComputeBackend: transport, trainerSupportsRDMA: true}
 			switch mode {
-			case "lora":
+			case "lora", "lora-supported":
 				client.Config.LoraRank = 8
+				sampler.ResetPromptCache = ResetPromptCacheMode("none")
 			case "cmek":
 				sampler.CMEKResource = "encrypted"
 				sampler.HotLoadBucketURL = "gs://encrypted-bucket/"
@@ -164,7 +167,7 @@ func Test1219RDMANegotiationAndFallback(t *testing.T) {
 				transport.failure = errors.New("accepted publication failed")
 			}
 			result, err := client.WeightSync(context.Background())
-			if mode != "rdma" {
+			if mode != "rdma" && mode != "lora-supported" {
 				if err == nil || len(saver.calls) != 0 || hotloads != 0 {
 					t.Fatalf("unsafe retry: %v %d %d", err, len(saver.calls), hotloads)
 				}
@@ -173,7 +176,10 @@ func Test1219RDMANegotiationAndFallback(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if mode == "rdma" {
+			if mode == "lora-supported" && transport.request["reset_prompt_cache"] != ResetPromptCacheMode("none") {
+				t.Fatal(transport.request)
+			}
+			{
 				if result.Version != "rdma:1" || len(saver.calls) != 0 || !client.SupportsRDMAWeightSync() {
 					t.Fatal(result)
 				}
@@ -185,10 +191,6 @@ func Test1219RDMANegotiationAndFallback(t *testing.T) {
 				}
 				if transport.request["session_id"] != session || transport.request["source_epoch"] != epoch || transport.request["operation_id"] == operation {
 					t.Fatal("RDMA session continuity failed")
-				}
-			} else {
-				if len(saver.calls) != 1 || hotloads != 1 || result.OptimizerVersion != nil {
-					t.Fatalf("fallback %d %d %+v", len(saver.calls), hotloads, result)
 				}
 			}
 		})

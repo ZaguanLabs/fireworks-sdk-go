@@ -204,25 +204,15 @@ func ManagedConfigFromMap(values map[string]any) (FiretitanProvisioningConfig, [
 		return FiretitanProvisioningConfig{}, nil, err
 	}
 
-	var deprecated []string
-	for _, field := range []string{"accelerator_type", "accelerator_count", "node_count"} {
-		if value, ok := kwargs[field]; ok {
-			if value != nil {
-				deprecated = append(deprecated, field)
-			}
-			delete(kwargs, field)
-		}
-	}
-
 	config, err := firetitanProvisioningConfigFromCanonicalMap(kwargs)
 	if err != nil {
-		return FiretitanProvisioningConfig{}, deprecated, err
+		return FiretitanProvisioningConfig{}, nil, err
 	}
 	normalized, err := config.Normalize()
 	if err != nil {
-		return FiretitanProvisioningConfig{}, deprecated, err
+		return FiretitanProvisioningConfig{}, nil, err
 	}
-	return normalized, deprecated, nil
+	return normalized, nil, nil
 }
 
 func firetitanProvisioningConfigFromCanonicalMap(values map[string]any) (FiretitanProvisioningConfig, error) {
@@ -268,8 +258,14 @@ func firetitanProvisioningConfigFromCanonicalMap(values map[string]any) (Firetit
 			config.MaxContextLength, err = asIntPointer(value, key)
 		case "learning_rate":
 			config.LearningRate, err = asFloat(value, key)
-		case "gradient_accumulation_steps":
-			config.GradientAccumulationSteps, err = asInt(value, key)
+		case "wait_for_trainer_before_deployment":
+			config.WaitForTrainerBeforeDeployment, err = asBool(value, key)
+		case "lora_init_method":
+			config.LoraInitMethod, err = asString(value, key)
+		case "weight_sync_transport":
+			config.WeightSyncTransport, err = asString(value, key)
+		case "projection_head_dim":
+			config.ProjectionHeadDim, err = asIntPointer(value, key)
 		case "seed":
 			config.Seed, err = asIntPointer(value, key)
 		case "train_mlp":
@@ -324,6 +320,16 @@ func firetitanProvisioningConfigFromCanonicalMap(values map[string]any) (Firetit
 			config.SkipValidations, err = asBool(value, key)
 		case "disable_speculative_decoding":
 			config.DisableSpeculativeDecoding, err = asBool(value, key)
+		case "draft_model":
+			config.DraftModel, err = asString(value, key)
+		case "draft_token_count":
+			config.DraftTokenCount, err = asIntPointer(value, key)
+		case "base_model_type":
+			config.BaseModelType, err = asString(value, key)
+		case "reset_prompt_cache":
+			var mode string
+			mode, err = asString(value, key)
+			config.ResetPromptCache = ResetPromptCacheMode(mode)
 		case "hot_load_transition_type":
 			config.HotLoadTransitionType, err = asString(value, key)
 		default:

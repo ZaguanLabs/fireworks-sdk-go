@@ -22,7 +22,6 @@ var (
 	shapeRefRE      = regexp.MustCompile(`^accounts/[^/]+/trainingShapes/[^/]+(/versions/[^/]+)?$`)
 )
 
-const GradientAccumulationStepsOneWarning = "TrainerJobConfig.gradient_accumulation_steps=1 is deprecated and ignored. Express gradient accumulation as client-side control flow (multiple forward_backward calls per optim_step) and pass grad_accumulation_normalization on the optim_step request."
 const displayNameLengthLimit = 64
 const autoTrainerJobIDPrefix = "training-api-service"
 const maxInactivityTimeout = 3 * time.Hour
@@ -78,6 +77,7 @@ type TrainerJobConfig struct {
 	TrainerReplicaCount       *int
 	DisplayName               string
 	HotLoadDeploymentID       string
+	RolloutDeploymentName     string
 	Region                    string
 	CustomImageTag            string
 	ExtraArgs                 []string
@@ -121,8 +121,11 @@ func (c TrainerJobConfig) Validate() error {
 	if c.BaseModel == "" {
 		errors = append(errors, "base_model is required")
 	}
-	if c.GradientAccumulationSteps != nil && *c.GradientAccumulationSteps != 1 {
-		errors = append(errors, "gradient_accumulation_steps must be 1. Server-side gradient accumulation is deprecated on the Tinker/RLOR path.")
+	if c.HotLoadDeploymentID != "" {
+		errors = append(errors, "hot_load_deployment_id is unsupported; bind the rollout to the trainer")
+	}
+	if c.GradientAccumulationSteps != nil {
+		errors = append(errors, "gradient_accumulation_steps is unsupported on the Tinker/RLOR path.")
 	}
 	if c.InactivityTimeout != nil {
 		formatted, err := FormatProtoDuration(c.InactivityTimeout)
@@ -152,13 +155,6 @@ func (c TrainerJobConfig) Validate() error {
 	}
 	if len(errors) > 0 {
 		return fmt.Errorf("%s", strings.Join(errors, "\n"))
-	}
-	return nil
-}
-
-func (c TrainerJobConfig) ValidationWarnings() []string {
-	if c.GradientAccumulationSteps != nil && *c.GradientAccumulationSteps == 1 {
-		return []string{GradientAccumulationStepsOneWarning}
 	}
 	return nil
 }
@@ -531,9 +527,9 @@ func (m *TrainerJobManager) CheckHealthz(ctx context.Context, baseURL string) bo
 }
 
 func (m *TrainerJobManager) LoadAdapter(ctx context.Context, opts LoadAdapterOptions) (LoadAdapterResponse, error) {
-	adapterPath := strings.TrimSpace(opts.AdapterPath)
-	if adapterPath == "" {
-		return LoadAdapterResponse{}, fmt.Errorf("adapter_path must be a non-empty string")
+	adapterPath, err := adapterResource(opts.AdapterPath)
+	if err != nil {
+		return LoadAdapterResponse{}, err
 	}
 	if opts.ModelID == "" {
 		return LoadAdapterResponse{}, fmt.Errorf("model_id must be a non-empty string")
@@ -616,9 +612,7 @@ func (m *TrainerJobManager) CreateRaw(ctx context.Context, config TrainerJobConf
 	requestedJobID := ensureRequestedJobID(&config)
 	path := "/v1/accounts/" + accountID + "/rlorTrainerJobs"
 	query := url.Values{}
-	if config.HotLoadDeploymentID != "" {
-		query.Set("deploymentId", config.HotLoadDeploymentID)
-	}
+
 	if config.TrainingShapeRef != "" {
 		query.Set("trainingShape", config.TrainingShapeRef)
 		if config.SkipValidations {
@@ -788,8 +782,8 @@ func BuildTrainerCreatePayload(config TrainerJobConfig) map[string]any {
 	if config.DisplayName != "" {
 		payload["displayName"] = config.DisplayName
 	}
-	if config.HotLoadDeploymentID != "" {
-		payload["hotLoadDeploymentId"] = config.HotLoadDeploymentID
+	if config.RolloutDeploymentName != "" {
+		payload["rolloutDeploymentName"] = config.RolloutDeploymentName
 	}
 	if config.Region != "" {
 		trainingConfig["region"] = config.Region

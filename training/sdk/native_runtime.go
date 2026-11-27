@@ -1,10 +1,13 @@
 package sdk
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"regexp"
 	"strings"
@@ -49,6 +52,9 @@ func (r *NativeTrainingRuntime) Request(ctx context.Context, method, operation s
 	if strings.ContainsAny(operation, ".?#") || strings.HasPrefix(operation, "/") || strings.HasSuffix(operation, "/") || operation == "" {
 		return nil, fmt.Errorf("invalid training operation")
 	}
+	if method == http.MethodPost && operation == "retrieve_future" {
+		return r.retrieveFuture(ctx, body, 45*time.Second)
+	}
 	var response *http.Response
 	var err error
 	if method == http.MethodGet {
@@ -64,9 +70,13 @@ func (r *NativeTrainingRuntime) Request(ctx context.Context, method, operation s
 	if err != nil {
 		return nil, err
 	}
+	return decodeTrainingResponse(response, data)
+}
+
+func decodeTrainingResponse(response *http.Response, data []byte) (map[string]any, error) {
 	var result map[string]any
 	if len(data) > 0 {
-		if err = json.Unmarshal(data, &result); err != nil {
+		if err := json.Unmarshal(data, &result); err != nil && response.StatusCode >= 200 && response.StatusCode < 300 {
 			return nil, fmt.Errorf("invalid training response: %w", err)
 		}
 	}
@@ -79,6 +89,52 @@ func (r *NativeTrainingRuntime) Request(ctx context.Context, method, operation s
 	return result, nil
 }
 
+// A large future may download for longer than the header or per-read timeout.
+func (r *NativeTrainingRuntime) retrieveFuture(ctx context.Context, body any, idle time.Duration) (map[string]any, error) {
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	attempt, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	req, err := http.NewRequestWithContext(attempt, http.MethodPost, r.REST.BaseURL()+"/api/v1/retrieve_future", bytes.NewReader(payload))
+	if err != nil {
+		return nil, err
+	}
+	req.Header = r.REST.Headers(nil)
+	client := *r.REST.httpClient
+	client.Timeout = 0
+	timer := time.AfterFunc(idle, func() { cancel(context.DeadlineExceeded) })
+	defer timer.Stop()
+	resp, err := client.Do(req)
+	if err != nil {
+		if cause := context.Cause(attempt); cause != nil {
+			return nil, cause
+		}
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var data bytes.Buffer
+	buffer := make([]byte, 32*1024)
+	for {
+		timer.Reset(idle)
+		n, err := resp.Body.Read(buffer)
+		if n > 0 {
+			data.Write(buffer[:n])
+		}
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			if cause := context.Cause(attempt); cause != nil {
+				return nil, cause
+			}
+			return nil, err
+		}
+	}
+	return decodeTrainingResponse(resp, data.Bytes())
+}
+
 func (r *NativeTrainingRuntime) submit(ctx context.Context, operation string, body map[string]any) (map[string]any, error) {
 	result, err := r.Request(ctx, http.MethodPost, operation, body)
 	if err != nil {
@@ -89,26 +145,57 @@ func (r *NativeTrainingRuntime) submit(ctx context.Context, operation string, bo
 		return result, nil
 	}
 	model, _ := body["model_id"].(string)
+	allowMetadata := true
+	badRequests, connectionErrors := 0, 0
 	for {
-		poll := map[string]any{"request_id": id}
+		poll := map[string]any{"request_id": id, "allow_metadata_only": allowMetadata}
 		if model != "" {
 			poll["model_id"] = model
 		}
 		result, err = r.Request(ctx, http.MethodPost, "retrieve_future", poll)
-		if err != nil {
-			if failure, ok := err.(*NativeTrainingError); !ok || failure.Status != 408 {
+		delay := r.PollInterval
+		if delay <= 0 {
+			delay = time.Second
+		}
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		var failure *NativeTrainingError
+		var networkFailure net.Error
+		backoff := false
+		switch {
+		case errors.As(err, &failure):
+			switch {
+			case failure.Status == 408:
+				badRequests = 0
+			case failure.Status >= 500 && failure.Status < 600:
+			case failure.Status == 429 || (failure.Status == 409 && ShouldRetryServerlessCapacity409(r.REST.BaseURL()+"/api/v1/retrieve_future", []byte(failure.Message), r.REST.serverlessSupervised409Retry.Load())):
+				backoff = true
+			case failure.Status == 400 && badRequests < 3:
+				badRequests++
+			default:
 				return nil, err
 			}
-		}
-		if err == nil && result["type"] != "try_again" && result["status"] != "complete_metadata" {
+		case errors.As(err, &networkFailure), errors.Is(err, io.ErrUnexpectedEOF):
+			backoff = true
+		case err != nil:
+			return nil, err
+		case result["status"] == "complete_metadata":
+			if !allowMetadata {
+				return nil, fmt.Errorf("repeated metadata-only response for %s", id)
+			}
+			allowMetadata = false
+		case result["type"] != "try_again":
 			if message, exists := result["error"]; exists {
 				return nil, &NativeTrainingError{Status: 200, RequestID: id, Category: stringFromAny(result["category"]), Message: fmt.Sprint(message)}
 			}
 			return result, nil
 		}
-		delay := r.PollInterval
-		if delay <= 0 {
-			delay = time.Second
+		if backoff {
+			delay = min(30*time.Second, time.Second<<min(connectionErrors, 5))
+			connectionErrors++
+		} else {
+			connectionErrors = 0
 		}
 		timer := time.NewTimer(delay)
 		select {
@@ -141,7 +228,7 @@ func decodeNativeResult[T any](result map[string]any, err error) (T, error) {
 func (r *NativeTrainingRuntime) CreateModel(ctx context.Context, config FiretitanProvisioningConfig, metadata map[string]string) (CreateModelResponse, error) {
 	r.mu.Lock()
 	if r.SessionID == "" {
-		result, err := r.Request(ctx, http.MethodPost, "create_session", map[string]any{"type": "create_session", "tags": []string{}, "user_metadata": nil, "sdk_version": "1.2.30"})
+		result, err := r.Request(ctx, http.MethodPost, "create_session", map[string]any{"type": "create_session", "tags": []string{}, "user_metadata": nil, "sdk_version": "1.2.39"})
 		if err != nil {
 			r.mu.Unlock()
 			return CreateModelResponse{}, err
@@ -152,13 +239,16 @@ func (r *NativeTrainingRuntime) CreateModel(ctx context.Context, config Firetita
 			return CreateModelResponse{}, fmt.Errorf("create_session omitted session_id")
 		}
 	}
-	r.modelSequence++
 	sequence := r.modelSequence
+	r.modelSequence++
 	session := r.SessionID
 	r.mu.Unlock()
 	body := config.CreateModelRequestBody(session, sequence, metadata)
 	body["type"] = "create_model"
-	if config.LoraRank == 0 {
+	if config.ForwardOnly && config.LoraRank == 0 {
+		delete(body, "lora_config")
+		body["base_only"] = true
+	} else if config.LoraRank == 0 {
 		body["lora_config"] = nil
 	}
 	return decodeNativeResult[CreateModelResponse](r.submit(ctx, "create_model", body))
@@ -227,16 +317,27 @@ func (m *NativeTrainingModel) LoadStateWithOptimizer(ctx context.Context, path s
 	return m.load(ctx, path, true)
 }
 func (m *NativeTrainingModel) LoadAdapter(ctx context.Context, options LoadAdapterOptions) (LoadAdapterResponse, error) {
-	return decodeNativeResult[LoadAdapterResponse](m.runtime.submit(ctx, "load_adapter", map[string]any{"model_id": m.ModelID, "adapter_path": options.AdapterPath, "seq_id": m.runtime.nextSequence(m.ModelID)}))
+	adapter, err := adapterResource(options.AdapterPath)
+	if err != nil {
+		return LoadAdapterResponse{}, err
+	}
+	return decodeNativeResult[LoadAdapterResponse](m.runtime.submit(ctx, "load_adapter", map[string]any{"model_id": m.ModelID, "adapter_path": adapter, "seq_id": m.runtime.nextSequence(m.ModelID)}))
 }
 func (m *NativeTrainingModel) SaveWeightsForSamplerExt(ctx context.Context, name string, options SaveWeightsForSamplerOptions) (SaveSamplerResult, error) {
 	if options.TTL != 0 {
 		return SaveSamplerResult{}, fmt.Errorf("Fireworks does not support checkpoint ttl_seconds")
 	}
+	rounding, err := ResolveExportRounding(SamplerCheckpointType(options.CheckpointType), options.ExportRounding)
+	if err != nil {
+		return SaveSamplerResult{}, err
+	}
 	snapshot := QualifySnapshotName(m.SnapshotSessionID, name)
 	body := map[string]any{"type": "save_weights_for_sampler", "model_id": m.ModelID, "path": snapshot, "seq_id": m.runtime.nextSequence(m.ModelID)}
 	if options.CheckpointType != "" {
 		body["checkpoint_type"] = options.CheckpointType
+	}
+	if rounding != "" {
+		body["export_rounding"] = rounding
 	}
 	if options.ExportPrecision != "" {
 		body["export_precision"] = options.ExportPrecision

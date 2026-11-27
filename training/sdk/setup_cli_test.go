@@ -87,7 +87,7 @@ func TestSetupTrainerCreatesConfigAndWritesJSON(t *testing.T) {
 	if config.MaxContextLength == nil || *config.MaxContextLength != 4096 {
 		t.Fatalf("max context = %#v", config.MaxContextLength)
 	}
-	if config.GradientAccumulationSteps == nil || *config.GradientAccumulationSteps != 1 {
+	if config.GradientAccumulationSteps != nil {
 		t.Fatalf("grad accumulation = %#v", config.GradientAccumulationSteps)
 	}
 	if config.AcceleratorCount == nil || *config.AcceleratorCount != 8 {

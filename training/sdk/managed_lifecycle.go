@@ -332,11 +332,12 @@ func ProvisionManagedHandle(ctx context.Context, opts ManagedProvisionOptions) (
 				DeployMgr:         opts.DeploymentManager,
 				DeploymentID:      attached.Info.DeploymentID,
 				BaseModel:         deploymentBaseModel(attached.Info, config.BaseModel),
+				ResetPromptCache:  config.ResetPromptCache,
 				AllowRDMA:         boolPointer(RDMACandidate(config)),
 				HotLoadBucketURL:  attached.Info.HotLoadBucketURL,
 				CMEKResource:      cmekResource,
 				HotloadTimeout:    config.HotloadTimeout,
-				LoraRank:          config.LoraRank,
+				LoraRank:          TrainerLoraCapacity(config),
 				CompressionFormat: DefaultDeltaCompression,
 			}
 			if attached.ResetSnapshotChain {
@@ -348,11 +349,12 @@ func ProvisionManagedHandle(ctx context.Context, opts ManagedProvisionOptions) (
 	var weightSyncer *WeightSyncer
 	if opts.DeploymentManager != nil && deployment != nil {
 		weightSyncer = NewWeightSyncer(WeightSyncerConfig{
-			DeployMgr:      opts.DeploymentManager,
-			DeploymentID:   deployment.DeploymentID,
-			BaseModel:      config.BaseModel,
-			HotloadTimeout: config.HotloadTimeout,
-			LoraRank:       config.LoraRank,
+			DeployMgr:        opts.DeploymentManager,
+			DeploymentID:     deployment.DeploymentID,
+			BaseModel:        config.BaseModel,
+			HotloadTimeout:   config.HotloadTimeout,
+			ResetPromptCache: config.ResetPromptCache,
+			LoraRank:         config.LoraRank,
 		})
 	}
 
@@ -413,53 +415,32 @@ func BuildManagedTrainerJobConfig(config FiretitanProvisioningConfig, maxContext
 	if profile != nil {
 		trainingShapeRef = TrainerCreateShapeRef(config.TrainingShapeID, profile)
 	}
-	autoSelectTrainingShape := trainingShapeRef == "" && !usesManualTrainingInfra(config)
-	nodeCount := cloneIntPointer(config.NodeCount)
-	acceleratorType := config.AcceleratorType
-	acceleratorCount := cloneIntPointer(config.AcceleratorCount)
-	if autoSelectTrainingShape {
-		nodeCount = nil
-		acceleratorType = ""
-		acceleratorCount = nil
-	}
+	autoSelectTrainingShape := trainingShapeRef == ""
 	return TrainerJobConfig{
-		BaseModel:                 config.BaseModel,
-		LoraRank:                  TrainerLoraCapacity(config),
-		MaxContextLength:          cloneIntPointer(maxContextLength),
-		LearningRate:              config.LearningRate,
-		GradientAccumulationSteps: intPointer(config.GradientAccumulationSteps),
-		NodeCount:                 nodeCount,
-		TrainerReplicaCount:       cloneIntPointer(config.TrainerReplicaCount),
-		DisplayName:               config.DisplayName,
-		Region:                    config.Region,
-		CustomImageTag:            config.CustomImageTag,
-		ExtraArgs:                 TrainerExtraArgs(config),
-		ProjectionHeadDim:         cloneIntPointer(config.ProjectionHeadDim),
-		ExtraValues:               cloneStringMap(config.ExtraValues),
-		AcceleratorType:           acceleratorType,
-		AcceleratorCount:          acceleratorCount,
-		TrainingShapeRef:          trainingShapeRef,
-		ForwardOnly:               config.ForwardOnly,
-		AutoSelectTrainingShape:   autoSelectTrainingShape,
-		SkipValidations:           config.SkipValidations,
-		Purpose:                   config.Purpose,
-		Preemptible:               config.Preemptible,
-		UseReservation:            cloneBoolPointer(config.UseReservation),
-		ReservationTarget:         config.ReservationTarget,
-		ManagedBy:                 config.ManagedBy,
-		InactivityTimeout:         config.InactivityTimeout,
-		DisableInactivityCleanup:  config.DisableInactivityCleanup,
-	}
-}
+		BaseModel:        config.BaseModel,
+		LoraRank:         TrainerLoraCapacity(config),
+		MaxContextLength: cloneIntPointer(maxContextLength),
+		LearningRate:     config.LearningRate,
 
-func usesManualTrainingInfra(config FiretitanProvisioningConfig) bool {
-	if config.AcceleratorType != "" {
-		return true
+		TrainerReplicaCount:      cloneIntPointer(config.TrainerReplicaCount),
+		DisplayName:              config.DisplayName,
+		Region:                   config.Region,
+		CustomImageTag:           config.CustomImageTag,
+		ExtraArgs:                TrainerExtraArgs(config),
+		ProjectionHeadDim:        cloneIntPointer(config.ProjectionHeadDim),
+		ExtraValues:              cloneStringMap(config.ExtraValues),
+		TrainingShapeRef:         trainingShapeRef,
+		ForwardOnly:              config.ForwardOnly,
+		AutoSelectTrainingShape:  autoSelectTrainingShape,
+		SkipValidations:          config.SkipValidations,
+		Purpose:                  config.Purpose,
+		Preemptible:              config.Preemptible,
+		UseReservation:           cloneBoolPointer(config.UseReservation),
+		ReservationTarget:        config.ReservationTarget,
+		ManagedBy:                config.ManagedBy,
+		InactivityTimeout:        config.InactivityTimeout,
+		DisableInactivityCleanup: config.DisableInactivityCleanup,
 	}
-	if config.AcceleratorCount != nil && *config.AcceleratorCount != 0 {
-		return true
-	}
-	return false
 }
 
 func provisionManagedTrainer(ctx context.Context, trainer ManagedTrainerController, config FiretitanProvisioningConfig, maxContextLength *int, profile *TrainingShapeProfile, explicitTrainerJobID bool, opts ManagedProvisionOptions) (startedManagedTrainer, error) {

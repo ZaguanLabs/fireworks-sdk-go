@@ -43,18 +43,12 @@ func TestFiretitanServiceClientCreateTrainingClientRecordsCanonicalManagedKey(t 
 		t.Fatal(err)
 	}
 	overrideRank := 8
-	client, err := svc.CreateTrainingClient(context.Background(), CreateFiretitanTrainingClientOptions{
-		BaseModel: "accounts/acct/models/OTHER",
-		LoraRank:  &overrideRank,
-	})
-	if err != nil {
+	if _, err := svc.CreateTrainingClient(context.Background(), CreateFiretitanTrainingClientOptions{BaseModel: "other", LoraRank: &overrideRank}); err == nil {
+		t.Fatal("managed config override accepted")
+	}
+	client, err := svc.CreateTrainingClient(context.Background(), CreateFiretitanTrainingClientOptions{LoraRank: &overrideRank})
+	if err != nil || client.Config.LoraRank != 8 {
 		t.Fatal(err)
-	}
-	if client.Config.BaseModel != "accounts/acct/models/base" || client.Config.LoraRank != 8 {
-		t.Fatalf("client config = %#v", client.Config)
-	}
-	if len(client.Warnings) != 1 || !strings.Contains(client.Warnings[0], "base_model") {
-		t.Fatalf("warnings = %#v", client.Warnings)
 	}
 	_, err = svc.CreateTrainingClient(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "already exists") {
@@ -503,13 +497,13 @@ func TestFiretitanTrainingClientCheckpointDelegation(t *testing.T) {
 		t.Fatalf("list job=%q page=%d rows=%#v", listedJob, listedPageSize, rows)
 	}
 	model, err := client.PromoteCheckpoint(context.Background(), PromoteCheckpointOptions{
-		CheckpointID:  "step-1",
+		Name: "accounts/acct/rlorTrainerJobs/trainer-1/checkpoints/step-1", BaseModel: "accounts/acct/models/base",
 		OutputModelID: "out",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if promoted.JobID != "trainer-1" || promoted.BaseModel != "accounts/acct/models/base" || model["name"] != "accounts/acct/models/out" {
+	if promoted.Name != "accounts/acct/rlorTrainerJobs/trainer-1/checkpoints/step-1" || promoted.BaseModel != "accounts/acct/models/base" || model["name"] != "accounts/acct/models/out" {
 		t.Fatalf("promote opts=%#v model=%#v", promoted, model)
 	}
 }
@@ -544,13 +538,13 @@ func TestFiretitanServiceClientCheckpointDelegation(t *testing.T) {
 		t.Fatalf("list job=%q page=%d rows=%#v", listedJob, listedPageSize, rows)
 	}
 	model, err := svc.PromoteCheckpoint(context.Background(), PromoteCheckpointOptions{
-		CheckpointID:  "step-1",
+		Name: "accounts/acct/rlorTrainerJobs/trainer-1/checkpoints/step-1", BaseModel: "accounts/acct/models/base",
 		OutputModelID: "out",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if promoted.JobID != "trainer-1" || promoted.BaseModel != "accounts/acct/models/base" || model["name"] != "accounts/acct/models/out" {
+	if promoted.Name != "accounts/acct/rlorTrainerJobs/trainer-1/checkpoints/step-1" || promoted.BaseModel != "accounts/acct/models/base" || model["name"] != "accounts/acct/models/out" {
 		t.Fatalf("promote opts=%#v model=%#v", promoted, model)
 	}
 }
@@ -565,7 +559,7 @@ func TestFiretitanServiceClientCheckpointOpsRequireTrainer(t *testing.T) {
 	if _, err := svc.ListCheckpoints(context.Background(), "", 0); err == nil || !strings.Contains(err.Error(), "provisioned trainer") {
 		t.Fatalf("list error = %v", err)
 	}
-	if _, err := svc.PromoteCheckpoint(context.Background(), PromoteCheckpointOptions{}); err == nil || !strings.Contains(err.Error(), "provisioned trainer") {
+	if _, err := svc.PromoteCheckpoint(context.Background(), PromoteCheckpointOptions{}); err == nil || !strings.Contains(err.Error(), "full checkpoint name") {
 		t.Fatalf("promote error = %v", err)
 	}
 }
@@ -584,7 +578,7 @@ func TestFiretitanTrainingClientCheckpointOpsRequireTrainer(t *testing.T) {
 	if _, err := client.ListCheckpoints(context.Background(), 0); err == nil || !strings.Contains(err.Error(), "provisioned trainer") {
 		t.Fatalf("list error = %v", err)
 	}
-	if _, err := client.PromoteCheckpoint(context.Background(), PromoteCheckpointOptions{}); err == nil || !strings.Contains(err.Error(), "provisioned trainer") {
+	if _, err := client.PromoteCheckpoint(context.Background(), PromoteCheckpointOptions{}); err == nil || !strings.Contains(err.Error(), "full checkpoint name") {
 		t.Fatalf("promote error = %v", err)
 	}
 }
@@ -816,18 +810,18 @@ func TestFiretitanTrainingClientLoadAdapterDelegates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp, err := client.LoadAdapter(context.Background(), " gs://bucket/adapter ")
+	resp, err := client.LoadAdapter(context.Background(), " accounts/test/models/adapter ")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resp.ModelID != "model-1" || resp.AdapterPath != "gs://bucket/adapter" || resp.Type != "load_adapter" {
+	if resp.ModelID != "model-1" || resp.AdapterPath != "accounts/test/models/adapter" || resp.Type != "load_adapter" {
 		t.Fatalf("response = %#v", resp)
 	}
 	if len(loader.calls) != 1 {
 		t.Fatalf("calls = %#v", loader.calls)
 	}
 	call := loader.calls[0]
-	if call.TrainerBaseURL != "https://trainer.example.com/" || call.ModelID != "model-1" || call.AdapterPath != "gs://bucket/adapter" || call.SeqID != 1 {
+	if call.TrainerBaseURL != "https://trainer.example.com/" || call.ModelID != "model-1" || call.AdapterPath != "accounts/test/models/adapter" || call.SeqID != 1 {
 		t.Fatalf("call = %#v", call)
 	}
 }
@@ -1222,7 +1216,7 @@ func TestFiretitanServiceClientSamplerFacadeHotloadsSnapshot(t *testing.T) {
 	}
 }
 
-func TestFiretitanServiceClientCreateSamplingClientWrapsExplicitSampler(t *testing.T) {
+func TestFiretitanServiceClientCreateSamplingClientCopiesExplicitSampler(t *testing.T) {
 	svc, err := NewFiretitanServiceClient(FiretitanServiceClientOptions{
 		Config: FiretitanProvisioningConfig{BaseModel: "accounts/acct/models/base"},
 	})
@@ -1236,11 +1230,12 @@ func TestFiretitanServiceClientCreateSamplingClientWrapsExplicitSampler(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if client.DeploymentSampler != sampler {
-		t.Fatalf("wrapped sampler = %#v", client.DeploymentSampler)
+	copied := client.DeploymentSampler
+	if copied == sampler || copied.Tokenizer != tokenizer || copied.ConcurrencyController != controller {
+		t.Fatal("injected sampler was not copied and configured")
 	}
-	if sampler.Tokenizer != tokenizer || sampler.ConcurrencyController != controller {
-		t.Fatalf("sampler wiring = %#v", sampler)
+	if sampler.Tokenizer != nil || sampler.ConcurrencyController == controller {
+		t.Fatal("source sampler was changed")
 	}
 }
 

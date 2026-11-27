@@ -95,6 +95,10 @@ type FiretitanProvisioningConfig struct {
 	Preemptible                bool
 	ManagedBy                  string
 	SkipValidations            bool
+	BaseModelType              string
+	DraftModel                 string
+	DraftTokenCount            *int
+	ResetPromptCache           ResetPromptCacheMode
 	DisableSpeculativeDecoding bool
 	HotLoadTransitionType      string
 	UseReservation             *bool
@@ -107,6 +111,23 @@ type ManagedDeploymentShapeResolver interface {
 
 func (c FiretitanProvisioningConfig) Normalize() (FiretitanProvisioningConfig, error) {
 	out := c
+	mode, err := normalizePromptCache(c.ResetPromptCache)
+	if err != nil {
+		return out, err
+	}
+	out.ResetPromptCache = mode
+	if err := validateDraftSpec(c.DraftModel, c.DraftTokenCount, c.DisableSpeculativeDecoding); err != nil {
+		return out, err
+	}
+	if c.ReferenceTrainingShapeID != "" && TrainerLoraCapacity(c) > 0 && !c.ForwardOnly {
+		return out, fmt.Errorf("omit reference_training_shape_id for a LoRA policy to reuse its frozen base")
+	}
+	if c.NodeCount != nil || c.AcceleratorType != "" || c.AcceleratorCount != nil {
+		return out, fmt.Errorf("managed trainer hardware is selected by a training shape")
+	}
+	if c.GradientAccumulationSteps != 0 {
+		return out, fmt.Errorf("gradient_accumulation_steps is unsupported; accumulate forward_backward calls before optim_step")
+	}
 	if out.WeightSyncTransport != "" && out.WeightSyncTransport != "RDMA" {
 		return out, fmt.Errorf("weight_sync_transport must be RDMA or empty")
 	}
@@ -165,9 +186,6 @@ func (c FiretitanProvisioningConfig) Normalize() (FiretitanProvisioningConfig, e
 	if out.LearningRate == 0 {
 		out.LearningRate = DefaultLearningRate
 	}
-	if out.GradientAccumulationSteps == 0 {
-		out.GradientAccumulationSteps = 1
-	}
 	if out.MaxLoraRank != nil && *out.MaxLoraRank <= 0 {
 		return FiretitanProvisioningConfig{}, fmt.Errorf("max_lora_rank must be positive when set")
 	}
@@ -207,11 +225,7 @@ func TrainerLoraCapacity(config FiretitanProvisioningConfig) int {
 func ReferenceManagedConfig(config FiretitanProvisioningConfig, policyLoraRank int) (FiretitanProvisioningConfig, error) {
 	out := config
 	out.TrainingShapeID = config.ReferenceTrainingShapeID
-	if config.ReferenceTrainingShapeID != "" && policyLoraRank > 0 {
-		out.LoraRank = policyLoraRank
-	} else {
-		out.LoraRank = 0
-	}
+	out.LoraRank = 0
 	out.TrainerJobID = config.ReferenceTrainerJobID
 	out.DeploymentID = ""
 	out.CreateDeployment = boolPointer(false)
@@ -373,7 +387,7 @@ type TinkerSamplerBackend struct {
 	HotLoadBucketURL  string
 	CMEKResource      string
 	HotloadTimeout    time.Duration
-	ResetPromptCache  *bool
+	ResetPromptCache  ResetPromptCacheMode
 	LoraRank          int
 	CompressionFormat string
 
@@ -420,10 +434,6 @@ func (b *TinkerSamplerBackend) HotloadSavedSnapshot(ctx context.Context, modelPa
 	if timeout == 0 {
 		timeout = HotloadTimeout
 	}
-	resetPromptCache := true
-	if b.ResetPromptCache != nil {
-		resetPromptCache = *b.ResetPromptCache
-	}
 	checkpointType := ""
 	if b.snapshotTypes != nil {
 		checkpointType = b.snapshotTypes[modelPath]
@@ -452,7 +462,7 @@ func (b *TinkerSamplerBackend) HotloadSavedSnapshot(ctx context.Context, modelPa
 	}
 	ok, err := hotload(ctx, b.DeploymentID, b.BaseModel, modelPath, HotloadAndWaitOptions{
 		IncrementalSnapshotMetadata: incremental,
-		ResetPromptCache:            &resetPromptCache,
+		ResetPromptCache:            b.ResetPromptCache,
 		RequestTimeout:              timeout,
 		Path:                        sourcePath,
 		CMEKResource:                b.CMEKResource,

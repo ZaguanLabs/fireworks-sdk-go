@@ -96,8 +96,9 @@ func (e *Error) AsErrorRecord() map[string]any {
 func (e *Error) OpenAIBody() map[string]any { return map[string]any{"error": e.AsErrorRecord()} }
 
 type ParseError struct {
-	Message    string
-	ReasonCode string
+	Message          string
+	ReasonCode       string
+	ClosedToolAction *bool
 }
 
 func (e *ParseError) Error() string { return e.Message }
@@ -399,6 +400,8 @@ type CallRecord struct {
 	ErrorCode            string                     `json:"error_code,omitempty"`
 }
 type Turn struct {
+	ParentTurnID           string                 `json:"parent_turn_id,omitempty"`
+	SampleExtraReferences  *sdk.RoutingReferences `json:"sample_extra_references,omitempty"`
 	SamplingMaskReferences *sdk.RoutingReferences `json:"sampling_mask_references,omitempty"`
 
 	TopSamplingReferences           *sdk.RoutingReferences     `json:"top_sampling_references,omitempty"`
@@ -457,6 +460,7 @@ type TrajectoryEndpoint struct {
 	APIKey        string `json:"api_key"`
 }
 type TrajectoryArtifact struct {
+	LineageMode            string            `json:"lineage_mode,omitempty"`
 	SchemaVersion          int               `json:"schema_version"`
 	TrajectoryID           string            `json:"trajectory_id"`
 	ServingAffinityKeyHash string            `json:"serving_affinity_key_hash"`
@@ -628,34 +632,45 @@ func anyMapSlice(value []map[string]any) []any {
 
 func (v Turn) MarshalJSON() ([]byte, error) {
 	type wire Turn
-	var routes, prompt any
-	if v.RoutingReferences != nil {
-		routes = v.RoutingReferences
-	} else if v.RoutingMatrices != nil {
-		routes = v.RoutingMatrices
-	}
-	if v.PromptRoutingReferences != nil {
-		prompt = v.PromptRoutingReferences
-	} else if v.PromptRoutingMatrices != nil {
-		prompt = v.PromptRoutingMatrices
+	if v.RoutingMatrices != nil || v.PromptRoutingMatrices != nil {
+		return nil, fmt.Errorf("inline routing matrices are unsupported")
 	}
 	return json.Marshal(struct {
 		wire
-		Routing       any `json:"routing_matrices,omitempty"`
-		PromptRouting any `json:"prompt_routing_matrices,omitempty"`
-	}{wire(v), routes, prompt})
+		Routing       *sdk.RoutingReferences `json:"routing_matrices,omitempty"`
+		PromptRouting *sdk.RoutingReferences `json:"prompt_routing_matrices,omitempty"`
+	}{wire(v), v.RoutingReferences, v.PromptRoutingReferences})
 }
 func (v *Turn) UnmarshalJSON(data []byte) error {
+	return v.decodeJSON(data, false)
+}
+
+// The artifact reader accepts legacy rows provisionally until it knows the schema.
+// Version 2 rejects them in validateTreeEvidence, independent of JSON key order.
+func (v *Turn) decodeJSON(data []byte, allowLegacyRouting bool) error {
 	type wire Turn
 	var decoded struct {
 		wire
-		Routing       json.RawMessage `json:"routing_matrices"`
-		PromptRouting json.RawMessage `json:"prompt_routing_matrices"`
+		LegacyExtraIDs   json.RawMessage `json:"sample_extra_token_ids"`
+		LegacyExtraProbs json.RawMessage `json:"sample_extra_sampling_logprobs"`
+		PromptPrefix     json.RawMessage `json:"prompt_prefix"`
+		Routing          json.RawMessage `json:"routing_matrices"`
+		PromptRouting    json.RawMessage `json:"prompt_routing_matrices"`
 	}
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		return err
 	}
+	if decoded.PromptPrefix != nil || (len(decoded.LegacyExtraIDs) > 0 && string(decoded.LegacyExtraIDs) != "null") || (len(decoded.LegacyExtraProbs) > 0 && string(decoded.LegacyExtraProbs) != "null") {
+		return fmt.Errorf("unsupported legacy TITO prompt prefix or inline extra samples")
+	}
 	value := Turn(decoded.wire)
+	if value.SampleExtraReferences != nil {
+		refs, err := sdk.ParseRoutingReferences(value.SampleExtraReferences)
+		if err != nil {
+			return err
+		}
+		value.SampleExtraReferences = refs
+	}
 	if value.SamplingMaskReferences != nil {
 		refs, err := sdk.ParseRoutingReferences(value.SamplingMaskReferences)
 		if err != nil {
@@ -671,16 +686,26 @@ func (v *Turn) UnmarshalJSON(data []byte) error {
 		value.TopSamplingReferences = refs
 	}
 	var err error
-	value.RoutingMatrices, value.RoutingReferences, err = sdk.RoutingFromWire(decoded.Routing)
+	value.RoutingMatrices, value.RoutingReferences, err = decodeTurnRouting(decoded.Routing, allowLegacyRouting)
 	if err != nil {
 		return err
 	}
-	value.PromptRoutingMatrices, value.PromptRoutingReferences, err = sdk.RoutingFromWire(decoded.PromptRouting)
+	value.PromptRoutingMatrices, value.PromptRoutingReferences, err = decodeTurnRouting(decoded.PromptRouting, allowLegacyRouting)
 	if err != nil {
 		return err
 	}
 	*v = value
 	return nil
+}
+
+func decodeTurnRouting(data json.RawMessage, allowLegacy bool) ([]string, *sdk.RoutingReferences, error) {
+	data = bytes.TrimSpace(data)
+	if allowLegacy && len(data) > 0 && data[0] == '[' {
+		var rows []string
+		err := json.Unmarshal(data, &rows)
+		return rows, nil, err
+	}
+	return sdk.RoutingFromWire(data)
 }
 
 // MarshalJSON omits response_message for legacy-identical canonical messages.

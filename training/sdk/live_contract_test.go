@@ -82,12 +82,9 @@ func TestLivePromoteCheckpoint(t *testing.T) {
 	baseURL := os.Getenv("FIREWORKS_BASE_URL")
 	client := NewFireworksClient(apiKey, baseURL)
 	model, err := client.PromoteCheckpoint(ctx, PromoteCheckpointOptions{
-		Name:                os.Getenv("FIREWORKS_LIVE_CHECKPOINT_NAME"),
-		JobID:               os.Getenv("FIREWORKS_LIVE_TRAINER_JOB_ID"),
-		CheckpointID:        os.Getenv("FIREWORKS_LIVE_CHECKPOINT_ID"),
-		OutputModelID:       liveRequiredEnv(t, "FIREWORKS_LIVE_OUTPUT_MODEL_ID"),
-		BaseModel:           liveRequiredEnv(t, "FIREWORKS_LIVE_BASE_MODEL"),
-		HotLoadDeploymentID: os.Getenv("FIREWORKS_LIVE_DEPLOYMENT_ID"),
+		Name:          liveRequiredEnv(t, "FIREWORKS_LIVE_CHECKPOINT_NAME"),
+		OutputModelID: liveRequiredEnv(t, "FIREWORKS_LIVE_OUTPUT_MODEL_ID"),
+		BaseModel:     liveRequiredEnv(t, "FIREWORKS_LIVE_BASE_MODEL"),
 		WaitOptions: OperationWaitOptions{
 			Timeout: liveTimeout(t, "FIREWORKS_LIVE_PROMOTE_TIMEOUT_S", 7200),
 		},

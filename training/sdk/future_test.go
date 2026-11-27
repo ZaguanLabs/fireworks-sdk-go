@@ -423,7 +423,7 @@ func TestFiretitanTrainingClientStateAndAdapterFutures(t *testing.T) {
 	if state.loadStatePath != "state://step-1" || state.loadStateOptimizerPath != "state://step-2" {
 		t.Fatalf("state backend = %#v", state)
 	}
-	loaded, err := client.LoadAdapterFuture(context.Background(), "gs://bucket/adapter").Await()
+	loaded, err := client.LoadAdapterFuture(context.Background(), "accounts/test/models/adapter").Await()
 	if err != nil {
 		t.Fatal(err)
 	}

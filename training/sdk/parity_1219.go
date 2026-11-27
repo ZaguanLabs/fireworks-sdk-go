@@ -22,7 +22,7 @@ func TrainerExtraArgs(config FiretitanProvisioningConfig) []string {
 	return append([]string(nil), config.ExtraArgs...)
 }
 func RDMACandidate(config FiretitanProvisioningConfig) bool {
-	return (config.CreateDeployment == nil || *config.CreateDeployment) && config.LoraRank == 0 && config.MaxLoraRank == nil && !config.ForwardOnly
+	return (config.CreateDeployment == nil || *config.CreateDeployment) && !config.ForwardOnly
 }
 func deploymentBaseModel(info DeploymentInfo, fallback string) string {
 	if info.BaseModel != "" {
@@ -66,7 +66,7 @@ func (c *FiretitanTrainingClient) refreshRDMA(ctx context.Context) (bool, error)
 		}
 		return false, nil
 	}
-	eligible := (backend.AllowRDMA == nil || *backend.AllowRDMA) && c.Config.LoraRank == 0 && c.RunName == "" && backend.CMEKResource == "" && RDMACandidate(c.Config)
+	eligible := (backend.AllowRDMA == nil || *backend.AllowRDMA) && c.RunName == "" && backend.CMEKResource == "" && RDMACandidate(c.Config)
 	if !eligible && !required {
 		return false, nil
 	}
@@ -86,7 +86,7 @@ func (c *FiretitanTrainingClient) refreshRDMA(ctx context.Context) (bool, error)
 		if r["supports_rdma_weight_sync"] == true || r["rdma_weight_sync_enabled"] == true {
 			required = true
 		}
-		if r["supports_rdma_weight_sync"] != true {
+		if r["supports_rdma_weight_sync"] != true || (c.Config.LoraRank != 0 && r["supports_rdma_lora_weight_sync"] != true) {
 			allSupport = false
 		}
 		if r["rdma_weight_sync_enabled"] == false {
@@ -111,8 +111,7 @@ func (c *FiretitanTrainingClient) refreshRDMA(ctx context.Context) (bool, error)
 	return true, nil
 }
 
-// WeightSync negotiates before each publication. Only a rejected 404/405 route
-// falls back to FILE; an accepted RDMA publication's errors are returned directly.
+// WeightSync negotiates each publication. Once RDMA is required, every error is returned directly.
 func (c *FiretitanTrainingClient) WeightSync(ctx context.Context) (WeightSyncResponse, error) {
 	ctx, operationDone, operationErr := c.beginOperation(ctx)
 	if operationErr != nil {
@@ -150,8 +149,12 @@ func (c *FiretitanTrainingClient) WeightSync(ctx context.Context) (WeightSyncRes
 		for key := range headers {
 			flat[key] = headers.Get(key)
 		}
+		mode, err := normalizePromptCache(b.ResetPromptCache)
+		if err != nil {
+			return WeightSyncResponse{}, err
+		}
 		c.RequestSeqID++
-		response, err := transport.WeightSync(ctx, map[string]any{"protocol_version": 1, "transport": "RDMA", "session_id": c.rdmaSessionID, "source_epoch": c.rdmaSourceEpoch, "deployment": deployment, "hotload_url": strings.TrimRight(b.DeployMgr.HotloadAPIURL, "/") + "/hot_load/v1/models/hot_load", "hotload_headers": flat, "operation_id": newSamplingRequestID(), "model_id": c.ModelID, "seq_id": c.RequestSeqID})
+		response, err := transport.WeightSync(ctx, map[string]any{"reset_prompt_cache": mode, "protocol_version": 1, "transport": "RDMA", "session_id": c.rdmaSessionID, "source_epoch": c.rdmaSourceEpoch, "deployment": deployment, "hotload_url": strings.TrimRight(b.DeployMgr.HotloadAPIURL, "/") + "/hot_load/v1/models/hot_load", "hotload_headers": flat, "operation_id": newSamplingRequestID(), "model_id": c.ModelID, "seq_id": c.RequestSeqID})
 		if err == nil {
 			return response, nil
 		}
